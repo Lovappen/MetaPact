@@ -34,7 +34,7 @@
 → MiniMax key 对不上 endpoint。音乐 API 走 `api.minimaxi.com`（国内），TTS 也在这。国际版 `api.minimax.io` 暂不支持。
 
 **`MINIMAX_API_KEY and MINIMAX_GROUP_ID required`**
-→ 两者都要填。Group ID 在 MiniMax 控制台账户页。
+→ 两者都要填，优先配置在 `~/.openclaw/openclaw.json -> skills.entries.voice.env`。旧安装也兼容 `~/.openclaw/skills/.env`。Group ID 在 MiniMax 控制台账户页。
 
 **生成成功但飞书上听不见**
 → 上传时 `duration` 没传或为 0。脚本里 `ffprobe` 没装时火山引擎 TTS 会返回 0。装 ffmpeg 就好。

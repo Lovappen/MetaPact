@@ -53,11 +53,9 @@ if not found:
         "model": {"primary": primary},
     })
 
-# ── skills.entries: only mark enabled + non-sensitive defaults.
-# Sensitive keys (API keys/secrets) live in ~/.openclaw/skills/.env which the
-# bash skill scripts source themselves. Putting them in openclaw.json triggers
-# gateway env-override blocks (`Blocked skill env overrides for ...`) and
-# duplicates secret material across files.
+# ── skills.entries: publish skill configuration for scripts to read directly.
+# The bash skills also keep ~/.openclaw/skills/.env compatibility, but
+# openclaw.json is now the canonical shared config for voice/selfie providers.
 skills = cfg.setdefault("skills", {})
 entries = skills.setdefault("entries", {})
 
@@ -70,14 +68,13 @@ def set_env(entry_name, env_keys):
         if v:
             env[k] = v
 
-# Only non-sensitive defaults — voice/sing pick provider via *_API_KEY presence
-# in .env at runtime, so just publish format/voice preferences here.
 set_env("voice", [
-    "VOLCENGINE_RESOURCE_ID",
+    "MINIMAX_API_KEY", "MINIMAX_GROUP_ID",
+    "VOLCENGINE_API_KEY", "VOLCENGINE_RESOURCE_ID",
     "VOICE_DEFAULT_MINIMAX", "VOICE_DEFAULT_VOLCENGINE", "VOICE_DEFAULT_SPEED",
+    "OPENCLAW_GATEWAY_TOKEN",
 ])
-# selfie has no non-sensitive env to publish — just mark enabled.
-entries.setdefault("selfie", {"enabled": True, "env": {}}).setdefault("enabled", True)
+set_env("selfie", ["FAL_KEY", "KIE_API_KEY", "OPENCLAW_GATEWAY_TOKEN"])
 
 # ── skills.load.extraDirs: ensure ~/.openclaw/skills is present
 load = skills.setdefault("load", {})

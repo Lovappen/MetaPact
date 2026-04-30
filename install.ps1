@@ -220,7 +220,7 @@ if ($SkipModels) {
 # ─── Collect secrets ────────────────────────────────────────────────────────
 Step "4. 收集凭据"
 Dim "留空回车即跳过，对应能力会被标记 '未启用'。"
-Dim "全跳过也行：装完后随时通过 `$AgentWorkspace\skills\.env 或 $OpenclawSkills\.env 补。"
+Dim "全跳过也行：装完后随时通过 openclaw.json 的 skills.entries.*.env 补；旧版 .env 仍兼容。"
 Write-Host ""
 
 function Set-EnvDefault($key, $value = "") {
@@ -246,14 +246,47 @@ function Import-EnvFileIfUnset($path) {
   return $reused
 }
 
+function Import-OpenclawSkillEnvIfUnset($path) {
+  $reused = @()
+  if (-not (Test-Path $path)) { return $reused }
+  try {
+    $cfg = Get-Content $path -Raw | ConvertFrom-Json
+  } catch {
+    return $reused
+  }
+  $skillKeys = @{
+    voice = @(
+      "MINIMAX_API_KEY", "MINIMAX_GROUP_ID", "VOLCENGINE_API_KEY",
+      "VOLCENGINE_RESOURCE_ID", "VOICE_DEFAULT_MINIMAX",
+      "VOICE_DEFAULT_VOLCENGINE", "VOICE_DEFAULT_SPEED",
+      "OPENCLAW_GATEWAY_TOKEN"
+    )
+    selfie = @("FAL_KEY", "KIE_API_KEY", "OPENCLAW_GATEWAY_TOKEN")
+  }
+  foreach ($skill in $skillKeys.Keys) {
+    $entry = $cfg.skills.entries.$skill
+    if (-not $entry -or -not $entry.env) { continue }
+    foreach ($key in $skillKeys[$skill]) {
+      $value = $entry.env.$key
+      if (-not $value) { continue }
+      if ([string]::IsNullOrEmpty([Environment]::GetEnvironmentVariable($key, "Process"))) {
+        [Environment]::SetEnvironmentVariable($key, [string]$value, "Process")
+        $reused += $key
+      }
+    }
+  }
+  return $reused
+}
+
 $SharedEnv = Join-Path $OpenclawSkills ".env"
 $AgentEnv = Join-Path $AgentWorkspace "skills\.env"
 if (-not $ResetSecrets) {
   $reused = @()
+  $reused += Import-OpenclawSkillEnvIfUnset $OpenclawConfig
   $reused += Import-EnvFileIfUnset $SharedEnv
   $reused += Import-EnvFileIfUnset $AgentEnv
   if ($reused.Count -gt 0) {
-    Info "复用旧凭据 ($($reused.Count) 项): $($reused -join ' ')"
+    Info "复用旧凭据/openclaw.json 配置 ($($reused.Count) 项): $($reused -join ' ')"
     Dim "  想重新输入跑 -ResetSecrets。"
     Write-Host ""
   }
@@ -412,6 +445,31 @@ New-Item -ItemType Directory -Path $AgentWorkspace -Force | Out-Null
 foreach ($f in @("AGENTS.md","IDENTITY.md","SOUL.md","USER.md","HEARTBEAT.md","TOOLS.md")) {
   Safe-InstallFile (Join-Path $PackRoot "agent\$f") (Join-Path $AgentWorkspace $f)
 }
+
+$memoryPath = Join-Path $AgentWorkspace "MEMORY.md"
+if (-not (Test-Path $memoryPath)) {
+  Copy-Item (Join-Path $PackRoot "agent\MEMORY.md") $memoryPath
+  Dim "  + MEMORY.md (bootstrap 模板，运行时由 agent 自己滚动维护)"
+} else {
+  Dim "  = MEMORY.md (保留用户运行时累积的记忆)"
+}
+try {
+  $memory = Get-Content $memoryPath -Raw
+  $updated = $memory
+  $updated = $updated.Replace("- **provider**：`MINIMAX_API_KEY` 优先，`VOLCENGINE_API_KEY` 备选",
+                              "- **provider**：`MINIMAX_API_KEY` 优先，`VOLCENGINE_API_KEY` 备选；key 从 `openclaw.json -> skills.entries.voice.env` 读取，兼容旧 `.env`")
+  $updated = $updated.Replace("- **provider**:`MINIMAX_API_KEY` 优先,`VOLCENGINE_API_KEY` 备选",
+                              "- **provider**:`MINIMAX_API_KEY` 优先,`VOLCENGINE_API_KEY` 备选；key 从 `openclaw.json -> skills.entries.voice.env` 读取，兼容旧 `.env`")
+  $updated = $updated.Replace("- **默认声音**：`female-tianmei`（可在 `<workspace>/skills/.env` 改 `VOICE_DEFAULT_MINIMAX`）",
+                              "- **默认声音**：`female-tianmei`（可在 `openclaw.json -> skills.entries.voice.env` 改 `VOICE_DEFAULT_MINIMAX`）")
+  $updated = $updated.Replace("- **默认声音**:`female-tianmei`(可在 `<workspace>/skills/.env` 改 `VOICE_DEFAULT_MINIMAX`)",
+                              "- **默认声音**:`female-tianmei`(可在 `openclaw.json -> skills.entries.voice.env` 改 `VOICE_DEFAULT_MINIMAX`)")
+  $updated = $updated.Replace("- **provider**：`FAL_KEY` 优先，`KIE_API_KEY` 备选",
+                              "- **provider**：`FAL_KEY` 优先，`KIE_API_KEY` 备选；key 从 `openclaw.json -> skills.entries.selfie.env` 读取，兼容旧 `.env`")
+  if ($updated -ne $memory) {
+    Set-Content -Path $memoryPath -Value $updated -NoNewline -Encoding UTF8
+  }
+} catch {}
 
 $customPath = Join-Path $AgentWorkspace "custom.md"
 if (-not (Test-Path $customPath)) {

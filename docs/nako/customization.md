@@ -92,12 +92,17 @@ bash Agents/install.sh
 
 ## 私有 env 放哪
 
-两层：
+voice/sing 和 selfie/video 的共享 key 优先在 `~/.openclaw/openclaw.json`：
 
-- `~/.openclaw/skills/.env` — 共享（TTS 提供商、FAL、KIE）
+- `skills.entries.voice.env` — 语音/唱歌 key 与默认音色
+- `skills.entries.selfie.env` — 自拍/视频生成 key
+
+旧安装仍兼容两层 `.env`：
+
+- `~/.openclaw/skills/.env` — 旧安装共享 fallback（TTS、图像生成、Whisper 模型）
 - `<workspace>/skills/.env` — 本 agent 私有（飞书凭据、角色参考图）
 
-后者覆盖前者。手动改 key 直接 vi 编辑即可，权限 `0600`。
+agent 私有 `.env` 覆盖共享默认值。手动改 `.env` 时权限用 `0600`。
 
 ## 日志与调试
 

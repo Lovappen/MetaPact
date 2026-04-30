@@ -12,9 +12,9 @@ bash install.sh
 2. **Agent 冲突** — 若 `agent-nako` workspace 已存在，问你升级、重命名、还是中止。
 3. **模型映射** — 读 `~/.openclaw/openclaw.json` 的 `agents.defaults.models`，按 `config/model-map.yaml` 的 `roleplay` 偏好挑一个。找不到 → 退化到 `general`；还找不到 → 报错退出，让你先加模型。
 4. **收集凭据** — 交互问：飞书 App ID/Secret、MiniMax、Volcengine、FAL、参考图。留空即跳过该能力。
-5. **安装 skills** — 拷贝 `skills/{vision,hearing,voice,selfie,dokidoki,skill-log.sh}` 到 `~/.openclaw/skills/`。共享 `.env` 只填入新 key，已有值保留。
+5. **安装 skills** — 拷贝 `skills/{vision,hearing,voice,selfie,dokidoki,skill-log.sh}` 到 `~/.openclaw/skills/`。共享 `.env` 作为旧版 fallback 只填入新 key，已有值保留。
 6. **安装 agent 人设** — 拷贝 `agent/*.md` 到 `~/.openclaw/workspace/<id>/`。`custom.md` 首次创建空壳，之后永远不动。
-7. **合并 openclaw.json** — 备份旧配置 (`.bak-<ts>`)，把 agent 加到 `agents.list`，把 skill env 加到 `skills.entries`。
+7. **合并 openclaw.json** — 备份旧配置 (`.bak-<ts>`)，把 agent 加到 `agents.list`，把 voice/selfie 的 provider key 写到 `skills.entries.*.env`。
 8. **冒烟测试** — 检查每个 skill 的脚本、依赖、env 是否齐。
 
 ## Flags
@@ -58,14 +58,14 @@ $env:MINIMAX_GROUP_ID = "123"
 pwsh install.ps1 -NonInteractive
 ```
 
-安装器会优先复用已有 `~/.openclaw/skills/.env` 与 `<workspace>/skills/.env` 中的凭据；需要重新输入时加 `--reset-secrets` / `-ResetSecrets`。
+安装器会优先复用已有 `openclaw.json -> skills.entries.*.env`，再兼容复用 `~/.openclaw/skills/.env` 与 `<workspace>/skills/.env` 中的凭据；需要重新输入时加 `--reset-secrets` / `-ResetSecrets`。
 
 ## 重装 / 升级
 
 直接重跑 `install.sh`。安装器会：
 
 - ✅ 拉最新 skill 脚本（每个文件单独问是否覆盖）
-- ✅ 合并 `.env`（新 key 追加，已有 key 保留）
+- ✅ 合并 `openclaw.json` 的 `skills.entries.*.env`，并保留旧版 `.env` fallback
 - ✅ 保留 `custom.md` / `memory/` / `sessions/`
 - ❌ 不会动 `openclaw.json` 中其他 agent 的配置
 

@@ -67,10 +67,9 @@ nako 的 voice skill 支持：
 - `voice.sh`：普通 TTS。
 - `sing.sh`：MiniMax music-2.6 生成新歌。
 
-常用 env：
+常用配置优先放在 `~/.openclaw/openclaw.json` 的 `skills.entries.voice.env`；旧安装里的 `~/.openclaw/skills/.env` 和 `<workspace>/skills/.env` 仍兼容：
 
 ```bash
-# ~/.openclaw/skills/.env 或 <workspace>/skills/.env
 VOICE_DEFAULT_MINIMAX=female-tianmei
 VOICE_DEFAULT_VOLCENGINE=zh_female_shuangkuaisisi_moon_bigtts
 VOICE_DEFAULT_SPEED=1.0
@@ -102,12 +101,13 @@ sing 生成的是新歌，不会复刻已有歌曲原旋律。歌词建议带结
 
 ## 调自拍
 
-nako 的自拍一致性靠 per-agent env：
+nako 的自拍一致性靠 per-agent env；生成 provider key 优先放在 `openclaw.json -> skills.entries.selfie.env`：
 
 ```bash
 # <workspace>/skills/.env
 SELFIE_REFERENCE_IMAGE=https://...
 SELFIE_CHARACTER_DESC="golden shoulder-length hair, red eyes, maid outfit, youthful face"
+# openclaw.json -> skills.entries.selfie.env
 FAL_KEY=...
 KIE_API_KEY=...
 ```

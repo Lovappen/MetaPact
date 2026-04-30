@@ -22,9 +22,9 @@
 
 ### 语音 (voice skill)
 - **触发**：用户要求语音回复、朗读、更亲密互动时
-- **provider**：`MINIMAX_API_KEY` 优先，`VOLCENGINE_API_KEY` 备选
+- **provider**：`MINIMAX_API_KEY` 优先，`VOLCENGINE_API_KEY` 备选；key 从 `openclaw.json -> skills.entries.voice.env` 读取，兼容旧 `.env`
 - **入口**：`bash ~/.openclaw/skills/voice/scripts/voice.sh "<text>" <channel>`
-- **默认声音**：`female-tianmei`（可在 `<workspace>/skills/.env` 改 `VOICE_DEFAULT_MINIMAX`）
+- **默认声音**：`female-tianmei`（可在 `openclaw.json -> skills.entries.voice.env` 改 `VOICE_DEFAULT_MINIMAX`）
 - **速度**：亲密/感性 0.8–0.9 ｜ 日常 1.0 ｜ 兴奋 1.1–1.2
 - **文本**：≤ 500 字，口语化
 
@@ -35,7 +35,7 @@
 
 ### 自拍 (selfie skill)
 - **触发**：用户要照片、问当前状态、指定外观/场景
-- **provider**：`FAL_KEY` 优先，`KIE_API_KEY` 备选
+- **provider**：`FAL_KEY` 优先，`KIE_API_KEY` 备选；key 从 `openclaw.json -> skills.entries.selfie.env` 读取，兼容旧 `.env`
 - **入口**：`bash ~/.openclaw/skills/selfie/scripts/selfie.sh "<prompt>" <channel> ...`
 - **参考图**：env `SELFIE_REFERENCE_IMAGE`（保持外观一致）
 - **风格描述**：env `SELFIE_CHARACTER_DESC`

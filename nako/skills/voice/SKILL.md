@@ -208,7 +208,7 @@ bash ~/.openclaw/skills/voice/scripts/setup.sh
 
 | 问题 | 原因 | 解决 |
 |------|------|------|
-| MiniMax error | API key 或 Group ID 错误 | 检查 MINIMAX_API_KEY 和 MINIMAX_GROUP_ID |
+| MiniMax error | API key 或 Group ID 错误 | 检查 `openclaw.json -> skills.entries.voice.env` 里的 MINIMAX_API_KEY 和 MINIMAX_GROUP_ID |
 | Volcengine resource mismatch | 音色和模型版本不匹配 | seed-tts-1.0 音色用 seed-tts-1.0，2.0 同理 |
 | Upload failed | 飞书 token 过期或权限不足 | 检查 FEISHU_APP_ID/SECRET，确认 im:resource 权限 |
 | 语音无法播放 | 未传 duration | 确认上传时 duration 参数正确传入 |

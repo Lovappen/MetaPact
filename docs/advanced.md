@@ -68,7 +68,7 @@ Agents/
 | 增加私人知识、长期偏好、项目背景 | `MEMORY.md` |
 | 调主动问候频率、静默时段 | `HEARTBEAT.md` |
 | 调主动行为数值或副作用 | `<workspace>/scripts/*.sh` |
-| 改默认音色、语速、图片参考图、Whisper 模型 | `<workspace>/skills/.env` 或 `~/.openclaw/skills/.env` |
+| 改默认音色、语速、图片参考图、Whisper 模型 | `openclaw.json -> skills.entries.*.env`；agent 私有项用 `<workspace>/skills/.env` |
 | 调 skill 触发倾向 | `custom.md`，必要时改对应 `SKILL.md` 的 `description` |
 | 换主模型 | `~/.openclaw/openclaw.json` |
 | 让安装器以后优先选某模型 | `<agent-name>/config/model-map.yaml` |
@@ -224,19 +224,20 @@ vi ~/.openclaw/skills/<skill>/SKILL.md
 
 ## 调 Env
 
-常见 env 分两层：
+常见配置分三处：
 
 ```text
-~/.openclaw/skills/.env                  # 共享：TTS、图像生成、Whisper 等通用 key
+~/.openclaw/openclaw.json                # skills.entries.voice/selfie.env：共享 provider key
+~/.openclaw/skills/.env                  # 旧安装 fallback：TTS、图像生成、Whisper 等通用 key
 ~/.openclaw/workspace/<agent-id>/skills/.env  # 单 agent 私有：渠道凭据、角色参考图
 ```
 
-后者覆盖前者。推荐：
+agent 私有 `.env` 覆盖共享默认值。推荐：
 
-- API key 放本地 `.env`，不要提交进仓库。
+- voice/sing/selfie/video provider key 放本机 `openclaw.json` 的对应 `skills.entries.*.env`，不要提交进仓库。
 - 权限设为 `0600`。
 - agent 私有角色信息放 workspace 的 `skills/.env`。
-- 共享 provider key 放 `~/.openclaw/skills/.env`。
+- 旧版 `.env` 只作为兼容 fallback。
 
 ## 调多平台输出
 
@@ -343,4 +344,3 @@ tail -f ~/.openclaw/skills/<skill>/logs/skill.jsonl | jq .
 3. 要发布给别人用的底层改动，放到你的 fork 或 agent pack 里。
 
 不要把 API key、真实 token、私密聊天记录提交进仓库。
-

@@ -41,9 +41,10 @@ skill 脚本支持两种产物投递方式，由环境变量 `OPENCLAW_OUTPUT_MO
 
 ## 环境
 
-- 通用 env 在 `~/.openclaw/skills/.env`
-- 本 agent 私有 env（Feishu 凭据 + 角色标识）在 `<workspace>/skills/.env`
-- 后者覆盖前者
+- voice / sing 的 API key 和默认音色优先从 `~/.openclaw/openclaw.json` 的 `skills.entries.voice.env` 读取。
+- selfie / video 的共享生成 key 优先从 `~/.openclaw/openclaw.json` 的 `skills.entries.selfie.env` 读取。
+- 脚本仍兼容旧安装的 `~/.openclaw/skills/.env`；本 agent 私有 env（Feishu 凭据 + 角色标识）在 `<workspace>/skills/.env`，会覆盖共享默认值。
+- 如果用户问语音/唱歌 key 在哪，先回答 `openclaw.json -> skills.entries.voice.env`，不要只提示去 `.env`。
 - `OPENCLAW_OUTPUT_MODE`：`feishu`（默认）或 `acp`（cc-connect 集成时设此值）
 
 ## 主动行为脚本（workspace/scripts/）

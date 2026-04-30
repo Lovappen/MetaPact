@@ -413,7 +413,7 @@ step "4. 收集凭据 (可选)"
 dim "下面会逐项问 5 类凭据：飞书 App、MiniMax、Volcengine、fal.ai、kie.ai。"
 dim "  - 任意项**直接回车**跳过，对应能力会被标记 '未启用'，不影响其他能力。"
 dim "  - API key 类输入是**隐藏**的（屏幕看不见但你确实在输入），不要以为卡住"
-dim "  - 全跳过也行：装完后随时通过 \$AGENT_WORKSPACE/skills/.env 补"
+dim "  - 全跳过也行：装完后随时通过 openclaw.json 的 skills.entries.*.env 补；旧版 .env 仍兼容"
 dim "详见仓库根目录 docs/nako/feishu-setup.md / docs/nako/models.md。"
 echo
 
@@ -422,6 +422,47 @@ SHARED_ENV="$OPENCLAW_SKILLS_DIR/.env"
 AGENT_ENV="$AGENT_WORKSPACE/skills/.env"
 if [ "$RESET_SECRETS" != "1" ]; then
   _reused=()
+  _OPENCLAW_JSON_REUSED_KEYS=""
+  _cfg_skill_exports="$(python3 - <<'PY'
+import json
+import os
+import shlex
+from pathlib import Path
+
+keys = {
+    "voice": [
+        "MINIMAX_API_KEY", "MINIMAX_GROUP_ID", "VOLCENGINE_API_KEY",
+        "VOLCENGINE_RESOURCE_ID", "VOICE_DEFAULT_MINIMAX",
+        "VOICE_DEFAULT_VOLCENGINE", "VOICE_DEFAULT_SPEED",
+        "OPENCLAW_GATEWAY_TOKEN",
+    ],
+    "selfie": ["FAL_KEY", "KIE_API_KEY", "OPENCLAW_GATEWAY_TOKEN"],
+}
+try:
+    data = json.loads(Path(os.path.expanduser("~/.openclaw/openclaw.json")).read_text())
+except Exception:
+    data = {}
+entries = ((data.get("skills") or {}).get("entries") or {})
+reused = []
+for skill, names in keys.items():
+    env = ((entries.get(skill) or {}).get("env") or {})
+    for key in names:
+        value = env.get(key)
+        if value is None or value == "" or os.environ.get(key):
+            continue
+        print(f"export {key}={shlex.quote(str(value))}")
+        reused.append(key)
+if reused:
+    print("_OPENCLAW_JSON_REUSED_KEYS=" + shlex.quote(" ".join(reused)))
+PY
+)"
+  if [ -n "$_cfg_skill_exports" ]; then
+    eval "$_cfg_skill_exports"
+    if [ -n "${_OPENCLAW_JSON_REUSED_KEYS:-}" ]; then
+      read -r -a _json_reused <<< "$_OPENCLAW_JSON_REUSED_KEYS"
+      _reused+=("${_json_reused[@]}")
+    fi
+  fi
   for envfile in "$SHARED_ENV" "$AGENT_ENV"; do
     if [ -f "$envfile" ]; then
       # Source existing values into shell only if NOT already set by caller env
@@ -438,7 +479,7 @@ if [ "$RESET_SECRETS" != "1" ]; then
     fi
   done
   if [ "${#_reused[@]}" -gt 0 ]; then
-    info "复用旧凭据 (${#_reused[@]} 项): $(printf '%s ' "${_reused[@]}")"
+    info "复用旧凭据/openclaw.json 配置 (${#_reused[@]} 项): $(printf '%s ' "${_reused[@]}")"
     dim "  想重新输入跑 --reset-secrets。"
     echo
   fi
@@ -571,6 +612,35 @@ if [ ! -f "$AGENT_WORKSPACE/MEMORY.md" ]; then
 else
   dim "  = MEMORY.md (保留用户运行时累积的记忆)"
 fi
+python3 - "$AGENT_WORKSPACE/MEMORY.md" <<'PY' || true
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+try:
+    text = path.read_text()
+except Exception:
+    raise SystemExit(0)
+
+replacements = {
+    "- **provider**：`MINIMAX_API_KEY` 优先，`VOLCENGINE_API_KEY` 备选":
+        "- **provider**：`MINIMAX_API_KEY` 优先，`VOLCENGINE_API_KEY` 备选；key 从 `openclaw.json -> skills.entries.voice.env` 读取，兼容旧 `.env`",
+    "- **provider**:`MINIMAX_API_KEY` 优先,`VOLCENGINE_API_KEY` 备选":
+        "- **provider**:`MINIMAX_API_KEY` 优先,`VOLCENGINE_API_KEY` 备选；key 从 `openclaw.json -> skills.entries.voice.env` 读取，兼容旧 `.env`",
+    "- **默认声音**：`female-tianmei`（可在 `<workspace>/skills/.env` 改 `VOICE_DEFAULT_MINIMAX`）":
+        "- **默认声音**：`female-tianmei`（可在 `openclaw.json -> skills.entries.voice.env` 改 `VOICE_DEFAULT_MINIMAX`）",
+    "- **默认声音**:`female-tianmei`(可在 `<workspace>/skills/.env` 改 `VOICE_DEFAULT_MINIMAX`)":
+        "- **默认声音**:`female-tianmei`(可在 `openclaw.json -> skills.entries.voice.env` 改 `VOICE_DEFAULT_MINIMAX`)",
+    "- **provider**：`FAL_KEY` 优先，`KIE_API_KEY` 备选":
+        "- **provider**：`FAL_KEY` 优先，`KIE_API_KEY` 备选；key 从 `openclaw.json -> skills.entries.selfie.env` 读取，兼容旧 `.env`",
+}
+
+new_text = text
+for old, new in replacements.items():
+    new_text = new_text.replace(old, new)
+if new_text != text:
+    path.write_text(new_text)
+PY
 
 # custom.md: ONLY create if missing, NEVER overwrite
 if [ ! -f "$AGENT_WORKSPACE/custom.md" ]; then
