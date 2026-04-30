@@ -8,10 +8,10 @@
 
 MetaPact 当前适配以下设备，点击设备名可跳转到天猫旗舰店查看规格与购买：
 
-| 设备 | 说明 | 购买入口 |
-|---|---|---|
-| [元力2][device-yuanli-2] | 元力系列二代设备，适合作为 MetaPact 的主力接入硬件。 | [天猫旗舰店][device-yuanli-2] |
-| [黑洞SE][device-blackhole-se] | 黑洞系列 SE 设备，适合偏好紧凑机身和入门配置的接入场景。 | [天猫旗舰店][device-blackhole-se] |
+| 图片 | 设备 | 说明 | 购买入口 |
+|---|---|---|---|
+| <img src="./docs/assets/devices/yuanli-2.png" alt="元力2" width="180"> | [元力2][device-yuanli-2] | 元力系列二代设备，适合作为 MetaPact 的主力接入硬件。 | [天猫旗舰店][device-yuanli-2] |
+| <img src="./docs/assets/devices/black-hole-se.png" alt="黑洞SE" width="180"> | [黑洞SE][device-blackhole-se] | 黑洞系列 SE 设备，适合偏好紧凑机身和入门配置的接入场景。 | [天猫旗舰店][device-blackhole-se] |
 
 [device-yuanli-2]: https://detail.tmall.com/item.htm?id=1037817609223&mi_id=0000GTxq8HMe9_PPAPH1tY1x1oMKqLKCdeKp6namIWJ9IRQ&spm=a21xtw.29178619.0.0&xxc=shop
 [device-blackhole-se]: https://detail.tmall.com/item.htm?id=1047577064356&mi_id=0000oFIIepmVf8WH_ZvYKGvTs2JM5LVDsepOoPar86Gg3A&spm=a21xtw.29178619.0.0&xxc=shop&skuId=6235813538860
