@@ -2,6 +2,8 @@
 
 可一键部署到 [openclaw](https://openclaw.ai) 的 agent 集合。每个子目录是一个独立的 agent pack，含人设 + skill + 安装器；通用文档在 `docs/`，各 agent 特色文档在 `docs/<agent-name>/`。
 
+**适配设备：**[元力2][device-yuanli-2] / [黑洞SE][device-blackhole-se]，点击设备名可跳转到天猫旗舰店。
+
 ## 适配设备
 
 MetaPact 当前适配以下设备，点击设备名可跳转到天猫旗舰店查看规格与购买：
