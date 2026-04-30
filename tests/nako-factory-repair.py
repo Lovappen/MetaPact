@@ -89,4 +89,37 @@ app_secret = "y"
     assert module.is_openclaw_gateway_args("node /usr/lib/node_modules/openclaw/openclaw.mjs gateway run --port 18789")
     assert not module.is_openclaw_gateway_args("openclaw acp --session agent:agent-nako-1:main")
 
+    parsed = module.parse_first_json_object("warning before json\n{\"pending\": []}\n")
+    assert parsed == {"pending": []}
+
+    requests = module.select_local_openclaw_device_repair_requests(
+        {
+            "pending": [
+                {
+                    "requestId": "repair-1",
+                    "deviceId": "device-1",
+                    "isRepair": True,
+                    "clientId": "cli",
+                    "clientMode": "cli",
+                },
+                {
+                    "requestId": "new-device",
+                    "deviceId": "device-2",
+                    "isRepair": False,
+                    "clientId": "cli",
+                    "clientMode": "cli",
+                },
+                {
+                    "requestId": "webchat",
+                    "deviceId": "device-1",
+                    "isRepair": True,
+                    "clientId": "openclaw-control-ui",
+                    "clientMode": "webchat",
+                },
+            ]
+        },
+        "device-1",
+    )
+    assert requests == ["repair-1"], requests
+
 print("nako factory repair checks passed")

@@ -584,6 +584,95 @@ def prewarm_openclaw_runtime_deps(env: dict) -> list:
     return results
 
 
+def parse_first_json_object(text: str):
+    decoder = json.JSONDecoder()
+    for idx, char in enumerate(text or ""):
+        if char != "{":
+            continue
+        try:
+            obj, _ = decoder.raw_decode(text[idx:])
+        except Exception:
+            continue
+        if isinstance(obj, dict):
+            return obj
+    return None
+
+
+def openclaw_device_id() -> str:
+    try:
+        data = json.loads((HOME / ".openclaw/identity/device.json").read_text(encoding="utf-8"))
+    except Exception:
+        return ""
+    value = data.get("deviceId")
+    return value if isinstance(value, str) else ""
+
+
+def select_local_openclaw_device_repair_requests(device_list: dict, device_id: str) -> list:
+    pending = device_list.get("pending")
+    if not isinstance(pending, list):
+        return []
+
+    selected = []
+    for item in pending:
+        if not isinstance(item, dict):
+            continue
+        request_id = item.get("requestId")
+        if not isinstance(request_id, str) or not request_id:
+            continue
+        if item.get("isRepair") is not True:
+            continue
+        if item.get("clientId") != "cli" or item.get("clientMode") != "cli":
+            continue
+        if device_id and item.get("deviceId") != device_id:
+            continue
+        selected.append(request_id)
+    return selected
+
+
+def approve_local_openclaw_device_repairs(env: dict) -> list:
+    openclaw = shutil.which("openclaw", path=env.get("PATH"))
+    if not openclaw or not (HOME / ".openclaw/devices").exists():
+        return []
+
+    device_id = openclaw_device_id()
+    try:
+        res = subprocess.run(
+            [openclaw, "devices", "list", "--json"],
+            cwd=HOME,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except Exception:
+        return []
+
+    device_list = parse_first_json_object(res.stdout or "")
+    if not isinstance(device_list, dict):
+        return []
+
+    approved = []
+    for request_id in select_local_openclaw_device_repair_requests(device_list, device_id):
+        try:
+            approve = subprocess.run(
+                [openclaw, "devices", "approve", request_id],
+                cwd=HOME,
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+        except Exception:
+            continue
+        if approve.returncode == 0:
+            approved.append(request_id)
+    return approved
+
+
 def prune_empty_cc_projects() -> list:
     if not CC_CONFIG.exists():
         return []
@@ -820,6 +909,7 @@ def start_cc_connect(env: dict, reason: str = ""):
         removed = prune_empty_cc_projects()
         repaired = repair_nako_cc_projects()
         gateway_ok = ensure_openclaw_gateway(env)
+        approved_devices = approve_local_openclaw_device_repairs(env) if gateway_ok else []
 
         stop_cc_connect()
         stopped_openclaw = stop_openclaw_clients()
@@ -832,6 +922,8 @@ def start_cc_connect(env: dict, reason: str = ""):
                 f.write(("=== pruned empty projects: " + ", ".join(removed) + " ===\n").encode("utf-8"))
             if repaired:
                 f.write(("=== repaired projects: " + ", ".join(repaired) + " ===\n").encode("utf-8"))
+            if approved_devices:
+                f.write(("=== approved local openclaw device repairs: " + ", ".join(approved_devices) + " ===\n").encode("utf-8"))
             subprocess.Popen(["cc-connect"], stdout=f, stderr=subprocess.STDOUT,
                              stdin=subprocess.DEVNULL, env=env, start_new_session=True)
 
