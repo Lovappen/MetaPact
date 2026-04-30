@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import importlib.util
+import json
 import os
 import subprocess
 import tempfile
@@ -87,6 +88,38 @@ token = "keep-other"
     assert 'type = "weixin"' in agent_1
     assert 'keep-other' in text
     assert not module.remove_platform_binding_for_agent("agent-nako-1", "feishu")
+
+    cc_sessions = cfg.parent / "sessions" / "agent-nako-1_abc.json"
+    cc_sessions.parent.mkdir(parents=True, exist_ok=True)
+    cc_sessions.write_text(
+        """{
+  "sessions": {
+    "s1": {"id": "s1"},
+    "s2": {"id": "s2"}
+  },
+  "active_session": {
+    "feishu:chat:user": "s1",
+    "weixin:dm:user": "s2"
+  },
+  "user_sessions": {
+    "feishu:chat:user": ["s1"],
+    "weixin:dm:user": ["s2"]
+  },
+  "user_meta": {
+    "feishu:chat:user": {"name": "feishu"},
+    "weixin:dm:user": {"name": "weixin"}
+  }
+}
+""",
+        encoding="utf-8",
+    )
+    removed_sessions = module.reset_cc_connect_sessions_for_platform("agent-nako-1", "feishu")
+    assert removed_sessions == ["s1"], removed_sessions
+    data = json.loads(cc_sessions.read_text(encoding="utf-8"))
+    assert "s1" not in data["sessions"]
+    assert "s2" in data["sessions"]
+    assert "feishu:chat:user" not in data["active_session"]
+    assert data["active_session"]["weixin:dm:user"] == "s2"
 
     node_modules = Path(tmp) / ".openclaw" / "plugin-runtime-deps" / "openclaw-test" / "node_modules"
     stale = node_modules / ".semver-8C7644GC"
@@ -186,6 +219,21 @@ token = "keep-other"
     )
     assert module.openclaw_agent_configured("agent-nako-1")
     assert not module.agent_install_needed("agent-nako-1", {"install_rc": 0})
+
+    sessions_file = Path(tmp) / ".openclaw" / "agents" / "agent-nako-1" / "sessions" / "sessions.json"
+    sessions_file.parent.mkdir(parents=True, exist_ok=True)
+    sessions_file.write_text(
+        """{
+  "agent:agent-nako-1:main": {"sessionId": "main-session"},
+  "agent:agent-nako-1:cron:x": {"sessionId": "cron-session"}
+}
+""",
+        encoding="utf-8",
+    )
+    assert module.reset_openclaw_main_session("agent-nako-1") == "main-session"
+    data = json.loads(sessions_file.read_text(encoding="utf-8"))
+    assert "agent:agent-nako-1:main" not in data
+    assert "agent:agent-nako-1:cron:x" in data
 
     parsed = module.parse_first_json_object("warning before json\n{\"pending\": []}\n")
     assert parsed == {"pending": []}

@@ -326,6 +326,86 @@ def remove_platform_binding_for_agent(aid: str, platform: str) -> bool:
     return True
 
 
+def reset_cc_connect_sessions_for_platform(aid: str, platform: str) -> list:
+    if platform not in QR_PLATFORMS:
+        return []
+    sessions_dir = CC_CONFIG.parent / "sessions"
+    if not sessions_dir.exists():
+        return []
+
+    prefixes = tuple(f"{ptype}:" for ptype in cc_platform_types(platform))
+    removed = []
+    ts = time.strftime("%Y%m%d-%H%M%S")
+
+    for session_file in sessions_dir.glob(f"{aid}_*.json"):
+        try:
+            data = json.loads(session_file.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+
+        session_ids = set()
+        for key, sid in list((data.get("active_session") or {}).items()):
+            if key.startswith(prefixes):
+                session_ids.add(sid)
+        for key, ids in list((data.get("user_sessions") or {}).items()):
+            if key.startswith(prefixes):
+                session_ids.update(ids or [])
+
+        if not session_ids:
+            continue
+
+        backup = session_file.with_name(f"{session_file.name}.bak-rebind-{platform}-{ts}")
+        try:
+            backup.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            continue
+
+        for key in list((data.get("active_session") or {}).keys()):
+            if key.startswith(prefixes):
+                data["active_session"].pop(key, None)
+        for key in list((data.get("user_sessions") or {}).keys()):
+            if key.startswith(prefixes):
+                data["user_sessions"].pop(key, None)
+        for key in list((data.get("user_meta") or {}).keys()):
+            if key.startswith(prefixes):
+                data["user_meta"].pop(key, None)
+        for sid in session_ids:
+            (data.get("sessions") or {}).pop(sid, None)
+            removed.append(sid)
+
+        try:
+            session_file.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+            os.chmod(session_file, 0o600)
+        except Exception:
+            pass
+
+    return sorted(removed)
+
+
+def reset_openclaw_main_session(aid: str) -> str:
+    sessions_file = HOME / ".openclaw" / "agents" / aid / "sessions" / "sessions.json"
+    if not sessions_file.exists():
+        return ""
+    key = f"agent:{aid}:main"
+    try:
+        data = json.loads(sessions_file.read_text(encoding="utf-8"))
+    except Exception:
+        return ""
+    entry = data.get(key)
+    if not entry:
+        return ""
+    old_session = entry.get("sessionId") or ""
+    backup = sessions_file.with_name(f"sessions.json.bak-rebind-main-{time.strftime('%Y%m%d-%H%M%S')}")
+    try:
+        backup.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        data.pop(key, None)
+        sessions_file.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.chmod(sessions_file, 0o600)
+    except Exception:
+        return ""
+    return old_session
+
+
 def should_refresh_qr(n: int) -> bool:
     state = job_state(n)
     if state.get("status") in ("queued", "installing"):
@@ -1493,10 +1573,16 @@ async function poll(id){
 
             aid = state.get("agent_id") or agent_id_for(n)
             removed = remove_platform_binding_for_agent(aid, plat)
+            removed_sessions = reset_cc_connect_sessions_for_platform(aid, plat)
+            old_openclaw_session = reset_openclaw_main_session(aid)
             log = log_path_for(n)
             log.parent.mkdir(exist_ok=True)
             with log.open("a") as f:
-                f.write(f"\n=== rebind requested platform={plat} removed={removed} ===\n")
+                f.write(
+                    f"\n=== rebind requested platform={plat} removed={removed} "
+                    f"cc_sessions={','.join(removed_sessions) or '-'} "
+                    f"openclaw_main={old_openclaw_session or '-'} ===\n"
+                )
             write_state(
                 n,
                 status="generating_qr",
@@ -1511,6 +1597,8 @@ async function poll(id){
                 "agent_id": aid,
                 "rebind_platform": plat,
                 "binding_removed": removed,
+                "cc_sessions_removed": removed_sessions,
+                "openclaw_main_session_reset": bool(old_openclaw_session),
                 "qr_refresh_started": refresh_started,
                 "status_url": f"/status?id={n}",
                 "log_url": f"/log?id={n}",
