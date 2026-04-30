@@ -50,6 +50,8 @@ MiniMax 默认音色：`female-tianmei`（甜美女声）、`female-shaonv`（�
 - **无法复现已有歌曲的原旋律**（每次都是新创作），真翻唱需 `music-cover` + 上传原曲片段（本 skill 暂不支持）
 - 音色**不能**和 voice.sh 的 TTS 音色共用 — 两个系统独立
 
+voice / sing 会先读 `~/.openclaw/skills/.env`，再从 `openclaw.json -> skills.entries.voice.env` 补齐未设置的 key，最后叠加当前 agent 的 `skills/.env`。
+
 ## 👀 vision — 看图
 
 ```bash

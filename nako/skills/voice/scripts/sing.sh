@@ -17,6 +17,34 @@ set -euo pipefail
 _SHARED_SKILLS_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 [ -f "$_SHARED_SKILLS_DIR/.env" ] && set -a && source "$_SHARED_SKILLS_DIR/.env" && set +a
 
+_load_openclaw_voice_env() {
+  local _cfg="${OPENCLAW_CONFIG:-$HOME/.openclaw/openclaw.json}"
+  [ -f "$_cfg" ] || return 0
+  command -v python3 >/dev/null 2>&1 || return 0
+
+  while IFS='=' read -r _key _value; do
+    [ -n "$_key" ] || continue
+    [ -n "${!_key:-}" ] && continue
+    export "$_key=$_value"
+  done < <(python3 - "$_cfg" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+try:
+    data = json.loads(Path(sys.argv[1]).read_text())
+except Exception:
+    data = {}
+env = (((data.get("skills") or {}).get("entries") or {}).get("voice") or {}).get("env") or {}
+for key, value in env.items():
+    if isinstance(value, (str, int, float, bool)):
+        print(f"{key}={value}")
+PY
+)
+}
+
+_load_openclaw_voice_env
+
 _AGENT_ENV=""
 if [ -f "$PWD/skills/.env" ]; then
   _AGENT_ENV="$PWD/skills/.env"
@@ -158,7 +186,7 @@ EOF
   exit 1
 fi
 
-[ -z "${MINIMAX_API_KEY:-}" ] || [ -z "${MINIMAX_GROUP_ID:-}" ] && { log_error "MINIMAX_API_KEY and MINIMAX_GROUP_ID required"; exit 1; }
+[ -z "${MINIMAX_API_KEY:-}" ] || [ -z "${MINIMAX_GROUP_ID:-}" ] && { log_error "MINIMAX_API_KEY and MINIMAX_GROUP_ID required in openclaw.json skills.entries.voice.env or ~/.openclaw/skills/.env"; exit 1; }
 if ! _should_use_ccconnect_delivery; then
   if [ -z "${FEISHU_APP_ID:-}" ] || [ -z "${FEISHU_APP_SECRET:-}" ]; then
     log_error "FEISHU_APP_ID and FEISHU_APP_SECRET required"

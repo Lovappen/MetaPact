@@ -9,6 +9,34 @@ set -euo pipefail
 _SHARED_SKILLS_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 [ -f "$_SHARED_SKILLS_DIR/.env" ] && set -a && source "$_SHARED_SKILLS_DIR/.env" && set +a
 
+_load_openclaw_voice_env() {
+  local _cfg="${OPENCLAW_CONFIG:-$HOME/.openclaw/openclaw.json}"
+  [ -f "$_cfg" ] || return 0
+  command -v python3 >/dev/null 2>&1 || return 0
+
+  while IFS='=' read -r _key _value; do
+    [ -n "$_key" ] || continue
+    [ -n "${!_key:-}" ] && continue
+    export "$_key=$_value"
+  done < <(python3 - "$_cfg" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+try:
+    data = json.loads(Path(sys.argv[1]).read_text())
+except Exception:
+    data = {}
+env = (((data.get("skills") or {}).get("entries") or {}).get("voice") or {}).get("env") or {}
+for key, value in env.items():
+    if isinstance(value, (str, int, float, bool)):
+        print(f"{key}={value}")
+PY
+)
+}
+
+_load_openclaw_voice_env
+
 _AGENT_ENV=""
 if [ -f "$PWD/skills/.env" ]; then
   _AGENT_ENV="$PWD/skills/.env"
@@ -146,7 +174,7 @@ SPEED="${5:-1.0}"
 if [ "$PROVIDER" = "auto" ]; then
   if [ -n "${MINIMAX_API_KEY:-}" ]; then PROVIDER="minimax"
   elif [ -n "${VOLCENGINE_API_KEY:-}" ]; then PROVIDER="volcengine"
-  else log_error "No TTS API key"; exit 1; fi
+  else log_error "No TTS API key; configure openclaw.json skills.entries.voice.env or ~/.openclaw/skills/.env"; exit 1; fi
 fi
 
 skill_log_start voice tts_request "provider=$PROVIDER" "channel=$CHANNEL" "text_len=${#TEXT}" "voice_id=${VOICE_ID:-default}" "speed=$SPEED"
@@ -162,7 +190,7 @@ DURATION=""
 # ============================
 
 generate_minimax() {
-  [ -z "${MINIMAX_API_KEY:-}" ] || [ -z "${MINIMAX_GROUP_ID:-}" ] && { log_error "MINIMAX_API_KEY and MINIMAX_GROUP_ID required"; exit 1; }
+  [ -z "${MINIMAX_API_KEY:-}" ] || [ -z "${MINIMAX_GROUP_ID:-}" ] && { log_error "MINIMAX_API_KEY and MINIMAX_GROUP_ID required in openclaw.json skills.entries.voice.env or ~/.openclaw/skills/.env"; exit 1; }
   local voice="${VOICE_ID:-${VOICE_DEFAULT_MINIMAX:-female-tianmei}}"
   log_info "MiniMax TTS: voice=$voice, speed=$SPEED"
 
@@ -200,7 +228,7 @@ generate_minimax() {
 }
 
 generate_volcengine() {
-  [ -z "${VOLCENGINE_API_KEY:-}" ] && { log_error "VOLCENGINE_API_KEY required"; exit 1; }
+  [ -z "${VOLCENGINE_API_KEY:-}" ] && { log_error "VOLCENGINE_API_KEY required in openclaw.json skills.entries.voice.env or ~/.openclaw/skills/.env"; exit 1; }
   local voice="${VOICE_ID:-${VOICE_DEFAULT_VOLCENGINE:-zh_female_shuangkuaisisi_moon_bigtts}}"
   local resource_id="${VOLCENGINE_RESOURCE_ID:-seed-tts-1.0}"
   log_info "Volcengine TTS: voice=$voice, resource=$resource_id"

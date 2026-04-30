@@ -81,24 +81,19 @@ fi
 
 # Voice / Sing
 if [ -x "$SKILLS/voice/scripts/voice.sh" ]; then
-  if [ -f "$SKILLS/.env" ]; then
-    if grep -qE "^MINIMAX_API_KEY=.+" "$SKILLS/.env" 2>/dev/null || grep -qE "^VOLCENGINE_API_KEY=.+" "$SKILLS/.env" 2>/dev/null; then
-      info "voice: 至少一个 TTS key 已配"
-      PASS=$((PASS+1))
-    else
-      warn "voice: 未发现 TTS key，说话功能不可用"
-      FAIL=$((FAIL+1))
-    fi
-    if grep -qE "^MINIMAX_API_KEY=.+" "$SKILLS/.env" && grep -qE "^MINIMAX_GROUP_ID=.+" "$SKILLS/.env"; then
-      info "sing: MiniMax key + Group ID 已配"
-      PASS=$((PASS+1))
-    else
-      warn "sing: 缺 MINIMAX_API_KEY 或 MINIMAX_GROUP_ID，唱歌功能不可用"
-      SKIP=$((SKIP+1))
-    fi
+  if has_env_key MINIMAX_API_KEY || has_env_key VOLCENGINE_API_KEY || has_openclaw_skill_env_key voice MINIMAX_API_KEY || has_openclaw_skill_env_key voice VOLCENGINE_API_KEY; then
+    info "voice: 至少一个 TTS key 已配"
+    PASS=$((PASS+1))
   else
-    warn "voice: $SKILLS/.env 不存在"
+    warn "voice: 未发现 TTS key，说话功能不可用（支持 $SKILLS/.env 或 openclaw.json skills.entries.voice.env）"
     FAIL=$((FAIL+1))
+  fi
+  if { has_env_key MINIMAX_API_KEY && has_env_key MINIMAX_GROUP_ID; } || { has_openclaw_skill_env_key voice MINIMAX_API_KEY && has_openclaw_skill_env_key voice MINIMAX_GROUP_ID; }; then
+    info "sing: MiniMax key + Group ID 已配"
+    PASS=$((PASS+1))
+  else
+    warn "sing: 缺 MINIMAX_API_KEY 或 MINIMAX_GROUP_ID，唱歌功能不可用（支持 $SKILLS/.env 或 openclaw.json skills.entries.voice.env）"
+    SKIP=$((SKIP+1))
   fi
 fi
 
