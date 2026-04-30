@@ -188,6 +188,7 @@ def status_payload(n: int) -> dict:
     bound = bound_platforms_for_agent(aid)
     state["bound_platforms"] = sorted(bound)
     state["unbound_platforms"] = [plat for plat in QR_PLATFORMS if plat not in bound]
+    state["openclaw_agent_configured"] = openclaw_agent_configured(aid)
     with LOCK:
         active_qr = any(proc.poll() is None for proc in QR_PROCS.get(n, []))
     if state.get("status") == "awaiting_scan" and not active_qr:
@@ -341,12 +342,41 @@ def agent_install_command(aid: str) -> str:
         'echo "=== downloading installer: $url ==="; '
         f"if curl --retry 3 --connect-timeout 20 -fsSL \"$url\" | bash -s -- --agent-id {agent} --non-interactive --force --with-cc-connect; then "
         "exit 0; "
-        "fi; "
+        "else "
         "rc=$?; "
         'echo "=== installer failed rc=$rc url=$url ==="; '
+        "fi; "
         "done; "
         "exit $rc"
     )
+
+
+def openclaw_agent_configured(aid: str) -> bool:
+    cfg_path = HOME / ".openclaw/openclaw.json"
+    try:
+        cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+
+    agents = cfg.get("agents", {})
+    items = agents.get("list", []) if isinstance(agents, dict) else []
+    if not isinstance(items, list):
+        return False
+
+    expected_workspace = str(HOME / ".openclaw/workspace" / aid)
+    expected_agent_dir = str(HOME / ".openclaw/agents" / aid / "agent")
+    for item in items:
+        if not isinstance(item, dict) or item.get("id") != aid:
+            continue
+        return (
+            item.get("workspace") == expected_workspace
+            and item.get("agentDir") == expected_agent_dir
+        )
+    return False
+
+
+def agent_install_needed(aid: str, state: dict) -> bool:
+    return state.get("install_rc") != 0 or not openclaw_agent_configured(aid)
 
 
 def is_cc_connect_main_args(args: str) -> bool:
@@ -489,6 +519,46 @@ def openclaw_gateway_pids() -> list:
         if is_openclaw_gateway_args(args):
             pids.append(pid)
     return pids
+
+
+def stop_openclaw_gateways() -> list:
+    pids = openclaw_gateway_pids()
+    if not pids:
+        return []
+
+    for pid in pids:
+        try:
+            os.kill(pid, 15)
+        except ProcessLookupError:
+            pass
+        except PermissionError:
+            pass
+
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        if not openclaw_gateway_pids():
+            return pids
+        time.sleep(0.5)
+
+    for pid in pids:
+        try:
+            os.kill(pid, 9)
+        except ProcessLookupError:
+            pass
+        except PermissionError:
+            pass
+    return pids
+
+
+def restart_openclaw_gateway(env: dict) -> tuple:
+    with OPENCLAW_GATEWAY_LOCK:
+        clients = stop_openclaw_clients()
+        gateways = stop_openclaw_gateways()
+        deadline = time.time() + 10
+        while time.time() < deadline and tcp_port_open("127.0.0.1", OPENCLAW_GATEWAY_PORT):
+            time.sleep(0.5)
+        ok = ensure_openclaw_gateway(env)
+    return ok, clients, gateways
 
 
 def cleanup_openclaw_npm_rename_temps() -> list:
@@ -1002,7 +1072,7 @@ def run_install_and_qr(n: int, force_qr: bool = False, generation: int = None):
     ensure_cc_connect_config()
 
     state = job_state(n)
-    install_needed = state.get("install_rc") != 0
+    install_needed = agent_install_needed(aid, state)
     if install_needed:
         write_state(n, status="installing", agent_id=aid, qr_generation=generation)
         with log.open("w") as f:
@@ -1017,6 +1087,12 @@ def run_install_and_qr(n: int, force_qr: bool = False, generation: int = None):
                 write_state(n, status="install_failed", install_rc=rc)
             return
 
+        gateway_ok, stopped_clients, stopped_gateways = restart_openclaw_gateway(env)
+        with log.open("a") as f:
+            f.write(
+                "\n=== restarted openclaw gateway after install: "
+                f"ok={gateway_ok} clients={stopped_clients} gateways={stopped_gateways} ===\n"
+            )
         write_state(n, status="installed", install_rc=rc)
 
     if not generation_current(n, generation):
@@ -1298,6 +1374,8 @@ async function poll(id){
             refresh_started = False
             if not existing:
                 refresh_started = start_worker(n, force_qr=False, reason="new")
+            elif agent_install_needed(agent_id_for(n), job_state(n)):
+                refresh_started = start_worker(n, force_qr=False, reason="repair")
             elif should_refresh_qr(n):
                 refresh_started = start_worker(n, force_qr=True, reason="refresh")
             code = 200 if existing else 202

@@ -111,7 +111,7 @@ BANNER
 step "1. 前置检查"
 
 MISSING_HARD=()
-for b in python3 jq curl uuidgen; do
+for b in python3 jq curl; do
   if has_bin "$b"; then info "$b"; else err "$b"; MISSING_HARD+=("$b"); fi
 done
 
@@ -133,7 +133,7 @@ fi
 
 # Optional bins (not fatal)
 MISSING_SOFT=()
-for b in whisper ffmpeg ffprobe xxd doki; do
+for b in whisper ffmpeg ffprobe xxd uuidgen doki; do
   has_bin "$b" && info "$b (可选)" || { warn "$b 缺失 (可选)"; MISSING_SOFT+=("$b"); }
 done
 if [ "${#MISSING_SOFT[@]}" -gt 0 ]; then
@@ -141,6 +141,7 @@ if [ "${#MISSING_SOFT[@]}" -gt 0 ]; then
   dim "以下依赖缺失，相关 skill 将在运行时报错提示："
   dim "  whisper / ffmpeg → hearing skill (转写语音)"
   dim "  xxd / ffprobe    → voice skill"
+  dim "  uuidgen          → outbound media filenames (falls back when possible)"
   dim "  doki             → dokidoki skill"
   dim "macOS 建议：brew install openai-whisper ffmpeg ; npm i -g @tryjoy/dokidoki"
   dim "Linux：sudo apt install ffmpeg libavcodec-extra（cc-connect 微信视频转码需要 AMR）"
@@ -223,6 +224,22 @@ fi
 # ─── Gateway preflight: ensure it's up early so cron / acp 后面都顺 ─────────
 step "1b. Gateway 预检"
 
+openclaw_cron_ready() {
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "${OPENCLAW_CRON_READY_TIMEOUT:-8}" openclaw cron list >/dev/null 2>&1
+  else
+    openclaw cron list >/dev/null 2>&1
+  fi
+}
+
+openclaw_timed() {
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "${OPENCLAW_INSTALL_CMD_TIMEOUT:-30}" openclaw "$@"
+  else
+    openclaw "$@"
+  fi
+}
+
 # 0) 修复常见配置障碍：缺 gateway.mode 直接 block 启动
 _changed_mode=0
 if ! openclaw config get gateway.mode >/dev/null 2>&1; then
@@ -233,10 +250,11 @@ fi
 #     Unhandled promise rejection (CIAO ANNOUNCEMENT CANCELLED) 干掉 gateway。
 #     默认禁掉，需要 LAN 发现的用户自行 enable。
 # Always disable bonjour (idempotent — `disable` 对已禁的也无害)。
-openclaw plugins disable bonjour >/dev/null 2>&1 && { info "已禁 bonjour 插件 (容器/隔离网络稳定性)"; _changed_mode=1; } || true
+# 不把它计为强制重启条件；部分 openclaw 版本对已禁插件也返回成功。
+openclaw plugins disable bonjour >/dev/null 2>&1 && info "已禁 bonjour 插件 (容器/隔离网络稳定性)" || true
 
 # 1) 若 gateway 已跑 + 我们刚改了 mode → 重启让新 config 生效
-if openclaw cron list >/dev/null 2>&1; then
+if openclaw_cron_ready; then
   if [ "$_changed_mode" = "1" ]; then
     info "重启 gateway 让新 config 生效..."
     openclaw daemon restart >/dev/null 2>&1 || pkill -f openclaw-gateway 2>/dev/null
@@ -246,7 +264,7 @@ if openclaw cron list >/dev/null 2>&1; then
   fi
 fi
 
-if ! openclaw cron list >/dev/null 2>&1; then
+if ! openclaw_cron_ready; then
   info "gateway 未起，尝试自动启动..."
   GW_LOG="/tmp/openclaw-gw-startup.log"
   : > "$GW_LOG"
@@ -255,23 +273,23 @@ if ! openclaw cron list >/dev/null 2>&1; then
   openclaw daemon install >>"$GW_LOG" 2>&1 || true
   openclaw daemon start   >>"$GW_LOG" 2>&1 || true
   for i in $(seq 1 60); do
-    openclaw cron list >/dev/null 2>&1 && { info "gateway 已通过 daemon 启动 (${i}s)"; break; }
+    openclaw_cron_ready && { info "gateway 已通过 daemon 启动 (${i}s)"; break; }
     sleep 1
   done
 
   # 2) Fallback：foreground nohup
-  if ! openclaw cron list >/dev/null 2>&1; then
+  if ! openclaw_cron_ready; then
     dim "  daemon 模式没起来，fallback 后台 foreground..."
     nohup openclaw gateway --allow-unconfigured --auth none >>"$GW_LOG" 2>&1 &
     disown 2>/dev/null || true
     for i in $(seq 1 60); do
-      openclaw cron list >/dev/null 2>&1 && { info "gateway foreground 已起 (${i}s, 日志 $GW_LOG)"; break; }
+      openclaw_cron_ready && { info "gateway foreground 已起 (${i}s, 日志 $GW_LOG)"; break; }
       sleep 1
     done
   fi
 
   # 3) 都失败 → 暴露日志末尾让用户看到真实错误
-  if ! openclaw cron list >/dev/null 2>&1; then
+  if ! openclaw_cron_ready; then
     warn "gateway 仍未起，下面是启动日志末尾："
     tail -8 "$GW_LOG" 2>&1 | sed "s/^/    /" >&2
     dim "  完整日志：$GW_LOG"
@@ -424,6 +442,20 @@ if [ "$RESET_SECRETS" != "1" ]; then
     dim "  想重新输入跑 --reset-secrets。"
     echo
   fi
+fi
+
+_cfg_gateway_token="$(python3 - <<'PY'
+import json, os
+try:
+    data = json.load(open(os.path.expanduser("~/.openclaw/openclaw.json")))
+except Exception:
+    data = {}
+token = (((data.get("gateway") or {}).get("auth") or {}).get("token") or "")
+print(token)
+PY
+)"
+if [ -n "$_cfg_gateway_token" ]; then
+  export OPENCLAW_GATEWAY_TOKEN="$_cfg_gateway_token"
 fi
 
 if [ "$NON_INTERACTIVE" = "1" ]; then
@@ -623,7 +655,19 @@ step "7. 合并 openclaw.json"
 step "7b. 注册 cron jobs (heartbeat / daily-script / missing-reminder)"
 
 gateway_up=0
-if has_bin openclaw && openclaw cron list >/dev/null 2>&1; then gateway_up=1; fi
+if has_bin openclaw; then
+  for i in $(seq 1 25); do
+    if openclaw_cron_ready; then
+      gateway_up=1
+      [ "$i" = "1" ] || info "gateway cron API 已恢复 (${i}s)"
+      break
+    fi
+    if [ $((i % 5)) = "0" ]; then
+      dim "  等待 gateway cron API 恢复... (${i})"
+    fi
+    sleep 1
+  done
+fi
 
 if [ "$gateway_up" = "0" ]; then
   warn "gateway 自动启动失败，跳过 cron 注册"
@@ -638,9 +682,9 @@ if [ "$gateway_up" = "0" ]; then
 elif has_bin openclaw; then
   register_or_update_cron() {
     local name="$1" expr="$2" msg="$3" id="" rc=0 _err=""
-    id="$(openclaw cron show "$name" --json 2>/dev/null | python3 -c 'import json,sys; print((json.load(sys.stdin).get("id") or ""))' 2>/dev/null || true)"
+    id="$(openclaw_timed cron show "$name" --json 2>/dev/null | python3 -c 'import json,sys; print((json.load(sys.stdin).get("id") or ""))' 2>/dev/null || true)"
     if [ -n "$id" ]; then
-      _err=$(openclaw cron edit "$id" --agent "$AGENT_ID" --cron "$expr" \
+      _err=$(openclaw_timed cron edit "$id" --agent "$AGENT_ID" --cron "$expr" \
            --message "$msg" --session-key "agent:$AGENT_ID:main" \
            --session isolated --no-deliver 2>&1 >/dev/null) && rc=0 || rc=$?
       if [ "$rc" = "0" ]; then
@@ -649,7 +693,7 @@ elif has_bin openclaw; then
         warn "$name 更新失败 (rc=$rc): $(echo "$_err" | head -2)"
       fi
     else
-      _err=$(openclaw cron add --name "$name" --agent "$AGENT_ID" --cron "$expr" \
+      _err=$(openclaw_timed cron add --name "$name" --agent "$AGENT_ID" --cron "$expr" \
            --message "$msg" --session-key "agent:$AGENT_ID:main" \
            --session isolated --no-deliver 2>&1 >/dev/null) && rc=0 || rc=$?
       if [ "$rc" = "0" ]; then

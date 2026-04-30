@@ -32,7 +32,7 @@ pwsh MetaPact\install.ps1
 ## 前置
 
 - 已安装 [openclaw](https://www.npmjs.com/package/openclaw) 且 `~/.openclaw` 存在
-- macOS / Linux: `jq curl python3 uuidgen`（安装器会检查）
+- macOS / Linux: `jq curl python3`（安装器会检查）；`uuidgen` 用于多媒体文件名，缺失时脚本会自动 fallback
 - Windows 10+: PowerShell 7+、`python`、`jq`、`curl`
 - 一个飞书自建应用（[创建教程](../docs/nako/feishu-setup.md)）
 - 至少一个对话模型已配在 `openclaw.json`（最好是 `sensenova/SenseChat-Character-Agt`，详见 [models.md](../docs/nako/models.md)）

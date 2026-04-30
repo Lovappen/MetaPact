@@ -62,8 +62,9 @@ download_factory_file() {
     echo "Downloading ${name} from ${base}/${name}"
     if curl --retry 3 --connect-timeout 20 -fsSL "${base}/${name}" -o "${dest}"; then
       return 0
+    else
+      last_rc=$?
     fi
-    last_rc=$?
   done
   return "${last_rc}"
 }
@@ -78,8 +79,9 @@ run_agent_installer() {
       --force \
       --with-cc-connect; then
       return 0
+    else
+      last_rc=$?
     fi
-    last_rc=$?
   done
   return "${last_rc}"
 }

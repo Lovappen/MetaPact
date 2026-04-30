@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import importlib.util
 import os
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -88,6 +89,70 @@ app_secret = "y"
     assert module.is_openclaw_gateway_args("openclaw gateway run --port 18789")
     assert module.is_openclaw_gateway_args("node /usr/lib/node_modules/openclaw/openclaw.mjs gateway run --port 18789")
     assert not module.is_openclaw_gateway_args("openclaw acp --session agent:agent-nako-1:main")
+
+    fake_bin = Path(tmp) / "bin"
+    fake_bin.mkdir()
+    fake_curl = fake_bin / "curl"
+    fake_curl.write_text("#!/bin/sh\nprintf 'exit 7\\n'\n", encoding="utf-8")
+    fake_curl.chmod(0o755)
+    old_urls = module.INSTALL_URLS
+    try:
+        module.INSTALL_URLS = ("https://example.test/install.sh",)
+        env = os.environ.copy()
+        env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
+        rc = subprocess.run(
+            ["bash", "-c", module.agent_install_command("agent-nako-1")],
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        ).returncode
+        assert rc == 7, rc
+    finally:
+        module.INSTALL_URLS = old_urls
+
+    openclaw_cfg = Path(tmp) / ".openclaw" / "openclaw.json"
+    openclaw_cfg.parent.mkdir(parents=True, exist_ok=True)
+    openclaw_cfg.write_text(
+        """{
+  "agents": {
+    "list": [
+      {
+        "id": "agent-nako-1",
+        "name": "agent-nako-1",
+        "workspace": "/Users/openclaw/.openclaw/workspace/agent-nako-1",
+        "agentDir": "/Users/openclaw/.openclaw/agents/agent-nako-1/agent"
+      }
+    ]
+  }
+}
+""",
+        encoding="utf-8",
+    )
+    assert not module.openclaw_agent_configured("agent-nako-1")
+    assert module.agent_install_needed("agent-nako-1", {"install_rc": 0})
+    openclaw_cfg.write_text(
+        """{
+  "agents": {
+    "list": [
+      {
+        "id": "agent-nako-1",
+        "name": "agent-nako-1",
+        "workspace": "%s",
+        "agentDir": "%s"
+      }
+    ]
+  }
+}
+"""
+        % (
+            Path(tmp) / ".openclaw" / "workspace" / "agent-nako-1",
+            Path(tmp) / ".openclaw" / "agents" / "agent-nako-1" / "agent",
+        ),
+        encoding="utf-8",
+    )
+    assert module.openclaw_agent_configured("agent-nako-1")
+    assert not module.agent_install_needed("agent-nako-1", {"install_rc": 0})
 
     parsed = module.parse_first_json_object("warning before json\n{\"pending\": []}\n")
     assert parsed == {"pending": []}

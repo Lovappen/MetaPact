@@ -67,6 +67,19 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
 command -v jq &>/dev/null || { log_error "jq required"; exit 1; }
 
+new_uuid() {
+  if command -v uuidgen >/dev/null 2>&1; then
+    uuidgen | tr '[:upper:]' '[:lower:]'
+  elif [ -r /proc/sys/kernel/random/uuid ]; then
+    cat /proc/sys/kernel/random/uuid
+  else
+    python3 - <<'PY'
+import uuid
+print(uuid.uuid4())
+PY
+  fi
+}
+
 _infer_ccconnect_project() {
   local value base
 
@@ -335,7 +348,7 @@ esac
 if _should_use_ccconnect_delivery; then
   OUTDIR="${OPENCLAW_HOME:-$HOME/.openclaw}/media/outbound"
   mkdir -p "$OUTDIR"
-  VIDEO_FILE="${OUTDIR}/$(uuidgen | tr '[:upper:]' '[:lower:]').mp4"
+  VIDEO_FILE="${OUTDIR}/$(new_uuid).mp4"
   if curl -s -o "$VIDEO_FILE" "$VIDEO_URL" && [ -s "$VIDEO_FILE" ]; then
     skill_log_ok selfie acp_emit_video "path=$VIDEO_FILE" "provider=$PROVIDER"
     _ccconnect_send_file "$VIDEO_FILE" "${CAPTION:-🎬}" ccconnect_send_video || true
@@ -378,7 +391,7 @@ if [ -n "${FEISHU_APP_ID:-}" ] && [ -n "${FEISHU_APP_SECRET:-}" ]; then
     # Download video to temp file
     OUTDIR="${OPENCLAW_HOME:-$HOME/.openclaw}/media/outbound"
     mkdir -p "$OUTDIR"
-    TMPFILE="$OUTDIR/$(uuidgen | tr '[:upper:]' '[:lower:]').mp4"
+    TMPFILE="$OUTDIR/$(new_uuid).mp4"
     curl -s -o "$TMPFILE" "$VIDEO_URL"
 
     if [ -s "$TMPFILE" ]; then

@@ -259,6 +259,14 @@ if (-not $ResetSecrets) {
   }
 }
 
+try {
+  $cfgForGatewayToken = Get-Content $OpenclawConfig -Raw | ConvertFrom-Json
+  $cfgGatewayToken = $cfgForGatewayToken.gateway.auth.token
+  if ($cfgGatewayToken) {
+    [Environment]::SetEnvironmentVariable("OPENCLAW_GATEWAY_TOKEN", $cfgGatewayToken, "Process")
+  }
+} catch {}
+
 Set-EnvDefault "FEISHU_APP_ID"
 Set-EnvDefault "FEISHU_APP_SECRET"
 Set-EnvDefault "MINIMAX_API_KEY"

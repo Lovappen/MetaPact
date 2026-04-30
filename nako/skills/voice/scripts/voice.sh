@@ -30,6 +30,19 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
 command -v jq &>/dev/null || { log_error "jq required"; exit 1; }
 
+new_uuid() {
+  if command -v uuidgen >/dev/null 2>&1; then
+    uuidgen | tr '[:upper:]' '[:lower:]'
+  elif [ -r /proc/sys/kernel/random/uuid ]; then
+    cat /proc/sys/kernel/random/uuid
+  else
+    python3 - <<'PY'
+import uuid
+print(uuid.uuid4())
+PY
+  fi
+}
+
 _infer_ccconnect_project() {
   local value base
 
@@ -140,7 +153,7 @@ skill_log_start voice tts_request "provider=$PROVIDER" "channel=$CHANNEL" "text_
 
 OUTDIR="${OPENCLAW_HOME:-$HOME/.openclaw}/media/outbound"
 mkdir -p "$OUTDIR"
-REQUEST_ID="$(uuidgen | tr '[:upper:]' '[:lower:]')"
+REQUEST_ID="$(new_uuid)"
 MP3_FILE="${OUTDIR}/${REQUEST_ID}.mp3"
 DURATION=""
 
