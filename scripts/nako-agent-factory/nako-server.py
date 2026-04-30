@@ -260,6 +260,72 @@ def unbound_platforms_for_agent(aid: str) -> list:
     return [plat for plat in QR_PLATFORMS if plat not in bound]
 
 
+def cc_platform_types(platform: str) -> set:
+    if platform == "feishu":
+        return {"feishu", "lark"}
+    return {platform}
+
+
+def remove_platform_binding_for_agent(aid: str, platform: str) -> bool:
+    """Remove one cc-connect platform binding from one project.
+
+    This is used for explicit rebinds only. The normal refresh path must not
+    drop working credentials for platforms that are already bound.
+    """
+    if platform not in QR_PLATFORMS or not CC_CONFIG.exists():
+        return False
+
+    try:
+        text = CC_CONFIG.read_text(encoding="utf-8")
+    except Exception:
+        return False
+
+    parts = re.split(r"(?m)(?=^\[\[projects\]\]\s*$)", text)
+    if len(parts) <= 1:
+        return False
+
+    target_types = cc_platform_types(platform)
+    changed = False
+    kept_projects = []
+
+    for part in parts:
+        if not part.startswith("[[projects]]"):
+            kept_projects.append(part)
+            continue
+
+        name_match = re.search(r'(?m)^name\s*=\s*"([^"]+)"\s*$', part)
+        if (name_match.group(1) if name_match else "") != aid:
+            kept_projects.append(part)
+            continue
+
+        blocks = re.split(r"(?m)(?=^\[\[projects\.platforms\]\]\s*$)", part)
+        if len(blocks) <= 1:
+            kept_projects.append(part)
+            continue
+
+        kept_blocks = [blocks[0]]
+        for block in blocks[1:]:
+            type_match = re.search(r'(?m)^type\s*=\s*"([^"]+)"\s*$', block)
+            ptype = type_match.group(1) if type_match else ""
+            if ptype in target_types:
+                changed = True
+                continue
+            kept_blocks.append(block)
+        kept_projects.append("".join(kept_blocks))
+
+    if not changed:
+        return False
+
+    backup = CC_CONFIG.parent / f"config.toml.bak-rebind-{platform}-{time.strftime('%Y%m%d-%H%M%S')}"
+    try:
+        backup.write_text(text, encoding="utf-8")
+        CC_CONFIG.write_text("".join(kept_projects), encoding="utf-8")
+        os.chmod(CC_CONFIG, 0o600)
+    except Exception:
+        return False
+    return True
+
+
 def should_refresh_qr(n: int) -> bool:
     state = job_state(n)
     if state.get("status") in ("queued", "installing"):
@@ -1062,13 +1128,14 @@ def create_or_get_job_for_ip(client_ip: str):
         return n, False, client_ip
 
 
-def run_install_and_qr(n: int, force_qr: bool = False, generation: int = None):
+def run_install_and_qr(n: int, force_qr: bool = False, generation: int = None, target_platforms=None):
     """Background worker: install agent when needed, then run QR onboarding."""
     aid = agent_id_for(n)
     log = JOB_DIR / f"{aid}.log"
     env = tool_env()
     if generation is None:
         generation = next_generation(n)
+    target_platforms = [p for p in (target_platforms or []) if p in QR_PLATFORMS]
     ensure_cc_connect_config()
 
     state = job_state(n)
@@ -1098,7 +1165,7 @@ def run_install_and_qr(n: int, force_qr: bool = False, generation: int = None):
     if not generation_current(n, generation):
         return
 
-    platforms = unbound_platforms_for_agent(aid)
+    platforms = target_platforms or unbound_platforms_for_agent(aid)
     if not platforms:
         bound = bound_platforms_for_agent(aid)
         write_state(n, status="ready", qr_refresh_in_progress=False,
@@ -1108,7 +1175,10 @@ def run_install_and_qr(n: int, force_qr: bool = False, generation: int = None):
         return
 
     with log.open("a") as f:
-        f.write(f"\n=== qr generation {generation} force={force_qr} ===\n")
+        f.write(
+            f"\n=== qr generation {generation} force={force_qr} "
+            f"platforms={','.join(platforms)} ===\n"
+        )
 
     clear_qr = {}
     for plat in platforms:
@@ -1214,13 +1284,15 @@ def run_install_and_qr(n: int, force_qr: bool = False, generation: int = None):
         schedule_reload_for_bound_platforms(n, bound, env, reason=f"{aid}:qr-finished")
 
 
-def start_worker(n: int, force_qr: bool = False, reason: str = "") -> bool:
+def start_worker(n: int, force_qr: bool = False, reason: str = "", target_platforms=None) -> bool:
     generation = next_generation(n)
+    target_platforms = [p for p in (target_platforms or []) if p in QR_PLATFORMS]
     if force_qr:
         state = job_state(n)
         aid = state.get("agent_id") or agent_id_for(n)
         clear_qr = {}
-        for plat in unbound_platforms_for_agent(aid):
+        platforms = target_platforms or unbound_platforms_for_agent(aid)
+        for plat in platforms:
             try:
                 (JOB_DIR / f"{aid}-{plat}.png").unlink()
             except FileNotFoundError:
@@ -1230,7 +1302,11 @@ def start_worker(n: int, force_qr: bool = False, reason: str = "") -> bool:
             clear_qr[f"{plat}_rc"] = None
         write_state(n, status="generating_qr", qr_refresh_in_progress=True, **clear_qr)
         stop_qr_processes(n)
-    t = threading.Thread(target=run_install_and_qr, args=(n, force_qr, generation), daemon=True)
+    t = threading.Thread(
+        target=run_install_and_qr,
+        args=(n, force_qr, generation, target_platforms),
+        daemon=True,
+    )
     t.start()
     return True
 
@@ -1251,9 +1327,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.wfile.write("""<!doctype html><html lang="zh-CN"><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>Nako Factory</title>
 <style>
 :root{color-scheme:light;--bg:#f6f7f9;--panel:#fff;--text:#17202a;--muted:#687385;--line:#dde3ea;--accent:#2563eb;--accent-dark:#1d4ed8;--ok:#0f8a5f;--warn:#a16207;--bad:#b42318;--shadow:0 14px 36px rgba(20,30,45,.08)}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,"PingFang SC","Microsoft YaHei",sans-serif}.page{width:min(1120px,100%);margin:0 auto;padding:28px 18px 36px}.topbar{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:18px}.brand h1{margin:0;font-size:26px;line-height:1.2;letter-spacing:0}.brand p{margin:6px 0 0;color:var(--muted)}button{border:0;border-radius:8px;background:var(--accent);color:#fff;padding:11px 16px;font-weight:700;font-size:15px;cursor:pointer;white-space:nowrap;box-shadow:0 8px 18px rgba(37,99,235,.18)}button:hover{background:var(--accent-dark)}button:disabled{cursor:wait;opacity:.72}.summary{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 18px}.pill{display:inline-flex;align-items:center;min-height:30px;border:1px solid var(--line);border-radius:999px;background:#fff;padding:4px 10px;color:var(--muted);font-size:13px}.pill strong{color:var(--text);font-weight:700}.status-ready{color:var(--ok)}.status-working{color:var(--accent)}.status-warn{color:var(--warn)}.status-bad{color:var(--bad)}.qr-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-bottom:18px}.qr-card{background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow);padding:18px}.qr-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}.qr-title{font-size:18px;font-weight:800}.qr-state{font-size:13px;color:var(--muted);white-space:nowrap}.qr-wrap{display:grid;place-items:center;min-height:286px;border:1px dashed #cbd5e1;border-radius:8px;background:#f8fafc}.qr{width:min(260px,78vw);height:min(260px,78vw);image-rendering:pixelated}.qr-placeholder{display:flex;min-height:260px;align-items:center;justify-content:center;flex-direction:column;text-align:center;color:var(--muted);padding:22px}.qr-placeholder strong{display:block;color:var(--text);font-size:18px;margin-top:12px}.qr-placeholder span{display:block;margin-top:4px}.spinner{width:34px;height:34px;border-radius:999px;border:3px solid #dbe4ef;border-top-color:var(--accent);animation:spin 1s linear infinite}.check{display:grid;place-items:center;width:42px;height:42px;border-radius:999px;background:#e7f7ef;color:var(--ok);font-size:26px;font-weight:900}.qr-link{margin:12px 0 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.qr-link a{color:var(--accent);text-decoration:none}.qr-link a:hover{text-decoration:underline}.hint{margin:0 0 18px;color:var(--muted)}.details{display:grid;gap:10px;margin-top:10px}details{background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow)}summary{cursor:pointer;padding:13px 16px;font-weight:800}pre{margin:0;border-top:1px solid var(--line);background:#0f172a;color:#dbeafe;padding:14px 16px;max-height:340px;overflow:auto;white-space:pre-wrap;font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.empty{background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow);padding:26px;color:var(--muted)}@keyframes spin{to{transform:rotate(360deg)}}@media(max-width:760px){.page{padding:20px 12px 28px}.topbar{display:block}.topbar button{width:100%;margin-top:14px}.qr-grid{grid-template-columns:1fr}.qr-wrap{min-height:240px}.qr-placeholder{min-height:220px}.brand h1{font-size:23px}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,"PingFang SC","Microsoft YaHei",sans-serif}.page{width:min(1120px,100%);margin:0 auto;padding:28px 18px 36px}.topbar{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:18px}.brand h1{margin:0;font-size:26px;line-height:1.2;letter-spacing:0}.brand p{margin:6px 0 0;color:var(--muted)}button{border:0;border-radius:8px;background:var(--accent);color:#fff;padding:11px 16px;font-weight:700;font-size:15px;cursor:pointer;white-space:nowrap;box-shadow:0 8px 18px rgba(37,99,235,.18)}button:hover{background:var(--accent-dark)}button:disabled{cursor:wait;opacity:.72}.small-btn{width:100%;margin-top:12px;background:#fff;color:var(--accent);border:1px solid #bfd0ff;box-shadow:none;padding:9px 12px;font-size:14px}.small-btn:hover{background:#eef4ff}.summary{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 18px}.pill{display:inline-flex;align-items:center;min-height:30px;border:1px solid var(--line);border-radius:999px;background:#fff;padding:4px 10px;color:var(--muted);font-size:13px}.pill strong{color:var(--text);font-weight:700}.status-ready{color:var(--ok)}.status-working{color:var(--accent)}.status-warn{color:var(--warn)}.status-bad{color:var(--bad)}.qr-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-bottom:18px}.qr-card{background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow);padding:18px}.qr-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}.qr-title{font-size:18px;font-weight:800}.qr-state{font-size:13px;color:var(--muted);white-space:nowrap}.qr-wrap{display:grid;place-items:center;min-height:286px;border:1px dashed #cbd5e1;border-radius:8px;background:#f8fafc}.qr{width:min(260px,78vw);height:min(260px,78vw);image-rendering:pixelated}.qr-placeholder{display:flex;min-height:260px;align-items:center;justify-content:center;flex-direction:column;text-align:center;color:var(--muted);padding:22px}.qr-placeholder strong{display:block;color:var(--text);font-size:18px;margin-top:12px}.qr-placeholder span{display:block;margin-top:4px}.spinner{width:34px;height:34px;border-radius:999px;border:3px solid #dbe4ef;border-top-color:var(--accent);animation:spin 1s linear infinite}.check{display:grid;place-items:center;width:42px;height:42px;border-radius:999px;background:#e7f7ef;color:var(--ok);font-size:26px;font-weight:900}.qr-link{margin:12px 0 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.qr-link a{color:var(--accent);text-decoration:none}.qr-link a:hover{text-decoration:underline}.hint{margin:0 0 18px;color:var(--muted)}.details{display:grid;gap:10px;margin-top:10px}details{background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow)}summary{cursor:pointer;padding:13px 16px;font-weight:800}pre{margin:0;border-top:1px solid var(--line);background:#0f172a;color:#dbeafe;padding:14px 16px;max-height:340px;overflow:auto;white-space:pre-wrap;font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.empty{background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow);padding:26px;color:var(--muted)}@keyframes spin{to{transform:rotate(360deg)}}@media(max-width:760px){.page{padding:20px 12px 28px}.topbar{display:block}.topbar button{width:100%;margin-top:14px}.qr-grid{grid-template-columns:1fr}.qr-wrap{min-height:240px}.qr-placeholder{min-height:220px}.brand h1{font-size:23px}}
 </style></head>
-<body><main class=page><div class=topbar><div class=brand><h1>Nako Agent Factory</h1><p>同一个客户端 IP 只会分配一个 agent；未绑定时再次点击会刷新二维码。</p></div><button id=createBtn onclick="create()">生成 / 刷新二维码</button></div><div id=out><div class=empty>点击按钮后开始安装并生成飞书、微信二维码。</div></div></main>
+<body><main class=page><div class=topbar><div class=brand><h1>Nako Agent Factory</h1><p>同一个客户端 IP 只会分配一个 agent；未绑定时再次点击会刷新二维码，已绑定平台可在卡片里解绑重扫。</p></div><button id=createBtn onclick="create()">生成 / 刷新二维码</button></div><div id=out><div class=empty>点击按钮后开始安装并生成飞书、微信二维码。</div></div></main>
 <script>
 let timer=null;
 const platforms=[
@@ -1275,7 +1351,7 @@ function summaryHTML(j){
 }
 function hintText(j){
   const unbound=(j.unbound_platforms||[]).map(x=>platforms.find(p=>p.key===x)?.name||x).join('、');
-  return unbound?('未绑定：'+unbound+'。二维码超时后再次点击上方按钮即可刷新。'):'飞书和微信均已绑定。';
+  return unbound?('未绑定：'+unbound+'。二维码超时后再次点击上方按钮即可刷新。'):'飞书和微信均已绑定；如需换绑，点击对应卡片的“解绑并重扫”。';
 }
 function qrHTML(j){return platforms.map(p=>renderQR(j,p)).join('');}
 function renderQR(j,p){
@@ -1285,16 +1361,17 @@ function renderQR(j,p){
   const working=['queued','installing','installed','generating_qr','awaiting_scan'].includes(j.status)||j.qr_refresh_in_progress;
   let body='';
   let state=bound?'已绑定':(working?'正在生成':'待生成');
-  if(img){
+  if(img&&!bound){
     body='<img class=qr src="'+esc(img)+'" alt="'+esc(p.name)+'二维码">';
-    state=bound?'已绑定':'待扫码';
+    state='待扫码';
   }else if(bound){
     body='<div class=qr-placeholder><div class=check>✓</div><strong>已绑定</strong><span>'+esc(p.name)+' 已可使用</span></div>';
   }else{
     body='<div class=qr-placeholder><div class=spinner></div><strong>正在生成二维码</strong><span>'+esc(p.desc)+'</span></div>';
   }
-  const link=url?'<p class=qr-link><a href="'+esc(url)+'" target="_blank" rel="noreferrer">'+esc(url)+'</a></p>':'<p class=qr-link><span class=muted>链接生成后会显示在这里</span></p>';
-  return '<section class=qr-card><div class=qr-head><div class=qr-title>'+esc(p.name)+'</div><div class=qr-state>'+esc(state)+'</div></div><div class=qr-wrap>'+body+'</div>'+link+'</section>';
+  const link=url&&!bound?'<p class=qr-link><a href="'+esc(url)+'" target="_blank" rel="noreferrer">'+esc(url)+'</a></p>':'<p class=qr-link><span class=muted>链接生成后会显示在这里</span></p>';
+  const action=bound&&!working?'<button class=small-btn onclick="rebind('+Number(j.id)+',\\''+esc(p.key)+'\\',\\''+esc(p.name)+'\\')">解绑并重扫</button>':'';
+  return '<section class=qr-card><div class=qr-head><div class=qr-title>'+esc(p.name)+'</div><div class=qr-state>'+esc(state)+'</div></div><div class=qr-wrap>'+body+'</div>'+link+action+'</section>';
 }
 function render(j){
   document.getElementById('out').innerHTML='<div id=qrGrid class=qr-grid>'+qrHTML(j)+'</div><div id=summary class=summary>'+summaryHTML(j)+'</div><p id=hint class=hint>'+esc(hintText(j))+'</p><div class=details><details id=infoDetails><summary>运行信息</summary><pre id=info></pre></details><details id=logDetails><summary>安装 / 二维码日志</summary><pre id=log></pre></details></div>';
@@ -1325,6 +1402,19 @@ async function create(){
   btn.disabled=true;btn.textContent='处理中...';
   try{
     const r=await fetch('/create',{method:'POST'});const j=await r.json();
+    render(j);
+    poll(j.id);
+  }finally{
+    btn.disabled=false;btn.textContent='生成 / 刷新二维码';
+  }
+}
+async function rebind(id,platform,name){
+  if(!confirm('解绑 '+name+' 并重新生成二维码？')) return;
+  const btn=document.getElementById('createBtn');
+  btn.disabled=true;btn.textContent='处理中...';
+  try{
+    const r=await fetch('/rebind?id='+encodeURIComponent(id)+'&platform='+encodeURIComponent(platform),{method:'POST'});
+    const j=await r.json();
     render(j);
     poll(j.id);
   }finally{
@@ -1368,7 +1458,9 @@ async function poll(id){
         return self._json(404, {"error": "not found"})
 
     def do_POST(self):
-        if self.path == "/create":
+        u = urllib.parse.urlparse(self.path)
+        q = urllib.parse.parse_qs(u.query)
+        if u.path == "/create":
             client_ip = client_ip_from_request(self)
             n, existing, client_ip = create_or_get_job_for_ip(client_ip)
             refresh_started = False
@@ -1387,6 +1479,43 @@ async function poll(id){
                             "log_url": f"/log?id={n}",
                             "next": "GET /status?id={} 查看状态和日志".format(n)})
             return self._json(code, payload)
+        if u.path == "/rebind":
+            try:
+                n = int(q.get("id", ["0"])[0])
+            except Exception:
+                return self._json(400, {"error": "bad id"})
+            plat = q.get("platform", [""])[0]
+            if plat not in QR_PLATFORMS:
+                return self._json(400, {"error": "bad platform"})
+            state = job_state(n)
+            if state.get("status") in ("unknown", "corrupt"):
+                return self._json(404, {"error": "job not found"})
+
+            aid = state.get("agent_id") or agent_id_for(n)
+            removed = remove_platform_binding_for_agent(aid, plat)
+            log = log_path_for(n)
+            log.parent.mkdir(exist_ok=True)
+            with log.open("a") as f:
+                f.write(f"\n=== rebind requested platform={plat} removed={removed} ===\n")
+            write_state(
+                n,
+                status="generating_qr",
+                agent_id=aid,
+                qr_refresh_in_progress=True,
+                cc_reload_platforms=sorted(bound_platforms_for_agent(aid)),
+            )
+            refresh_started = start_worker(n, force_qr=True, reason=f"rebind-{plat}", target_platforms=[plat])
+            payload = status_payload(n)
+            payload.update({
+                "id": n,
+                "agent_id": aid,
+                "rebind_platform": plat,
+                "binding_removed": removed,
+                "qr_refresh_started": refresh_started,
+                "status_url": f"/status?id={n}",
+                "log_url": f"/log?id={n}",
+            })
+            return self._json(202, payload)
         return self._json(404, {"error": "not found"})
 
     def log_message(self, fmt, *a):

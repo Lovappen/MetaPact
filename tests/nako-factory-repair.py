@@ -55,6 +55,39 @@ app_secret = "y"
     assert 'display_name = "OpenClaw agent-nako-1"' in text
     assert 'OPENCLAW_CCCONNECT_PROJECT = "agent-nako-1"' in text
 
+    cfg.write_text(
+        text
+        + """
+
+[[projects.platforms]]
+type = "weixin"
+
+[projects.platforms.options]
+token = "token"
+base_url = "https://ilinkai.weixin.qq.com"
+
+[[projects]]
+name = "agent-nako-2"
+
+[projects.agent]
+type = "acp"
+
+[[projects.platforms]]
+type = "weixin"
+
+[projects.platforms.options]
+token = "keep-other"
+""",
+        encoding="utf-8",
+    )
+    assert module.remove_platform_binding_for_agent("agent-nako-1", "feishu")
+    text = cfg.read_text(encoding="utf-8")
+    agent_1 = text.split('[[projects]]\nname = "agent-nako-2"', 1)[0]
+    assert 'type = "feishu"' not in agent_1
+    assert 'type = "weixin"' in agent_1
+    assert 'keep-other' in text
+    assert not module.remove_platform_binding_for_agent("agent-nako-1", "feishu")
+
     node_modules = Path(tmp) / ".openclaw" / "plugin-runtime-deps" / "openclaw-test" / "node_modules"
     stale = node_modules / ".semver-8C7644GC"
     keep_bin = node_modules / ".bin"

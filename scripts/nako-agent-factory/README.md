@@ -70,6 +70,7 @@ service:
 
 - One client IP maps to one agent only.
 - QR generation is refreshable when not yet bound.
+- Bound platforms can be explicitly unbound and rebound from the QR card.
 - The page updates only QR/status areas, so logs are not hidden by polling.
 - Feishu and Weixin QR cards are shown at the top with placeholders.
 - Install logs and runtime info are collapsed at the bottom.
