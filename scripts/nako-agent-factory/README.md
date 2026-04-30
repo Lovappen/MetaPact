@@ -15,7 +15,7 @@ sudo bash install.sh
 Or install directly from GitHub:
 
 ```bash
-curl -fsSL https://cdn.jsdelivr.net/gh/Lovappen/Agents@main/scripts/nako-agent-factory/install.sh | sudo bash
+curl -fsSL https://cdn.jsdelivr.net/gh/Lovappen/MetaPact@main/scripts/nako-agent-factory/install.sh | sudo bash
 ```
 
 Open:
@@ -27,7 +27,7 @@ http://<server-ip>:8088/
 The first click on the page runs:
 
 ```bash
-curl -fsSL https://cdn.jsdelivr.net/gh/Lovappen/Agents@main/install.sh | bash -s -- --agent-id agent-nako-N --non-interactive --force --with-cc-connect
+curl -fsSL https://cdn.jsdelivr.net/gh/Lovappen/MetaPact@main/install.sh | bash -s -- --agent-id agent-nako-N --non-interactive --force --with-cc-connect
 ```
 
 If you want to preinstall OpenClaw and cc-connect while installing the web

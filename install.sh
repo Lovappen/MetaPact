@@ -1,8 +1,8 @@
 #!/bin/bash
-# install.sh — Lovappen/Agents Nako installer for macOS / Linux.
+# install.sh — Lovappen/MetaPact Nako installer for macOS / Linux.
 #
 # Usage:
-#   curl -fsSL https://cdn.jsdelivr.net/gh/Lovappen/Agents@main/install.sh | bash
+#   curl -fsSL https://cdn.jsdelivr.net/gh/Lovappen/MetaPact@main/install.sh | bash
 #   # or clone repo then:  bash install.sh [--force] [--agent-id <id>] [--non-interactive]
 #
 # Flags:
@@ -39,8 +39,8 @@ else
   fi
   TMPDL=$(mktemp -d)
   trap 'rm -rf "$TMPDL"' EXIT
-  echo "正在克隆 Agents 仓库 → $TMPDL ..."
-  git clone --depth 1 https://github.com/Lovappen/Agents.git "$TMPDL" >/dev/null 2>&1
+  echo "正在克隆 MetaPact 仓库 → $TMPDL ..."
+  git clone --depth 1 https://github.com/Lovappen/MetaPact.git "$TMPDL" >/dev/null 2>&1
   REPO_ROOT="$TMPDL"
 fi
 PACK_ROOT="$REPO_ROOT/nako"
@@ -101,7 +101,7 @@ fi
 cat <<BANNER
 
 ${C_BOLD}野木奈子 Agent Pack - 安装器${C_NC}
-  ${C_DIM}Repo: github.com/Lovappen/Agents${C_NC}
+  ${C_DIM}Repo: github.com/Lovappen/MetaPact${C_NC}
   ${C_DIM}Agent: $AGENT_ID${C_NC}
   ${C_DIM}Pack: $PACK_ROOT${C_NC}
 

@@ -1,7 +1,7 @@
 # install.ps1 — Nako agent pack installer for Windows PowerShell 7+
 #
 # Usage:
-#   iex (iwr -UseBasicParsing https://cdn.jsdelivr.net/gh/Lovappen/Agents@main/install.ps1).Content
+#   iex (iwr -UseBasicParsing https://cdn.jsdelivr.net/gh/Lovappen/MetaPact@main/install.ps1).Content
 #   # or: pwsh install.ps1 [-Force] [-AgentId agent-nako] [-NonInteractive] [-SkipSkills] [-SkipModels] [-ResetSecrets] [-WithFeishu] [-WithWeixin] [-CcConnectSource auto|npm|lazycat|skip]
 
 [CmdletBinding()]
@@ -71,8 +71,8 @@ if ($PSCommandPath) {
     ErrL "git required"; exit 1
   }
   $TmpDl = Join-Path $env:TEMP ("nako-pack-" + [guid]::NewGuid().ToString('N'))
-  Write-Host "正在克隆 Agents 仓库 → $TmpDl ..."
-  git clone --depth 1 https://github.com/Lovappen/Agents.git $TmpDl 2>$null | Out-Null
+  Write-Host "正在克隆 MetaPact 仓库 → $TmpDl ..."
+  git clone --depth 1 https://github.com/Lovappen/MetaPact.git $TmpDl 2>$null | Out-Null
   $RepoRoot = $TmpDl
 }
 $PackRoot = Join-Path $RepoRoot "nako"
@@ -92,7 +92,7 @@ if ($WithFeishu -or $WithWeixin) { $WithCcConnect = $true }
 
 Write-Host ""
 Write-Host "野木奈子 Agent Pack - 安装器 (Windows)" -ForegroundColor White -BackgroundColor DarkBlue
-Dim "  Repo:  github.com/Lovappen/Agents"
+Dim "  Repo:  github.com/Lovappen/MetaPact"
 Dim "  Agent: $AgentId"
 Dim "  Pack:  $PackRoot"
 Write-Host ""

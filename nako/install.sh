@@ -9,8 +9,8 @@ else
   command -v git >/dev/null || { echo "git required" >&2; exit 1; }
   TMPDL="$(mktemp -d)"
   trap 'rm -rf "$TMPDL"' EXIT
-  echo "正在克隆 Agents 仓库 → $TMPDL ..."
-  git clone --depth 1 https://github.com/Lovappen/Agents.git "$TMPDL" >/dev/null 2>&1
+  echo "正在克隆 MetaPact 仓库 → $TMPDL ..."
+  git clone --depth 1 https://github.com/Lovappen/MetaPact.git "$TMPDL" >/dev/null 2>&1
   REPO_ROOT="$TMPDL"
 fi
 

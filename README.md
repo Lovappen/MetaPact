@@ -1,21 +1,33 @@
-# Agents
+# MetaPact
 
 可一键部署到 [openclaw](https://openclaw.ai) 的 agent 集合。每个子目录是一个独立的 agent pack，含人设 + skill + 安装器；通用文档在 `docs/`，各 agent 特色文档在 `docs/<agent-name>/`。
+
+## 适配设备
+
+MetaPact 当前适配以下设备，点击设备名可跳转到天猫旗舰店查看规格与购买：
+
+| 设备 | 说明 | 购买入口 |
+|---|---|---|
+| [元力2][device-yuanli-2] | 元力系列二代设备，适合作为 MetaPact 的主力接入硬件。 | [天猫旗舰店][device-yuanli-2] |
+| [黑洞SE][device-blackhole-se] | 黑洞系列 SE 设备，适合偏好紧凑机身和入门配置的接入场景。 | [天猫旗舰店][device-blackhole-se] |
+
+[device-yuanli-2]: https://detail.tmall.com/item.htm?id=1037817609223&mi_id=0000GTxq8HMe9_PPAPH1tY1x1oMKqLKCdeKp6namIWJ9IRQ&spm=a21xtw.29178619.0.0&xxc=shop
+[device-blackhole-se]: https://detail.tmall.com/item.htm?id=1047577064356&mi_id=0000oFIIepmVf8WH_ZvYKGvTs2JM5LVDsepOoPar86Gg3A&spm=a21xtw.29178619.0.0&xxc=shop&skuId=6235813538860
 
 ## 一键安装
 
 ```bash
 # 默认装 nako（目前唯一 agent），交互式问 cc-connect 接入
-curl -fsSL https://cdn.jsdelivr.net/gh/Lovappen/Agents@main/install.sh | bash
+curl -fsSL https://cdn.jsdelivr.net/gh/Lovappen/MetaPact@main/install.sh | bash
 
 # 非交互 + QR 飞书一气呵成
-curl -fsSL https://cdn.jsdelivr.net/gh/Lovappen/Agents@main/install.sh | bash -s -- --with-feishu
+curl -fsSL https://cdn.jsdelivr.net/gh/Lovappen/MetaPact@main/install.sh | bash -s -- --with-feishu
 
 # 选别的 agent
-curl -fsSL https://cdn.jsdelivr.net/gh/Lovappen/Agents@main/install.sh | bash -s -- --agent <name>
+curl -fsSL https://cdn.jsdelivr.net/gh/Lovappen/MetaPact@main/install.sh | bash -s -- --agent <name>
 
 # 看可用 agent
-curl -fsSL https://cdn.jsdelivr.net/gh/Lovappen/Agents@main/install.sh | bash -s -- --list
+curl -fsSL https://cdn.jsdelivr.net/gh/Lovappen/MetaPact@main/install.sh | bash -s -- --list
 ```
 
 完整 flag：`bash install.sh --help`。
@@ -39,10 +51,10 @@ curl -fsSL https://cdn.jsdelivr.net/gh/Lovappen/Agents@main/install.sh | bash -s
 
 ```bash
 # 交互问要不要装飞书/微信
-curl -fsSL https://cdn.jsdelivr.net/gh/Lovappen/Agents@main/scripts/cc-connect-setup.sh | bash
+curl -fsSL https://cdn.jsdelivr.net/gh/Lovappen/MetaPact@main/scripts/cc-connect-setup.sh | bash
 
 # 指定 agent + 自动 QR 飞书 + 微信
-curl -fsSL https://cdn.jsdelivr.net/gh/Lovappen/Agents@main/scripts/cc-connect-setup.sh \
+curl -fsSL https://cdn.jsdelivr.net/gh/Lovappen/MetaPact@main/scripts/cc-connect-setup.sh \
   | bash -s -- --agent-id agent-foo --with-feishu --with-weixin
 
 # 本地 clone 后跑
@@ -56,7 +68,7 @@ bash scripts/cc-connect-setup.sh --agent-id agent-foo --with-feishu --with-weixi
 给一台 OpenClaw host 部署 8088 管理页：每个客户端 IP 只分配一个 `agent-nako-N`，页面生成 / 刷新飞书和微信二维码，并直接展示安装与 QR 日志。
 
 ```bash
-curl -fsSL https://cdn.jsdelivr.net/gh/Lovappen/Agents@main/scripts/nako-agent-factory/install.sh | sudo bash
+curl -fsSL https://cdn.jsdelivr.net/gh/Lovappen/MetaPact@main/scripts/nako-agent-factory/install.sh | sudo bash
 
 # 或本地 clone 后跑
 cd scripts/nako-agent-factory

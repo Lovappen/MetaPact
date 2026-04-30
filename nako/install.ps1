@@ -10,8 +10,8 @@ if ($PSCommandPath) {
     exit 1
   }
   $TmpDl = Join-Path $env:TEMP ("agents-install-" + [guid]::NewGuid().ToString('N'))
-  Write-Host "正在克隆 Agents 仓库 → $TmpDl ..."
-  git clone --depth 1 https://github.com/Lovappen/Agents.git $TmpDl 2>$null | Out-Null
+  Write-Host "正在克隆 MetaPact 仓库 → $TmpDl ..."
+  git clone --depth 1 https://github.com/Lovappen/MetaPact.git $TmpDl 2>$null | Out-Null
   $RepoRoot = $TmpDl
 }
 

@@ -7,26 +7,26 @@
 **macOS / Linux:**
 
 ```bash
-curl -fsSL https://cdn.jsdelivr.net/gh/Lovappen/Agents@main/install.sh | bash
+curl -fsSL https://cdn.jsdelivr.net/gh/Lovappen/MetaPact@main/install.sh | bash
 ```
 
 **Windows (PowerShell 7+):**
 
 ```powershell
-iex (iwr -UseBasicParsing https://cdn.jsdelivr.net/gh/Lovappen/Agents@main/install.ps1).Content
+iex (iwr -UseBasicParsing https://cdn.jsdelivr.net/gh/Lovappen/MetaPact@main/install.ps1).Content
 
 # cc-connect 飞书 QR
-$installer = [scriptblock]::Create((iwr -UseBasicParsing https://cdn.jsdelivr.net/gh/Lovappen/Agents@main/install.ps1).Content)
+$installer = [scriptblock]::Create((iwr -UseBasicParsing https://cdn.jsdelivr.net/gh/Lovappen/MetaPact@main/install.ps1).Content)
 & $installer -WithFeishu
 ```
 
 或者克隆仓库本地跑：
 
 ```bash
-git clone https://github.com/Lovappen/Agents.git
-bash Agents/install.sh
+git clone https://github.com/Lovappen/MetaPact.git
+bash MetaPact/install.sh
 # Windows:
-pwsh Agents\install.ps1
+pwsh MetaPact\install.ps1
 ```
 
 ## 前置

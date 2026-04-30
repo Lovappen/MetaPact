@@ -25,8 +25,8 @@ HOME       = Path(os.path.expanduser("~"))
 COUNTER    = HOME / ".nako-counter"
 AGENTS_REF = os.environ.get("NAKO_AGENTS_REF", "main")
 DEFAULT_INSTALL_URLS = (
-    f"https://cdn.jsdelivr.net/gh/Lovappen/Agents@{AGENTS_REF}/install.sh",
-    f"https://raw.githubusercontent.com/Lovappen/Agents/{AGENTS_REF}/install.sh",
+    f"https://cdn.jsdelivr.net/gh/Lovappen/MetaPact@{AGENTS_REF}/install.sh",
+    f"https://raw.githubusercontent.com/Lovappen/MetaPact/{AGENTS_REF}/install.sh",
 )
 INSTALL_URLS = tuple(
     item.strip()

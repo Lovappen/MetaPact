@@ -80,7 +80,7 @@ while [ $# -gt 0 ]; do
 cc-connect-setup.sh — 把 openclaw 上任意 agent 接到 cc-connect 多平台 host
 
 Usage:
-  curl -fsSL https://cdn.jsdelivr.net/gh/Lovappen/Agents@main/scripts/cc-connect-setup.sh | bash
+  curl -fsSL https://cdn.jsdelivr.net/gh/Lovappen/MetaPact@main/scripts/cc-connect-setup.sh | bash
   curl -fsSL ... | bash -s -- --agent-id agent-foo --with-feishu --with-weixin
   bash scripts/cc-connect-setup.sh [options]
 

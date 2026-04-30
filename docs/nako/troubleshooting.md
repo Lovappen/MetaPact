@@ -149,7 +149,7 @@ Channel is required (no configured channels detected)
 
 ## 提 Issue
 
-[github.com/Lovappen/Agents/issues](https://github.com/Lovappen/Agents/issues)
+[github.com/Lovappen/MetaPact/issues](https://github.com/Lovappen/MetaPact/issues)
 
 带上：
 
