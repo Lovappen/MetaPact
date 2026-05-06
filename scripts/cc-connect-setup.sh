@@ -19,7 +19,7 @@
 #   --cc-connect-source  auto|npm|lazycat|skip (默认 lazycat；CodeEagle fork)
 #   --uninstall          移除当前 agent 的 cc-connect project 与 session
 #   --purge-cc-connect   配合 --uninstall，额外卸载 daemon 并移除 cc-connect 二进制
-#   --uninstall-all      停止并完整移除 cc-connect：配置/会话/daemon/二进制
+#   --uninstall-all      停止并完整移除 cc-connect，并移除当前 agent 的 runtime 数据
 #   --non-interactive    不询问，缺什么就跳过
 
 set -euo pipefail
@@ -112,7 +112,7 @@ Flags:
   --cc-connect-source  auto|npm|lazycat|skip (默认 lazycat；CodeEagle fork)
   --uninstall          移除当前 agent 的 cc-connect project 与 session
   --purge-cc-connect   配合 --uninstall，额外卸载 daemon 并移除 cc-connect 二进制
-  --uninstall-all      停止并完整移除 cc-connect：配置/会话/daemon/二进制
+  --uninstall-all      停止并完整移除 cc-connect，并移除当前 agent 的 runtime 数据
   --non-interactive    不询问，缺什么就跳过
   -h, --help           本帮助
 HELP
@@ -146,6 +146,16 @@ WORKSPACE="$HOME/.openclaw/workspace/$AGENT_ID"
 HERMES_WORKSPACE="$HERMES_HOME/workspace/$AGENT_ID"
 QCLAW_WORKSPACE="$QCLAW_HOME/workspace-$AGENT_ID"
 
+expand_path() {
+  python3 - "$1" <<'PY'
+import os
+import sys
+from pathlib import Path
+
+print(str(Path(os.path.expanduser(sys.argv[1])).resolve()))
+PY
+}
+
 resolve_hermes_bin() {
   if [ -n "$HERMES_BIN" ]; then
     printf '%s\n' "$HERMES_BIN"
@@ -162,9 +172,9 @@ resolve_hermes_bin() {
   return 1
 }
 
-qclaw_json_value() {
-  local key="$1"
-  python3 - "$QCLAW_HOME/qclaw.json" "$key" <<'PY' 2>/dev/null || true
+qclaw_json_file_value() {
+  local path="$1" key="$2"
+  python3 - "$path" "$key" <<'PY' 2>/dev/null || true
 import json, sys
 from pathlib import Path
 
@@ -181,6 +191,10 @@ for part in key.split("."):
     cur = cur.get(part)
 print(cur if isinstance(cur, str) else "")
 PY
+}
+
+qclaw_json_value() {
+  qclaw_json_file_value "$QCLAW_HOME/qclaw.json" "$1"
 }
 
 resolve_qclaw_node_bin() {
@@ -702,6 +716,100 @@ backup_and_remove_cc_connect_home() {
   fi
 }
 
+backup_path_to_dir() {
+  local src="$1" backup_root="$2" label="$3" dest base n
+  [ -e "$src" ] || return 0
+  mkdir -p "$backup_root"
+  base="${label//\//_}"
+  dest="$backup_root/$base"
+  n=1
+  while [ -e "$dest" ]; do
+    dest="$backup_root/$base.$n"
+    n=$((n + 1))
+  done
+  if mv "$src" "$dest"; then
+    info "已移除 ${src}（备份: ${dest}）"
+  else
+    warn "无法移动 ${src} 到 ${dest}；跳过"
+  fi
+}
+
+remove_agent_from_openclaw_config() {
+  local config_path="$1" backup_root="$2" label="$3"
+  [ -f "$config_path" ] || return 0
+  python3 - "$config_path" "$AGENT_ID" "$backup_root" "$label" <<'PY'
+import json
+import sys
+import time
+from pathlib import Path
+
+config_path, agent_id, backup_root, label = sys.argv[1:]
+path = Path(config_path).expanduser()
+try:
+    cfg = json.loads(path.read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(0)
+if not isinstance(cfg, dict):
+    raise SystemExit(0)
+
+agents = cfg.get("agents")
+items = agents.get("list") if isinstance(agents, dict) else None
+if not isinstance(items, list):
+    raise SystemExit(0)
+
+new_items = [item for item in items if not (isinstance(item, dict) and item.get("id") == agent_id)]
+if len(new_items) == len(items):
+    raise SystemExit(0)
+
+backup_dir = Path(backup_root).expanduser()
+backup_dir.mkdir(parents=True, exist_ok=True)
+backup = backup_dir / f"{label}-openclaw.json.bak-{time.strftime('%Y%m%d-%H%M%S')}"
+backup.write_text(path.read_text(encoding="utf-8", errors="ignore"), encoding="utf-8")
+agents["list"] = new_items
+path.write_text(json.dumps(cfg, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+print(f"removed {agent_id} from {path} (backup: {backup})")
+PY
+}
+
+uninstall_agent_runtime_data() {
+  local ts backup_root qclaw_root qclaw_app_config qclaw_config_path qclaw_state_dir state_config_path
+  ts="$(date +%Y%m%d-%H%M%S)"
+  backup_root="$HOME/.nako-agent.bak-uninstall-all-$AGENT_ID-$ts"
+  step "移除 agent runtime 数据: $AGENT_ID"
+
+  remove_agent_from_openclaw_config "$HOME/.openclaw/openclaw.json" "$backup_root" "openclaw" || true
+  backup_path_to_dir "$HOME/.openclaw/workspace/$AGENT_ID" "$backup_root" "openclaw-workspace-$AGENT_ID"
+  backup_path_to_dir "$HOME/.openclaw/agents/$AGENT_ID" "$backup_root" "openclaw-agent-$AGENT_ID"
+
+  backup_path_to_dir "$HERMES_HOME/workspace/$AGENT_ID" "$backup_root" "hermes-workspace-$AGENT_ID"
+  backup_path_to_dir "$HERMES_HOME/skills/openclaw-imports/.env.$AGENT_ID" "$backup_root" "hermes-env-$AGENT_ID"
+
+  qclaw_root="$(expand_path "$QCLAW_HOME")"
+  qclaw_app_config="$qclaw_root/qclaw.json"
+  qclaw_state_dir="$(qclaw_json_file_value "$qclaw_app_config" stateDir)"
+  qclaw_config_path="$(qclaw_json_file_value "$qclaw_app_config" configPath)"
+  if [ -n "$qclaw_state_dir" ]; then
+    qclaw_root="$(expand_path "$qclaw_state_dir")"
+    qclaw_app_config="$qclaw_root/qclaw.json"
+    state_config_path="$(qclaw_json_file_value "$qclaw_app_config" configPath)"
+    [ -n "$state_config_path" ] && qclaw_config_path="$state_config_path"
+  fi
+  if [ -n "$qclaw_config_path" ]; then
+    qclaw_config_path="$(expand_path "$qclaw_config_path")"
+  else
+    qclaw_config_path="$qclaw_root/openclaw.json"
+  fi
+  remove_agent_from_openclaw_config "$qclaw_config_path" "$backup_root" "qclaw" || true
+  backup_path_to_dir "$qclaw_root/workspace-$AGENT_ID" "$backup_root" "qclaw-workspace-$AGENT_ID"
+  backup_path_to_dir "$qclaw_root/agents/$AGENT_ID" "$backup_root" "qclaw-agent-$AGENT_ID"
+
+  if [ -d "$backup_root" ]; then
+    info "agent runtime 数据已移出；备份目录: $backup_root"
+  else
+    dim "未发现 $AGENT_ID 的 runtime 数据"
+  fi
+}
+
 uninstall_cc_connect_all() {
   step "完整卸载 cc-connect"
   if command -v cc-connect >/dev/null 2>&1; then
@@ -711,7 +819,8 @@ uninstall_cc_connect_all() {
   stop_cc_connect_processes
   backup_and_remove_cc_connect_home
   purge_cc_connect_binary
-  info "cc-connect 已完整卸载；OpenClaw/Hermes/QClaw runtime 数据未删除"
+  uninstall_agent_runtime_data
+  info "cc-connect 和 agent 已完整卸载"
 }
 
 uninstall_cc_connect_project() {

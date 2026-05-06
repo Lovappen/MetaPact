@@ -119,8 +119,8 @@ function Invoke-CcSetup([string[]]$Flags) {
 }
 
 if ($UninstallAllCcConnect) {
-  Step "cc-connect 一键完整卸载"
-  $rc = Invoke-CcSetup @("--uninstall-all")
+  Step "cc-connect + agent 一键完整卸载"
+  $rc = Invoke-CcSetup @("--agent-id", $AgentId, "--uninstall-all")
   exit $rc
 }
 

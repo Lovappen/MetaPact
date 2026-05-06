@@ -73,10 +73,10 @@ To remove one agent's cc-connect binding:
 bash scripts/cc-connect-setup.sh --agent-id agent-nako-N --uninstall
 ```
 
-To remove cc-connect completely:
+To remove cc-connect and the default agent runtime data completely:
 
 ```bash
-bash scripts/cc-connect-setup.sh --uninstall-all
+bash scripts/cc-connect-setup.sh --agent-id agent-nako --uninstall-all
 ```
 
 ## Environment

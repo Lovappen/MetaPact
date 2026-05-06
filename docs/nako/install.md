@@ -42,14 +42,16 @@ bash scripts/cc-connect-setup.sh --agent-id agent-nako --uninstall
 
 如果要同时卸载 cc-connect daemon 并删除二进制，追加 `--purge-cc-connect`。
 
-一键完整卸载 cc-connect：
+一键完整卸载 cc-connect 和当前 agent：
 
 ```bash
-bash scripts/cc-connect-setup.sh --uninstall-all
+bash scripts/cc-connect-setup.sh --agent-id agent-nako --uninstall-all
 ```
 
-完整卸载会停止 daemon/进程、移除二进制，并把 `~/.cc-connect` 移到
-`~/.cc-connect.bak-uninstall-all-*` 备份目录；不会删除 OpenClaw/Hermes/QClaw 数据。
+完整卸载会停止 daemon/进程、移除二进制，把 `~/.cc-connect` 移到
+`~/.cc-connect.bak-uninstall-all-*`，并从 OpenClaw/QClaw 配置中移除当前 `--agent-id`
+（默认 `agent-nako`）。对应 workspace、agent 数据目录会移到
+`~/.nako-agent.bak-uninstall-all-<agent-id>-*` 备份目录。
 
 Windows PowerShell 对应参数使用 PascalCase，例如 `-Runtime qclaw`、`-ResetSecrets`、`-WithFeishu`、`-WithWeixin`、`-CcConnectSource lazycat`。PowerShell 的 cc-connect 自动接入会调用仓库里的 `scripts/cc-connect-setup.sh`，因此需要 Git Bash / WSL 等可用的 `bash`。
 
@@ -59,10 +61,10 @@ PowerShell 下接入 QClaw：
 pwsh install.ps1 -Runtime qclaw -WithFeishu -WithWeixin
 ```
 
-PowerShell 下一键完整卸载 cc-connect：
+PowerShell 下一键完整卸载 cc-connect 和当前 agent：
 
 ```powershell
-pwsh install.ps1 -UninstallAllCcConnect
+pwsh install.ps1 -AgentId agent-nako -UninstallAllCcConnect
 ```
 
 ## 非交互模式
