@@ -485,6 +485,13 @@ function Safe-InstallFile($src, $dst) {
   }
   $same = (Get-FileHash $src).Hash -eq (Get-FileHash $dst).Hash
   if ($same) { Dim "  = $dst"; return }
+  if (Test-DefaultWorkspaceTemplate $dst) {
+    $ts = Get-Date -Format "yyyyMMdd-HHmmss"
+    Copy-Item $dst "$dst.bak-$ts"
+    Copy-Item $src $dst -Force
+    Dim "  ± $dst (replaced default workspace template)"
+    return
+  }
   if ($Force) {
     $ts = Get-Date -Format "yyyyMMdd-HHmmss"
     Copy-Item $dst "$dst.bak-$ts"
@@ -497,6 +504,48 @@ function Safe-InstallFile($src, $dst) {
       Copy-Item $src $dst -Force
       Dim "  ± $dst"
     } else { Warn "  跳过 $dst" }
+  }
+}
+
+function Test-DefaultWorkspaceTemplate($path) {
+  if ($env:NAKO_OVERWRITE_DEFAULT_WORKSPACE_TEMPLATES -ne "1") { return $false }
+  if (-not (Test-Path $path)) { return $false }
+  $base = Split-Path -Leaf $path
+  $text = Get-Content $path -Raw
+  switch ($base) {
+    "AGENTS.md" { return $text.Contains("# AGENTS.md - Your Workspace") -and -not $text.Contains("@custom.md") }
+    "IDENTITY.md" { return $text.Contains("# IDENTITY.md - Who Am I?") }
+    "SOUL.md" { return $text.Contains("# SOUL.md - Who You Are") }
+    "USER.md" { return $text.Contains("# USER.md - About Your Human") }
+    "HEARTBEAT.md" { return $text.Contains("# HEARTBEAT.md Template") }
+    "TOOLS.md" { return $text.Contains("# TOOLS.md - Local Notes") }
+    default { return $false }
+  }
+}
+
+function Complete-PreseededWorkspace($workspace) {
+  $bootstrap = Join-Path $workspace "BOOTSTRAP.md"
+  if (Test-Path $bootstrap) {
+    $text = Get-Content $bootstrap -Raw
+    if ($text.Contains("# BOOTSTRAP.md - Hello, World") -and $text.Contains("_You just woke up.")) {
+      $ts = Get-Date -Format "yyyyMMdd-HHmmss"
+      Move-Item $bootstrap "$bootstrap.bak-qclaw-template-$ts" -Force
+    }
+  }
+  $stateDir = Join-Path $workspace ".openclaw"
+  $statePath = Join-Path $stateDir "workspace-state.json"
+  $state = @{}
+  if (Test-Path $statePath) {
+    try {
+      $parsed = Get-Content $statePath -Raw | ConvertFrom-Json -AsHashtable
+      if ($parsed) { $state = $parsed }
+    } catch { $state = @{} }
+  }
+  if (-not $state.ContainsKey("setupCompletedAt") -or -not $state["setupCompletedAt"]) {
+    $state["version"] = 1
+    $state["setupCompletedAt"] = [DateTime]::UtcNow.ToString("o")
+    New-Item -ItemType Directory -Path $stateDir -Force | Out-Null
+    $state | ConvertTo-Json -Depth 8 | Set-Content -Path $statePath
   }
 }
 
@@ -565,9 +614,12 @@ if (-not $SkipSkills) {
 # ─── Install persona ───────────────────────────────────────────────────────
 Step "6. 安装 agent 人设 → $AgentWorkspace"
 New-Item -ItemType Directory -Path $AgentWorkspace -Force | Out-Null
+$env:NAKO_OVERWRITE_DEFAULT_WORKSPACE_TEMPLATES = "1"
 foreach ($f in @("AGENTS.md","IDENTITY.md","SOUL.md","USER.md","HEARTBEAT.md","TOOLS.md")) {
   Safe-InstallFile (Join-Path $PackRoot "agent\$f") (Join-Path $AgentWorkspace $f)
 }
+Remove-Item Env:\NAKO_OVERWRITE_DEFAULT_WORKSPACE_TEMPLATES -ErrorAction SilentlyContinue
+Complete-PreseededWorkspace $AgentWorkspace
 
 $memoryPath = Join-Path $AgentWorkspace "MEMORY.md"
 if (-not (Test-Path $memoryPath)) {

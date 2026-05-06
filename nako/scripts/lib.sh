@@ -113,6 +113,37 @@ backup_file() {
   dim "  备份 → ${f}.bak-${ts}"
 }
 
+nako_is_default_workspace_template() {
+  [ "${NAKO_OVERWRITE_DEFAULT_WORKSPACE_TEMPLATES:-0}" = "1" ] || return 1
+  local f="$1" base
+  [ -f "$f" ] || return 1
+  base="$(basename "$f")"
+  case "$base" in
+    AGENTS.md)
+      grep -Fq '# AGENTS.md - Your Workspace' "$f" \
+        && ! grep -Fq '@custom.md' "$f"
+      ;;
+    IDENTITY.md)
+      grep -Fq '# IDENTITY.md - Who Am I?' "$f"
+      ;;
+    SOUL.md)
+      grep -Fq '# SOUL.md - Who You Are' "$f"
+      ;;
+    USER.md)
+      grep -Fq '# USER.md - About Your Human' "$f"
+      ;;
+    HEARTBEAT.md)
+      grep -Fq '# HEARTBEAT.md Template' "$f"
+      ;;
+    TOOLS.md)
+      grep -Fq '# TOOLS.md - Local Notes' "$f"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 # ───── Safe install pattern ─────
 # safe_install_file <src> <dst>
 #   If dst doesn't exist: install
@@ -127,6 +158,12 @@ safe_install_file() {
   fi
   if cmp -s "$src" "$dst"; then
     dim "  = $dst (unchanged)"
+    return 0
+  fi
+  if nako_is_default_workspace_template "$dst"; then
+    backup_file "$dst"
+    cp "$src" "$dst"
+    dim "  ± $dst (replaced default workspace template)"
     return 0
   fi
   if [ "${FORCE:-0}" = "1" ]; then

@@ -1126,9 +1126,47 @@ fi
 step "6. 安装 agent 人设 → $AGENT_WORKSPACE"
 
 mkdir -p "$AGENT_WORKSPACE"
+export NAKO_OVERWRITE_DEFAULT_WORKSPACE_TEMPLATES=1
 for f in AGENTS.md IDENTITY.md SOUL.md USER.md HEARTBEAT.md TOOLS.md; do
   safe_install_file "$PACK_ROOT/agent/$f" "$AGENT_WORKSPACE/$f"
 done
+unset NAKO_OVERWRITE_DEFAULT_WORKSPACE_TEMPLATES
+
+python3 - "$AGENT_WORKSPACE" <<'PY'
+import json
+import shutil
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+workspace = Path(sys.argv[1]).expanduser()
+bootstrap = workspace / "BOOTSTRAP.md"
+
+def read(path):
+    try:
+        return path.read_text(encoding="utf-8", errors="ignore")
+    except Exception:
+        return ""
+
+text = read(bootstrap)
+if "# BOOTSTRAP.md - Hello, World" in text and "_You just woke up." in text:
+    backup = bootstrap.with_name(f"BOOTSTRAP.md.bak-qclaw-template-{time.strftime('%Y%m%d-%H%M%S')}")
+    shutil.move(str(bootstrap), str(backup))
+
+state_path = workspace / ".openclaw" / "workspace-state.json"
+try:
+    state = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
+    if not isinstance(state, dict):
+        state = {}
+except Exception:
+    state = {}
+if not state.get("setupCompletedAt"):
+    state["version"] = 1
+    state["setupCompletedAt"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+PY
 
 # MEMORY.md (bootstrap): seed only if missing — runtime mutates it, never overwrite
 if [ ! -f "$AGENT_WORKSPACE/MEMORY.md" ]; then

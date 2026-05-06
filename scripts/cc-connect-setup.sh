@@ -80,9 +80,19 @@ QCLAW_NODE_BIN="${QCLAW_NODE_BIN:-}"
 QCLAW_OPENCLAW_MJS="${QCLAW_OPENCLAW_MJS:-}"
 QCLAW_CC_SESSION_SUFFIX="${QCLAW_CC_SESSION_SUFFIX:-session-cc-connect}"
 QCLAW_CC_SESSION_LABEL="${QCLAW_CC_SESSION_LABEL:-cc-connect 飞书/微信}"
+QCLAW_PERSONA_CHANGED=0
 UNINSTALL=0
 PURGE_CC_CONNECT=0
 UNINSTALL_ALL=0
+
+CC_SETUP_SCRIPT="${BASH_SOURCE[0]:-$0}"
+if [ -f "$CC_SETUP_SCRIPT" ]; then
+  CC_SETUP_SCRIPT_DIR="$(cd "$(dirname "$CC_SETUP_SCRIPT")" && pwd)"
+  CC_SETUP_REPO_ROOT="$(cd "$CC_SETUP_SCRIPT_DIR/.." && pwd)"
+else
+  CC_SETUP_REPO_ROOT=""
+fi
+NAKO_AGENT_SOURCE_DIR="${NAKO_AGENT_SOURCE_DIR:-${CC_SETUP_REPO_ROOT:+$CC_SETUP_REPO_ROOT/nako/agent}}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -276,15 +286,16 @@ resolve_qclaw_openclaw_mjs() {
 }
 
 ensure_qclaw_cc_session() {
-  python3 - "$QCLAW_HOME" "$AGENT_ID" "$QCLAW_WORKSPACE" "$QCLAW_CC_SESSION_SUFFIX" "$QCLAW_CC_SESSION_LABEL" <<'PY'
+  python3 - "$QCLAW_HOME" "$AGENT_ID" "$QCLAW_WORKSPACE" "$QCLAW_CC_SESSION_SUFFIX" "$QCLAW_CC_SESSION_LABEL" "${QCLAW_PERSONA_CHANGED:-0}" <<'PY'
 import json
+import shutil
 import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
-qclaw_home, agent_id, workspace, suffix, label = sys.argv[1:]
+qclaw_home, agent_id, workspace, suffix, label, force_reset = sys.argv[1:]
 session_dir = Path(qclaw_home).expanduser() / "agents" / agent_id / "sessions"
 session_dir.mkdir(parents=True, exist_ok=True)
 sessions_file = session_dir / "sessions.json"
@@ -300,6 +311,36 @@ now_ms = int(time.time() * 1000)
 
 entry = sessions.get(key)
 if not isinstance(entry, dict):
+    entry = {}
+
+def session_looks_bootstrapped(path_value):
+    if not isinstance(path_value, str) or not path_value:
+        return False
+    path = Path(path_value).expanduser()
+    try:
+        text = path.read_text(encoding="utf-8", errors="ignore")
+    except Exception:
+        return False
+    markers = [
+        "# BOOTSTRAP.md - Hello, World",
+        "# IDENTITY.md - Who Am I?",
+        "# SOUL.md - Who You Are",
+        "BOOTSTRAP.md says I have no name yet",
+        "BOOTSTRAP.md file in the workspace",
+        "我还没有名字",
+    ]
+    return any(marker in text for marker in markers)
+
+reset_existing = bool(entry) and (
+    force_reset == "1" or session_looks_bootstrapped(entry.get("sessionFile"))
+)
+if reset_existing:
+    old_session_file = entry.get("sessionFile")
+    if isinstance(old_session_file, str) and old_session_file:
+        old_path = Path(old_session_file).expanduser()
+        if old_path.exists():
+            backup = old_path.with_name(f"{old_path.name}.bak-cc-connect-stale-{time.strftime('%Y%m%d-%H%M%S')}")
+            shutil.move(str(old_path), str(backup))
     entry = {}
 
 for other_key, other_entry in list(sessions.items()):
@@ -366,7 +407,101 @@ if old != serialized:
         backup = sessions_file.with_name(f"sessions.json.bak-cc-connect-{time.strftime('%Y%m%d-%H%M%S')}")
         backup.write_text(old, encoding="utf-8")
     sessions_file.write_text(serialized, encoding="utf-8")
+print("reset" if reset_existing else "ok")
 PY
+}
+
+ensure_qclaw_nako_persona() {
+  [ -n "${NAKO_AGENT_SOURCE_DIR:-}" ] || return 0
+  [ -d "$NAKO_AGENT_SOURCE_DIR" ] || return 0
+  if [ "${NAKO_CC_CONNECT_SEED_PERSONA:-0}" != "1" ]; then
+    case "$AGENT_ID" in
+      agent-nako*) ;;
+      *) return 0 ;;
+    esac
+  fi
+
+  local result
+  result="$(python3 - "$NAKO_AGENT_SOURCE_DIR" "$QCLAW_WORKSPACE" <<'PY'
+import json
+import shutil
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+source_dir, workspace = map(lambda p: Path(p).expanduser(), sys.argv[1:])
+files = ["AGENTS.md", "IDENTITY.md", "SOUL.md", "USER.md", "HEARTBEAT.md", "TOOLS.md"]
+bootstrap_markers = [
+    "# BOOTSTRAP.md - Hello, World",
+    "_You just woke up.",
+]
+
+def read(path):
+    try:
+        return path.read_text(encoding="utf-8", errors="ignore")
+    except Exception:
+        return ""
+
+def looks_like_qclaw_template(path, name):
+    text = read(path)
+    if name == "AGENTS.md":
+        return "# AGENTS.md - Your Workspace" in text and "@custom.md" not in text
+    markers = {
+        "IDENTITY.md": "# IDENTITY.md - Who Am I?",
+        "SOUL.md": "# SOUL.md - Who You Are",
+        "USER.md": "# USER.md - About Your Human",
+        "HEARTBEAT.md": "# HEARTBEAT.md Template",
+        "TOOLS.md": "# TOOLS.md - Local Notes",
+    }
+    marker = markers.get(name)
+    return bool(marker and marker in text)
+
+def looks_like_qclaw_bootstrap(path):
+    text = read(path)
+    return all(marker in text for marker in bootstrap_markers)
+
+workspace.mkdir(parents=True, exist_ok=True)
+changed = False
+for name in files:
+    src = source_dir / name
+    dst = workspace / name
+    if not src.exists():
+        continue
+    src_text = src.read_text(encoding="utf-8")
+    if dst.exists() and read(dst) == src_text:
+        continue
+    if (not dst.exists()) or looks_like_qclaw_template(dst, name):
+        dst.write_text(src_text, encoding="utf-8")
+        changed = True
+
+bootstrap = workspace / "BOOTSTRAP.md"
+if bootstrap.exists() and looks_like_qclaw_bootstrap(bootstrap):
+    backup = bootstrap.with_name(f"BOOTSTRAP.md.bak-qclaw-template-{time.strftime('%Y%m%d-%H%M%S')}")
+    shutil.move(str(bootstrap), str(backup))
+    changed = True
+
+state_path = workspace / ".openclaw" / "workspace-state.json"
+try:
+    state = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
+    if not isinstance(state, dict):
+        state = {}
+except Exception:
+    state = {}
+if not state.get("setupCompletedAt"):
+    state["version"] = 1
+    state["setupCompletedAt"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    changed = True
+
+print("changed" if changed else "unchanged")
+PY
+)"
+  if [ "$result" = "changed" ]; then
+    QCLAW_PERSONA_CHANGED=1
+    info "QClaw Nako 人设已写入: $QCLAW_WORKSPACE"
+  fi
 }
 
 ensure_qclaw_agent_registration() {
@@ -1070,8 +1205,13 @@ elif [ "$RUNTIME" = "qclaw" ]; then
     exit 1
   }
   mkdir -p "$QCLAW_WORKSPACE"
+  ensure_qclaw_nako_persona
   ensure_qclaw_agent_registration
-  ensure_qclaw_cc_session
+  QCLAW_CC_SESSION_STATUS="$(ensure_qclaw_cc_session)"
+  if [ "$QCLAW_CC_SESSION_STATUS" = "reset" ] || [ "$QCLAW_PERSONA_CHANGED" = "1" ]; then
+    remove_cc_connect_sessions
+    CC_CONNECT_CHANGED=1
+  fi
 fi
 
 CONFIG_CHANGED="$(python3 - "$CC_CONFIG" "$AGENT_ID" "$RUNTIME" "$DISPLAY_NAME" "$HOME" "$WORKSPACE" "$HERMES_HOME" "$HERMES_WORKSPACE" "${HERMES_BIN:-}" "$QCLAW_HOME" "$QCLAW_WORKSPACE" "${QCLAW_NODE_BIN:-}" "${QCLAW_OPENCLAW_MJS:-}" "${QCLAW_OPENCLAW_CONFIG:-$QCLAW_HOME/openclaw.json}" "$QCLAW_CC_SESSION_SUFFIX" "$PATH" <<'PY'

@@ -7,11 +7,15 @@ grep -Fq 'CC_CONNECT_SOURCE="${CC_CONNECT_SOURCE:-lazycat}"' "$ROOT/install.sh"
 grep -Fq 'QClaw runtime 使用 QClaw 自带模型路由，跳过 OpenClaw provider preset' "$ROOT/install.sh"
 grep -Fq 'AGENT_WORKSPACE="$QCLAW_HOME/workspace-$AGENT_ID"' "$ROOT/install.sh"
 grep -Fq 'name = identity.get("name") or agent_id' "$ROOT/install.sh"
+grep -Fq 'NAKO_OVERWRITE_DEFAULT_WORKSPACE_TEMPLATES=1' "$ROOT/install.sh"
+grep -Fq 'BOOTSTRAP.md.bak-qclaw-template-' "$ROOT/install.sh"
 grep -Fq '[string]$CcConnectSource = "lazycat"' "$ROOT/install.ps1"
 grep -Fq '[ValidateSet("openclaw","hermes","qclaw")]' "$ROOT/install.ps1"
 grep -Fq '[switch]$UninstallAllCcConnect' "$ROOT/install.ps1"
 grep -Fq '@("--agent-id", $AgentId, "--uninstall-all")' "$ROOT/install.ps1"
 grep -Fq 'Sync-QClawRuntime' "$ROOT/install.ps1"
+grep -Fq 'Complete-PreseededWorkspace' "$ROOT/install.ps1"
+grep -Fq 'Test-DefaultWorkspaceTemplate' "$ROOT/install.ps1"
 grep -Fq '@("--agent-id", $AgentId, "--runtime", $Runtime)' "$ROOT/install.ps1"
 grep -Fq 'QClaw 主模型继承' "$ROOT/install.ps1"
 grep -Fq 'name = identity.get("name") or agent_id' "$ROOT/install.ps1"
@@ -48,6 +52,7 @@ grep -Fq 'resolve_qclaw_layout' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq '"OPENCLAW_CONFIG_PATH": qclaw_config_path' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'QCLAW_CC_SESSION_SUFFIX="${QCLAW_CC_SESSION_SUFFIX:-session-cc-connect}"' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'ensure_qclaw_cc_session' "$ROOT/scripts/cc-connect-setup.sh"
+grep -Fq 'ensure_qclaw_nako_persona' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'ensure_qclaw_agent_registration' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'f"agent:{agent_id}:{qclaw_session_suffix}"' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'sync_qclaw_runtime' "$ROOT/install.sh"
@@ -223,6 +228,117 @@ registered = [
 assert len(registered) == 1
 assert registered[0]["workspace"] == str(state / "workspace-agent-test")
 assert registered[0]["agentDir"] == str(state / "agents" / "agent-test" / "agent")
+PY
+
+tmp3="$(mktemp -d)"
+trap 'rm -rf "$tmp" "$tmp2" "$tmp3"' EXIT
+envfile3="$tmp3/bash_env"
+cat > "$envfile3" <<'EOF'
+cc-connect() {
+  case "$1" in
+    --version) echo "cc-connect lazycat/v1.3.3"; return 0 ;;
+    daemon) return 0 ;;
+    *) return 0 ;;
+  esac
+}
+ps() { return 0; }
+kill() { return 0; }
+sudo() { return 1; }
+EOF
+python3 - "$tmp3" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+app = root / ".qclaw-app"
+state = root / ".qclaw-state"
+workspace = state / "workspace-agent-nako"
+session_dir = state / "agents" / "agent-nako" / "sessions"
+app.mkdir(parents=True)
+state.mkdir(parents=True)
+workspace.mkdir(parents=True)
+session_dir.mkdir(parents=True)
+(app / "qclaw.json").write_text(
+    json.dumps(
+        {
+            "stateDir": str(state),
+            "cli": {
+                "nodeBinary": "/bin/echo",
+                "openclawMjs": "/tmp/fake-openclaw.mjs",
+            },
+        }
+    ),
+    encoding="utf-8",
+)
+(state / "qclaw.json").write_text(
+    json.dumps({"configPath": str(state / "openclaw.json")}),
+    encoding="utf-8",
+)
+for name, text in {
+    "AGENTS.md": "# AGENTS.md - Your Workspace\nIf `BOOTSTRAP.md` exists, follow it.\n",
+    "IDENTITY.md": "# IDENTITY.md - Who Am I?\n_Fill this in during your first conversation._\n",
+    "SOUL.md": "# SOUL.md - Who You Are\n_You're not a chatbot._\n",
+    "USER.md": "# USER.md - About Your Human\n_Learn about the person you're helping._\n",
+    "HEARTBEAT.md": "# HEARTBEAT.md Template\n",
+    "TOOLS.md": "# TOOLS.md - Local Notes\n",
+    "BOOTSTRAP.md": "# BOOTSTRAP.md - Hello, World\n_You just woke up._\n",
+}.items():
+    (workspace / name).write_text(text, encoding="utf-8")
+old_session = session_dir / "old-session.jsonl"
+old_session.write_text(
+    '{"type":"session","id":"old-session","cwd":"' + str(workspace) + '"}\n'
+    '{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"BOOTSTRAP.md says I have no name yet"}]}}\n',
+    encoding="utf-8",
+)
+(session_dir / "sessions.json").write_text(
+    json.dumps(
+        {
+            "agent:agent-nako:session-cc-connect": {
+                "sessionId": "old-session",
+                "updatedAt": 1,
+                "label": "cc-connect 飞书/微信",
+                "systemSent": True,
+                "sessionFile": str(old_session),
+            }
+        }
+    ),
+    encoding="utf-8",
+)
+cc_sessions = root / ".cc-connect" / "sessions"
+cc_sessions.mkdir(parents=True)
+(cc_sessions / "agent-nako_stale.json").write_text("stale", encoding="utf-8")
+PY
+(
+  cd "$tmp3"
+  HOME="$tmp3" QCLAW_HOME="$tmp3/.qclaw-app" BASH_ENV="$envfile3" \
+    bash "$ROOT/scripts/cc-connect-setup.sh" \
+      --agent-id agent-nako --runtime qclaw \
+      --cc-connect-source skip --non-interactive >/dev/null
+)
+python3 - "$tmp3" "$ROOT" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+repo = Path(sys.argv[2])
+state = (root / ".qclaw-state").resolve()
+workspace = state / "workspace-agent-nako"
+source = repo / "nako" / "agent"
+for name in ["AGENTS.md", "IDENTITY.md", "SOUL.md", "USER.md", "HEARTBEAT.md", "TOOLS.md"]:
+    assert (workspace / name).read_text(encoding="utf-8") == (source / name).read_text(encoding="utf-8"), name
+assert not (workspace / "BOOTSTRAP.md").exists()
+state_file = workspace / ".openclaw" / "workspace-state.json"
+setup_state = json.loads(state_file.read_text(encoding="utf-8"))
+assert setup_state.get("setupCompletedAt"), setup_state
+sessions_file = state / "agents" / "agent-nako" / "sessions" / "sessions.json"
+sessions = json.loads(sessions_file.read_text(encoding="utf-8"))
+entry = sessions["agent:agent-nako:session-cc-connect"]
+assert entry["sessionId"] != "old-session"
+assert entry["systemSent"] is False
+assert Path(entry["sessionFile"]).exists()
+assert not (root / ".cc-connect" / "sessions" / "agent-nako_stale.json").exists()
 PY
 
 echo "cc-connect default source checks passed"
