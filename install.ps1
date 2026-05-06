@@ -618,6 +618,14 @@ $env:NAKO_OVERWRITE_DEFAULT_WORKSPACE_TEMPLATES = "1"
 foreach ($f in @("AGENTS.md","IDENTITY.md","SOUL.md","USER.md","HEARTBEAT.md","TOOLS.md")) {
   Safe-InstallFile (Join-Path $PackRoot "agent\$f") (Join-Path $AgentWorkspace $f)
 }
+$agentAssets = Join-Path $PackRoot "agent\assets"
+if (Test-Path $agentAssets) {
+  $workspaceAssets = Join-Path $AgentWorkspace "assets"
+  New-Item -ItemType Directory -Path $workspaceAssets -Force | Out-Null
+  Get-ChildItem $agentAssets -File | ForEach-Object {
+    Safe-InstallFile $_.FullName (Join-Path $workspaceAssets $_.Name)
+  }
+}
 Remove-Item Env:\NAKO_OVERWRITE_DEFAULT_WORKSPACE_TEMPLATES -ErrorAction SilentlyContinue
 Complete-PreseededWorkspace $AgentWorkspace
 
@@ -823,13 +831,25 @@ def primary_model(value):
 default_identity = {
     "name": "野木奈子",
     "emoji": "🎀",
+    "vibe": "核战后赛博世界专属战斗女仆",
     "theme": "核战后赛博世界专属战斗女仆",
+    "avatar": "assets/nako-avatar.svg",
 }
+
+def apply_default_identity(identity):
+    result = dict(identity) if isinstance(identity, dict) else {}
+    if agent_id.startswith("agent-nako"):
+        for key, value in default_identity.items():
+            if not result.get(key):
+                result[key] = value
+    return result
+
 identity = (
     existing_item.get("identity") if isinstance(existing_item.get("identity"), dict)
     else source_item.get("identity") if isinstance(source_item.get("identity"), dict)
     else default_identity
 )
+identity = apply_default_identity(identity)
 name = existing_item.get("name") or source_item.get("name") or ""
 if not name or name == agent_id:
     name = identity.get("name") or agent_id

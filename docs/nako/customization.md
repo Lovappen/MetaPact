@@ -48,6 +48,19 @@ AGENTS.md 里 agent 主模型由 `openclaw.json` 定，但你可以在 `custom.m
 
 Agent 会调 `openclaw` 的 model-switch API（如支持），或提示用户换会话。
 
+### 改 QClaw 列表头像
+
+QClaw 会监听 workspace 里的 `IDENTITY.md`，只解析英文 key：
+
+```markdown
+- Name: 野木奈子
+- Emoji: 🎀
+- Vibe: 核战后赛博世界专属战斗女仆
+- Avatar: assets/nako-avatar.svg
+```
+
+`Avatar` 可以是 workspace 相对路径、HTTPS URL 或 data URI。默认头像文件随安装器复制到 `assets/nako-avatar.svg`。
+
 ### 新增私人知识
 
 ```markdown

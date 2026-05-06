@@ -479,13 +479,25 @@ def primary_model(value):
 default_identity = {
     "name": "野木奈子",
     "emoji": "🎀",
+    "vibe": "核战后赛博世界专属战斗女仆",
     "theme": "核战后赛博世界专属战斗女仆",
+    "avatar": "assets/nako-avatar.svg",
 }
+
+def apply_default_identity(identity):
+    result = dict(identity) if isinstance(identity, dict) else {}
+    if agent_id.startswith("agent-nako"):
+        for key, value in default_identity.items():
+            if not result.get(key):
+                result[key] = value
+    return result
+
 identity = (
     existing_item.get("identity") if isinstance(existing_item.get("identity"), dict)
     else source_item.get("identity") if isinstance(source_item.get("identity"), dict)
     else default_identity
 )
+identity = apply_default_identity(identity)
 name = existing_item.get("name") or source_item.get("name") or ""
 if not name or name == agent_id:
     name = identity.get("name") or agent_id
@@ -1130,6 +1142,13 @@ export NAKO_OVERWRITE_DEFAULT_WORKSPACE_TEMPLATES=1
 for f in AGENTS.md IDENTITY.md SOUL.md USER.md HEARTBEAT.md TOOLS.md; do
   safe_install_file "$PACK_ROOT/agent/$f" "$AGENT_WORKSPACE/$f"
 done
+if [ -d "$PACK_ROOT/agent/assets" ]; then
+  mkdir -p "$AGENT_WORKSPACE/assets"
+  for asset in "$PACK_ROOT"/agent/assets/*; do
+    [ -f "$asset" ] || continue
+    safe_install_file "$asset" "$AGENT_WORKSPACE/assets/$(basename "$asset")"
+  done
+fi
 unset NAKO_OVERWRITE_DEFAULT_WORKSPACE_TEMPLATES
 
 python3 - "$AGENT_WORKSPACE" <<'PY'

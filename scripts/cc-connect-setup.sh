@@ -288,6 +288,7 @@ resolve_qclaw_openclaw_mjs() {
 ensure_qclaw_cc_session() {
   python3 - "$QCLAW_HOME" "$AGENT_ID" "$QCLAW_WORKSPACE" "$QCLAW_CC_SESSION_SUFFIX" "$QCLAW_CC_SESSION_LABEL" "${QCLAW_PERSONA_CHANGED:-0}" <<'PY'
 import json
+import re
 import shutil
 import sys
 import time
@@ -424,6 +425,7 @@ ensure_qclaw_nako_persona() {
   local result
   result="$(python3 - "$NAKO_AGENT_SOURCE_DIR" "$QCLAW_WORKSPACE" <<'PY'
 import json
+import re
 import shutil
 import sys
 import time
@@ -461,6 +463,29 @@ def looks_like_qclaw_bootstrap(path):
     text = read(path)
     return all(marker in text for marker in bootstrap_markers)
 
+def ensure_qclaw_identity_sync_fields(path):
+    if not path.exists():
+        return False
+    text = read(path)
+    seen = set()
+    for line in text.splitlines():
+        match = re.match(r"^-?\s*(\w+)\s*:\s*(.+)$", line.strip())
+        if match:
+            seen.add(match.group(1).lower())
+    fields = [
+        ("Name", "野木奈子"),
+        ("Emoji", "🎀"),
+        ("Vibe", "核战后赛博世界专属战斗女仆"),
+        ("Avatar", "assets/nako-avatar.svg"),
+    ]
+    missing = [(key, value) for key, value in fields if key.lower() not in seen]
+    if not missing:
+        return False
+    block = ["", "<!-- QClaw sync fields: keep these plain English keys parseable. -->"]
+    block.extend(f"- {key}: {value}" for key, value in missing)
+    path.write_text(text.rstrip() + "\n" + "\n".join(block) + "\n", encoding="utf-8")
+    return True
+
 workspace.mkdir(parents=True, exist_ok=True)
 changed = False
 for name in files:
@@ -474,6 +499,22 @@ for name in files:
     if (not dst.exists()) or looks_like_qclaw_template(dst, name):
         dst.write_text(src_text, encoding="utf-8")
         changed = True
+
+assets_src = source_dir / "assets"
+assets_dst = workspace / "assets"
+if assets_src.is_dir():
+    assets_dst.mkdir(parents=True, exist_ok=True)
+    for src in assets_src.iterdir():
+        if not src.is_file():
+            continue
+        dst = assets_dst / src.name
+        if not dst.exists():
+            shutil.copy2(src, dst)
+            changed = True
+
+identity_path = workspace / "IDENTITY.md"
+if ensure_qclaw_identity_sync_fields(identity_path):
+    changed = True
 
 bootstrap = workspace / "BOOTSTRAP.md"
 if bootstrap.exists() and looks_like_qclaw_bootstrap(bootstrap):
@@ -534,6 +575,24 @@ def identity_from_workspace():
         path = workspace_path / name
         if path.exists():
             text += "\n" + path.read_text(encoding="utf-8", errors="ignore")
+    identity = {}
+    for line in text.splitlines():
+        match = re.match(r"^-?\s*(\w+)\s*:\s*(.+)$", line.strip())
+        if not match:
+            continue
+        label = match.group(1).lower()
+        value = match.group(2).strip()
+        if label == "name":
+            identity["name"] = value
+        elif label == "emoji":
+            identity["emoji"] = value
+        elif label == "vibe":
+            identity["vibe"] = value
+            identity.setdefault("theme", value)
+        elif label == "avatar":
+            identity["avatar"] = value
+    if identity:
+        return identity
     patterns = [
         r"\*\*姓名\*\*[：:]\s*([^\n\r ]+)",
         r"姓名[：:]\s*([^\n\r ]+)",
@@ -562,12 +621,19 @@ for idx, item in enumerate(items):
         break
 
 identity = existing.get("identity") if isinstance(existing.get("identity"), dict) else identity_from_workspace()
-if not identity and agent_id == "agent-nako":
-    identity = {
-        "name": "野木奈子",
-        "emoji": "🎀",
-        "theme": "核战后赛博世界专属战斗女仆",
-    }
+default_identity = {
+    "name": "野木奈子",
+    "emoji": "🎀",
+    "vibe": "核战后赛博世界专属战斗女仆",
+    "theme": "核战后赛博世界专属战斗女仆",
+    "avatar": "assets/nako-avatar.svg",
+}
+if agent_id.startswith("agent-nako"):
+    base = dict(identity) if isinstance(identity, dict) else {}
+    for key, value in default_identity.items():
+        if not base.get(key):
+            base[key] = value
+    identity = base
 
 name = existing.get("name") or (identity.get("name") if isinstance(identity, dict) else "")
 if not name:

@@ -7,6 +7,7 @@ grep -Fq 'CC_CONNECT_SOURCE="${CC_CONNECT_SOURCE:-lazycat}"' "$ROOT/install.sh"
 grep -Fq 'QClaw runtime 使用 QClaw 自带模型路由，跳过 OpenClaw provider preset' "$ROOT/install.sh"
 grep -Fq 'AGENT_WORKSPACE="$QCLAW_HOME/workspace-$AGENT_ID"' "$ROOT/install.sh"
 grep -Fq 'name = identity.get("name") or agent_id' "$ROOT/install.sh"
+grep -Fq '"avatar": "assets/nako-avatar.svg"' "$ROOT/install.sh"
 grep -Fq 'NAKO_OVERWRITE_DEFAULT_WORKSPACE_TEMPLATES=1' "$ROOT/install.sh"
 grep -Fq 'BOOTSTRAP.md.bak-qclaw-template-' "$ROOT/install.sh"
 grep -Fq '[string]$CcConnectSource = "lazycat"' "$ROOT/install.ps1"
@@ -19,6 +20,7 @@ grep -Fq 'Test-DefaultWorkspaceTemplate' "$ROOT/install.ps1"
 grep -Fq '@("--agent-id", $AgentId, "--runtime", $Runtime)' "$ROOT/install.ps1"
 grep -Fq 'QClaw 主模型继承' "$ROOT/install.ps1"
 grep -Fq 'name = identity.get("name") or agent_id' "$ROOT/install.ps1"
+grep -Fq '"avatar": "assets/nako-avatar.svg"' "$ROOT/install.ps1"
 grep -Fq 'OPENCLAW_CONFIG="${OPENCLAW_CONFIG:-$OPENCLAW_HOME/openclaw.json}"' "$ROOT/nako/scripts/lib.sh"
 grep -Fq 'CONFIG="${OPENCLAW_CONFIG:-$OPENCLAW_HOME/openclaw.json}"' "$ROOT/nako/scripts/detect-models.sh"
 grep -Fq 'CC_CONNECT_SOURCE="${CC_CONNECT_SOURCE:-lazycat}"' "$ROOT/scripts/cc-connect-setup.sh"
@@ -54,10 +56,13 @@ grep -Fq 'QCLAW_CC_SESSION_SUFFIX="${QCLAW_CC_SESSION_SUFFIX:-session-cc-connect
 grep -Fq 'ensure_qclaw_cc_session' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'ensure_qclaw_nako_persona' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'ensure_qclaw_agent_registration' "$ROOT/scripts/cc-connect-setup.sh"
+grep -Fq '"avatar": "assets/nako-avatar.svg"' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'f"agent:{agent_id}:{qclaw_session_suffix}"' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'sync_qclaw_runtime' "$ROOT/install.sh"
 grep -Fq 'f"  - name: {yaml_quote(name)}"' "$ROOT/install.sh"
 ! grep -Fq 'f"  {name}:"' "$ROOT/install.sh"
+grep -Fq -- '- Avatar: assets/nako-avatar.svg' "$ROOT/nako/agent/IDENTITY.md"
+test -f "$ROOT/nako/agent/assets/nako-avatar.svg"
 grep -Fq 'https://cdn.jsdelivr.net/gh/Lovappen/MetaPact@${AGENTS_REF}/install.sh' "$ROOT/scripts/nako-agent-factory/install.sh"
 grep -Fq 'https://cdn.jsdelivr.net/gh/Lovappen/MetaPact@{AGENTS_REF}/install.sh' "$ROOT/scripts/nako-agent-factory/nako-server.py"
 
@@ -328,6 +333,16 @@ workspace = state / "workspace-agent-nako"
 source = repo / "nako" / "agent"
 for name in ["AGENTS.md", "IDENTITY.md", "SOUL.md", "USER.md", "HEARTBEAT.md", "TOOLS.md"]:
     assert (workspace / name).read_text(encoding="utf-8") == (source / name).read_text(encoding="utf-8"), name
+identity_text = (workspace / "IDENTITY.md").read_text(encoding="utf-8")
+assert "- Avatar: assets/nako-avatar.svg" in identity_text
+assert (workspace / "assets" / "nako-avatar.svg").exists()
+qclaw_config = json.loads((state / "openclaw.json").read_text(encoding="utf-8"))
+registered = [
+    item for item in qclaw_config["agents"]["list"]
+    if isinstance(item, dict) and item.get("id") == "agent-nako"
+]
+assert len(registered) == 1
+assert registered[0]["identity"]["avatar"] == "assets/nako-avatar.svg"
 assert not (workspace / "BOOTSTRAP.md").exists()
 state_file = workspace / ".openclaw" / "workspace-state.json"
 setup_state = json.loads(state_file.read_text(encoding="utf-8"))
@@ -339,6 +354,83 @@ assert entry["sessionId"] != "old-session"
 assert entry["systemSent"] is False
 assert Path(entry["sessionFile"]).exists()
 assert not (root / ".cc-connect" / "sessions" / "agent-nako_stale.json").exists()
+PY
+
+tmp4="$(mktemp -d)"
+trap 'rm -rf "$tmp" "$tmp2" "$tmp3" "$tmp4"' EXIT
+envfile4="$tmp4/bash_env"
+cat > "$envfile4" <<'EOF'
+cc-connect() {
+  case "$1" in
+    --version) echo "cc-connect lazycat/v1.3.3"; return 0 ;;
+    daemon) return 0 ;;
+    *) return 0 ;;
+  esac
+}
+ps() { return 0; }
+kill() { return 0; }
+sudo() { return 1; }
+EOF
+python3 - "$tmp4" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+app = root / ".qclaw-app"
+state = root / ".qclaw-state"
+workspace = state / "workspace-agent-nako"
+app.mkdir(parents=True)
+state.mkdir(parents=True)
+workspace.mkdir(parents=True)
+(app / "qclaw.json").write_text(
+    json.dumps(
+        {
+            "stateDir": str(state),
+            "cli": {
+                "nodeBinary": "/bin/echo",
+                "openclawMjs": "/tmp/fake-openclaw.mjs",
+            },
+        }
+    ),
+    encoding="utf-8",
+)
+(state / "qclaw.json").write_text(
+    json.dumps({"configPath": str(state / "openclaw.json")}),
+    encoding="utf-8",
+)
+(workspace / "IDENTITY.md").write_text(
+    "# IDENTITY - custom\n\n**姓名**：野木奈子\n\ncustom line\n",
+    encoding="utf-8",
+)
+PY
+(
+  cd "$tmp4"
+  HOME="$tmp4" QCLAW_HOME="$tmp4/.qclaw-app" BASH_ENV="$envfile4" \
+    bash "$ROOT/scripts/cc-connect-setup.sh" \
+      --agent-id agent-nako --runtime qclaw \
+      --cc-connect-source skip --non-interactive >/dev/null
+)
+python3 - "$tmp4" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+state = (root / ".qclaw-state").resolve()
+workspace = state / "workspace-agent-nako"
+identity_text = (workspace / "IDENTITY.md").read_text(encoding="utf-8")
+assert "# IDENTITY - custom" in identity_text
+assert "custom line" in identity_text
+assert "- Avatar: assets/nako-avatar.svg" in identity_text
+assert (workspace / "assets" / "nako-avatar.svg").exists()
+qclaw_config = json.loads((state / "openclaw.json").read_text(encoding="utf-8"))
+registered = [
+    item for item in qclaw_config["agents"]["list"]
+    if isinstance(item, dict) and item.get("id") == "agent-nako"
+]
+assert len(registered) == 1
+assert registered[0]["identity"]["avatar"] == "assets/nako-avatar.svg"
 PY
 
 echo "cc-connect default source checks passed"
