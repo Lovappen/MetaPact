@@ -181,7 +181,7 @@ app_secret = "y"
         assert repaired == ["agent-nako-5"], repaired
         text = cfg.read_text(encoding="utf-8")
         assert 'command = "/opt/QClaw/node"' in text
-        assert 'args = ["/opt/QClaw/openclaw.mjs", "acp", "--session", "agent:agent-nako-5:main"]' in text
+        assert 'args = ["/opt/QClaw/openclaw.mjs", "acp", "--session", "agent:agent-nako-5:session-cc-connect"]' in text
         assert 'display_name = "QClaw agent-nako-5"' in text
         assert f'work_dir = "{Path(tmp) / ".qclaw" / "workspace-agent-nako-5"}"' in text
         assert 'OPENCLAW_STATE_DIR' in text

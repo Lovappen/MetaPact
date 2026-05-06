@@ -44,6 +44,7 @@ LOG_TAIL_BYTES = int(os.environ.get("NAKO_LOG_TAIL_BYTES", "30000"))
 JOB_DIR.mkdir(exist_ok=True)
 QR_PLATFORMS = ("feishu", "weixin")
 RUNTIMES = ("openclaw", "hermes", "qclaw")
+QCLAW_CC_SESSION_SUFFIX = "session-cc-connect"
 DEFAULT_RUNTIME = os.environ.get("NAKO_AGENT_RUNTIME", "openclaw").strip().lower()
 if DEFAULT_RUNTIME not in RUNTIMES:
     DEFAULT_RUNTIME = "openclaw"
@@ -1214,7 +1215,7 @@ def cc_agent_options_for_runtime(name: str, runtime: str, env: dict = None) -> d
         return {
             "work_dir": str(qclaw_workspace(name)),
             "command": qclaw_node_binary(env),
-            "args": [qclaw_openclaw_mjs(), "acp", "--session", f"agent:{name}:main"],
+            "args": [qclaw_openclaw_mjs(), "acp", "--session", f"agent:{name}:{QCLAW_CC_SESSION_SUFFIX}"],
             "display_name": f"QClaw {name}",
             "env": qclaw_env,
         }

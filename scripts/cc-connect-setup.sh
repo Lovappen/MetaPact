@@ -76,6 +76,8 @@ HERMES_BIN="${HERMES_BIN:-}"
 QCLAW_HOME="${QCLAW_HOME:-$HOME/.qclaw}"
 QCLAW_NODE_BIN="${QCLAW_NODE_BIN:-}"
 QCLAW_OPENCLAW_MJS="${QCLAW_OPENCLAW_MJS:-}"
+QCLAW_CC_SESSION_SUFFIX="${QCLAW_CC_SESSION_SUFFIX:-session-cc-connect}"
+QCLAW_CC_SESSION_LABEL="${QCLAW_CC_SESSION_LABEL:-cc-connect 飞书/微信}"
 UNINSTALL=0
 PURGE_CC_CONNECT=0
 UNINSTALL_ALL=0
@@ -220,6 +222,85 @@ resolve_qclaw_openclaw_mjs() {
     return 0
   fi
   return 1
+}
+
+ensure_qclaw_cc_session() {
+  python3 - "$QCLAW_HOME" "$AGENT_ID" "$QCLAW_WORKSPACE" "$QCLAW_CC_SESSION_SUFFIX" "$QCLAW_CC_SESSION_LABEL" <<'PY'
+import json
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+from uuid import uuid4
+
+qclaw_home, agent_id, workspace, suffix, label = sys.argv[1:]
+session_dir = Path(qclaw_home).expanduser() / "agents" / agent_id / "sessions"
+session_dir.mkdir(parents=True, exist_ok=True)
+sessions_file = session_dir / "sessions.json"
+try:
+    sessions = json.loads(sessions_file.read_text(encoding="utf-8")) if sessions_file.exists() else {}
+    if not isinstance(sessions, dict):
+        sessions = {}
+except Exception:
+    sessions = {}
+
+key = f"agent:{agent_id}:{suffix}"
+legacy_key = f"agent:{agent_id}:main"
+now_ms = int(time.time() * 1000)
+
+entry = sessions.get(key)
+if not isinstance(entry, dict):
+    legacy = sessions.get(legacy_key)
+    entry = dict(legacy) if isinstance(legacy, dict) else {}
+
+session_id = str(entry.get("sessionId") or uuid4())
+session_file = entry.get("sessionFile")
+if not isinstance(session_file, str) or not session_file:
+    session_file = str(session_dir / f"{session_id}.jsonl")
+try:
+    updated_at = int(entry.get("updatedAt") or now_ms)
+except Exception:
+    updated_at = now_ms
+
+entry.update({
+    "sessionId": session_id,
+    "updatedAt": updated_at,
+    "label": entry.get("label") or label,
+    "systemSent": bool(entry.get("systemSent", False)),
+    "abortedLastRun": bool(entry.get("abortedLastRun", False)),
+    "chatType": entry.get("chatType") or "direct",
+    "deliveryContext": {"channel": "cc-connect"},
+    "lastChannel": "cc-connect",
+    "origin": {
+        "label": "cc-connect",
+        "provider": "acp",
+        "surface": "cc-connect",
+        "chatType": "direct",
+    },
+    "sessionFile": session_file,
+})
+sessions[key] = entry
+
+path = Path(session_file).expanduser()
+path.parent.mkdir(parents=True, exist_ok=True)
+if not path.exists():
+    header = {
+        "type": "session",
+        "version": 3,
+        "id": session_id,
+        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "cwd": str(Path(workspace).expanduser()),
+    }
+    path.write_text(json.dumps(header, ensure_ascii=False, separators=(",", ":")) + "\n", encoding="utf-8")
+
+serialized = json.dumps(sessions, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+old = sessions_file.read_text(encoding="utf-8") if sessions_file.exists() else ""
+if old != serialized:
+    if sessions_file.exists():
+        backup = sessions_file.with_name(f"sessions.json.bak-cc-connect-{time.strftime('%Y%m%d-%H%M%S')}")
+        backup.write_text(old, encoding="utf-8")
+    sessions_file.write_text(serialized, encoding="utf-8")
+PY
 }
 
 find_go() {
@@ -624,8 +705,8 @@ backup_and_remove_cc_connect_home() {
 uninstall_cc_connect_all() {
   step "完整卸载 cc-connect"
   if command -v cc-connect >/dev/null 2>&1; then
-    cc-connect daemon stop >/dev/null 2>&1 || true
-    cc-connect daemon uninstall >/dev/null 2>&1 || true
+    cc-connect daemon stop --work-dir "$HOME/.cc-connect" >/dev/null 2>&1 || true
+    cc-connect daemon uninstall --work-dir "$HOME/.cc-connect" >/dev/null 2>&1 || true
   fi
   stop_cc_connect_processes
   backup_and_remove_cc_connect_home
@@ -636,8 +717,8 @@ uninstall_cc_connect_all() {
 uninstall_cc_connect_project() {
   step "卸载 cc-connect 接入: $AGENT_ID"
   if command -v cc-connect >/dev/null 2>&1; then
-    cc-connect daemon stop >/dev/null 2>&1 || true
-    [ "$PURGE_CC_CONNECT" = "1" ] && cc-connect daemon uninstall >/dev/null 2>&1 || true
+    cc-connect daemon stop --work-dir "$HOME/.cc-connect" >/dev/null 2>&1 || true
+    [ "$PURGE_CC_CONNECT" = "1" ] && cc-connect daemon uninstall --work-dir "$HOME/.cc-connect" >/dev/null 2>&1 || true
   fi
   stop_cc_connect_processes
 
@@ -656,10 +737,10 @@ uninstall_cc_connect_project() {
 
   if [ "$(cc_connect_project_count)" -gt 0 ]; then
     if command -v cc-connect >/dev/null 2>&1; then
-      if cc-connect daemon start >/dev/null 2>&1; then
+      if cc-connect daemon start --work-dir "$HOME/.cc-connect" >/dev/null 2>&1; then
         info "仍有其他 project，已重新启动 cc-connect daemon"
       else
-        nohup cc-connect >>"$HOME/.cc-connect/cc-connect.log" 2>&1 &
+        nohup cc-connect </dev/null >>"$HOME/.cc-connect/cc-connect.log" 2>&1 &
         info "仍有其他 project，已后台启动 cc-connect (PID $!)"
       fi
     fi
@@ -724,16 +805,17 @@ elif [ "$RUNTIME" = "qclaw" ]; then
     exit 1
   }
   mkdir -p "$QCLAW_WORKSPACE"
+  ensure_qclaw_cc_session
 fi
 
-CONFIG_CHANGED="$(python3 - "$CC_CONFIG" "$AGENT_ID" "$RUNTIME" "$DISPLAY_NAME" "$HOME" "$WORKSPACE" "$HERMES_HOME" "$HERMES_WORKSPACE" "${HERMES_BIN:-}" "$QCLAW_HOME" "$QCLAW_WORKSPACE" "${QCLAW_NODE_BIN:-}" "${QCLAW_OPENCLAW_MJS:-}" "$PATH" <<'PY'
+CONFIG_CHANGED="$(python3 - "$CC_CONFIG" "$AGENT_ID" "$RUNTIME" "$DISPLAY_NAME" "$HOME" "$WORKSPACE" "$HERMES_HOME" "$HERMES_WORKSPACE" "${HERMES_BIN:-}" "$QCLAW_HOME" "$QCLAW_WORKSPACE" "${QCLAW_NODE_BIN:-}" "${QCLAW_OPENCLAW_MJS:-}" "$QCLAW_CC_SESSION_SUFFIX" "$PATH" <<'PY'
 import os
 import re
 import sys
 import time
 from pathlib import Path
 
-cfg_path, agent_id, runtime, display_name, home, openclaw_workspace, hermes_home, hermes_workspace, hermes_bin, qclaw_home, qclaw_workspace, qclaw_node_bin, qclaw_openclaw_mjs, path_value = sys.argv[1:]
+cfg_path, agent_id, runtime, display_name, home, openclaw_workspace, hermes_home, hermes_workspace, hermes_bin, qclaw_home, qclaw_workspace, qclaw_node_bin, qclaw_openclaw_mjs, qclaw_session_suffix, path_value = sys.argv[1:]
 path = Path(cfg_path)
 
 def q(value):
@@ -760,7 +842,7 @@ if runtime == "hermes":
 elif runtime == "qclaw":
     command = qclaw_node_bin or "node"
     work_dir = qclaw_workspace
-    args = [qclaw_openclaw_mjs, "acp", "--session", f"agent:{agent_id}:main"]
+    args = [qclaw_openclaw_mjs, "acp", "--session", f"agent:{agent_id}:{qclaw_session_suffix}"]
     env = {
         "HOME": home,
         "QCLAW_HOME": qclaw_home,
@@ -922,17 +1004,23 @@ if [ "$CC_CONNECT_CHANGED" = "1" ]; then
       [ -z "$(cc_connect_running_pids)" ] && break
       sleep 1
     done
+    old_pids="$(cc_connect_running_pids | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
+    if [ -n "${old_pids:-}" ]; then
+      warn "cc-connect 未及时退出，强制停止: $old_pids"
+      kill -9 $old_pids 2>/dev/null || true
+      sleep 1
+    fi
   fi
 fi
 
 if [ -n "$(cc_connect_running_pids)" ]; then
   info "cc-connect 已在跑，跳过"
 else
-  if cc-connect daemon install --force >/dev/null 2>&1 && cc-connect daemon start >/dev/null 2>&1; then
+  if cc-connect daemon install --work-dir "$HOME/.cc-connect" --force >/dev/null 2>&1 && cc-connect daemon start --work-dir "$HOME/.cc-connect" >/dev/null 2>&1; then
     info "cc-connect daemon 已启动 (launchd/systemd)"
     dim "  状态: cc-connect daemon status   日志: cc-connect daemon logs -f"
   else
-    nohup cc-connect >"$HOME/.cc-connect/cc-connect.log" 2>&1 &
+    nohup cc-connect </dev/null >"$HOME/.cc-connect/cc-connect.log" 2>&1 &
     disown 2>/dev/null || true
     info "cc-connect 后台已启 (PID $!)，日志: ~/.cc-connect/cc-connect.log"
   fi

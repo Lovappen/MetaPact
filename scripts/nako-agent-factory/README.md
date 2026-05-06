@@ -107,7 +107,9 @@ service:
 - Install logs and runtime info are collapsed at the bottom.
 - OpenClaw gateway is started with a larger Node heap and watched.
 - Hermes projects are not rewritten back to OpenClaw by the repair watchdog.
-- QClaw projects use QClaw's bundled OpenClaw ACP with `~/.qclaw/openclaw.json`.
+- QClaw projects use QClaw's bundled OpenClaw ACP with `~/.qclaw/openclaw.json`;
+  cc-connect conversations use `agent:<id>:session-cc-connect` so they appear as
+  the `cc-connect 飞书/微信` ACP session in QClaw.
 - cc-connect restarts are deduplicated per bound platform set.
 - Stale OpenClaw ACP client processes are cleaned before cc-connect restart.
 

@@ -15,7 +15,7 @@ bash install.sh
 5. **安装 skills** — 拷贝 `skills/{vision,hearing,voice,selfie,dokidoki,skill-log.sh}` 到 `~/.openclaw/skills/`。共享 `.env` 作为旧版 fallback 只填入新 key，已有值保留。
 6. **安装 agent 人设** — 拷贝 `agent/*.md` 到 `~/.openclaw/workspace/<id>/`。`custom.md` 首次创建空壳，之后永远不动。
 7. **合并 openclaw.json** — 备份旧配置 (`.bak-<ts>`)，把 agent 加到 `agents.list`，把 voice/selfie 的 provider key 写到 `skills.entries.*.env`。
-8. **runtime 接入** — 默认使用 OpenClaw；如果传 `--runtime hermes`，会把 workspace 同步到 `~/.hermes/workspace/<id>` 并让 cc-connect 调 `hermes acp`；如果传 `--runtime qclaw`，会把 agent 写入 `~/.qclaw/workspace-<id>` 和 `~/.qclaw/openclaw.json`，并让 cc-connect 调 QClaw 自带的 OpenClaw ACP。
+8. **runtime 接入** — 默认使用 OpenClaw；如果传 `--runtime hermes`，会把 workspace 同步到 `~/.hermes/workspace/<id>` 并让 cc-connect 调 `hermes acp`；如果传 `--runtime qclaw`，会把 agent 写入 `~/.qclaw/workspace-<id>` 和 `~/.qclaw/openclaw.json`，并让 cc-connect 调 QClaw 自带的 OpenClaw ACP。QClaw 的飞书/微信消息固定进入 `agent:<id>:session-cc-connect`，在 QClaw 里显示为 `cc-connect 飞书/微信` 会话。
 9. **冒烟测试** — 检查每个 skill 的脚本、依赖、env 是否齐。
 
 ## Flags

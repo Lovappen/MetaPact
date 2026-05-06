@@ -83,6 +83,8 @@ pwsh install.ps1 -Runtime qclaw -WithFeishu -WithWeixin
 
 QClaw 后端需要和 `cc-connect` 跑在同一个 host/user 下；如果 `cc-connect`
 在 Linux VM 里，不能直接执行宿主机 macOS 的 `QClaw.app`。
+接入后飞书/微信消息会写入 QClaw 的 `cc-connect 飞书/微信` ACP 会话，
+对应 session key 为 `agent:<id>:session-cc-connect`。
 
 完整 flag：`bash scripts/cc-connect-setup.sh --help`
 
