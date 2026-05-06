@@ -579,16 +579,16 @@ if (-not (Test-Path $memoryPath)) {
 try {
   $memory = Get-Content $memoryPath -Raw
   $updated = $memory
-  $updated = $updated.Replace("- **provider**：`MINIMAX_API_KEY` 优先，`VOLCENGINE_API_KEY` 备选",
-                              "- **provider**：`MINIMAX_API_KEY` 优先，`VOLCENGINE_API_KEY` 备选；key 从 `openclaw.json -> skills.entries.voice.env` 读取，兼容旧 `.env`")
-  $updated = $updated.Replace("- **provider**:`MINIMAX_API_KEY` 优先,`VOLCENGINE_API_KEY` 备选",
-                              "- **provider**:`MINIMAX_API_KEY` 优先,`VOLCENGINE_API_KEY` 备选；key 从 `openclaw.json -> skills.entries.voice.env` 读取，兼容旧 `.env`")
-  $updated = $updated.Replace("- **默认声音**：`female-tianmei`（可在 `<workspace>/skills/.env` 改 `VOICE_DEFAULT_MINIMAX`）",
-                              "- **默认声音**：`female-tianmei`（可在 `openclaw.json -> skills.entries.voice.env` 改 `VOICE_DEFAULT_MINIMAX`）")
-  $updated = $updated.Replace("- **默认声音**:`female-tianmei`(可在 `<workspace>/skills/.env` 改 `VOICE_DEFAULT_MINIMAX`)",
-                              "- **默认声音**:`female-tianmei`(可在 `openclaw.json -> skills.entries.voice.env` 改 `VOICE_DEFAULT_MINIMAX`)")
-  $updated = $updated.Replace("- **provider**：`FAL_KEY` 优先，`KIE_API_KEY` 备选",
-                              "- **provider**：`FAL_KEY` 优先，`KIE_API_KEY` 备选；key 从 `openclaw.json -> skills.entries.selfie.env` 读取，兼容旧 `.env`")
+  $updated = $updated.Replace('- **provider**：`MINIMAX_API_KEY` 优先，`VOLCENGINE_API_KEY` 备选',
+                              '- **provider**：`MINIMAX_API_KEY` 优先，`VOLCENGINE_API_KEY` 备选；key 从 `openclaw.json -> skills.entries.voice.env` 读取，兼容旧 `.env`')
+  $updated = $updated.Replace('- **provider**:`MINIMAX_API_KEY` 优先,`VOLCENGINE_API_KEY` 备选',
+                              '- **provider**:`MINIMAX_API_KEY` 优先,`VOLCENGINE_API_KEY` 备选；key 从 `openclaw.json -> skills.entries.voice.env` 读取，兼容旧 `.env`')
+  $updated = $updated.Replace('- **默认声音**：`female-tianmei`（可在 `<workspace>/skills/.env` 改 `VOICE_DEFAULT_MINIMAX`）',
+                              '- **默认声音**：`female-tianmei`（可在 `openclaw.json -> skills.entries.voice.env` 改 `VOICE_DEFAULT_MINIMAX`）')
+  $updated = $updated.Replace('- **默认声音**:`female-tianmei`(可在 `<workspace>/skills/.env` 改 `VOICE_DEFAULT_MINIMAX`)',
+                              '- **默认声音**:`female-tianmei`(可在 `openclaw.json -> skills.entries.voice.env` 改 `VOICE_DEFAULT_MINIMAX`)')
+  $updated = $updated.Replace('- **provider**：`FAL_KEY` 优先，`KIE_API_KEY` 备选',
+                              '- **provider**：`FAL_KEY` 优先，`KIE_API_KEY` 备选；key 从 `openclaw.json -> skills.entries.selfie.env` 读取，兼容旧 `.env`')
   if ($updated -ne $memory) {
     Set-Content -Path $memoryPath -Value $updated -NoNewline -Encoding UTF8
   }
@@ -596,12 +596,13 @@ try {
 
 $customPath = Join-Path $AgentWorkspace "custom.md"
 if (-not (Test-Path $customPath)) {
-  @"
+  $customStub = @"
 # custom.md — 用户自定义扩展层（不会被升级覆盖）
 
 此文件空的时候 agent 仅走默认人设。往里加内容即可覆盖任何默认行为。
 示例见 custom.md.example。
-"@ | Set-Content -Path $customPath -Encoding UTF8
+"@
+  $customStub | Set-Content -Path $customPath -Encoding UTF8
   Dim "  + custom.md (empty stub)"
 } else {
   Dim "  = custom.md (保留用户原文件)"
