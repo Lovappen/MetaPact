@@ -226,15 +226,53 @@ def hermes_command(env: dict = None) -> str:
     return found or "hermes"
 
 
+def resolve_path(value: str) -> Path:
+    return Path(os.path.expanduser(str(value))).resolve()
+
+
+def qclaw_base_home() -> Path:
+    return resolve_path(os.environ.get("QCLAW_HOME", str(HOME / ".qclaw")))
+
+
+def load_qclaw_app_config(path: Path) -> dict:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
 def qclaw_home() -> Path:
-    return Path(os.environ.get("QCLAW_HOME", str(HOME / ".qclaw"))).expanduser()
+    base = qclaw_base_home()
+    data = load_qclaw_app_config(base / "qclaw.json")
+    state_dir = data.get("stateDir")
+    if isinstance(state_dir, str) and state_dir:
+        return resolve_path(state_dir)
+    return base
 
 
 def qclaw_config_path() -> Path:
     configured = os.environ.get("QCLAW_OPENCLAW_CONFIG") or os.environ.get("OPENCLAW_CONFIG_PATH")
     if configured:
-        return Path(configured).expanduser()
-    return qclaw_home() / "openclaw.json"
+        return resolve_path(configured)
+    base = qclaw_base_home()
+    data = load_qclaw_app_config(base / "qclaw.json")
+    qhome = qclaw_home()
+    if qhome != base:
+        state_data = load_qclaw_app_config(qhome / "qclaw.json")
+        data = state_data or data
+    config_path = data.get("configPath")
+    if isinstance(config_path, str) and config_path:
+        return resolve_path(config_path)
+    return qhome / "openclaw.json"
+
+
+def qclaw_app_config_path() -> Path:
+    qhome = qclaw_home()
+    path = qhome / "qclaw.json"
+    if path.exists():
+        return path
+    return qclaw_base_home() / "qclaw.json"
 
 
 def qclaw_workspace(aid: str) -> Path:
@@ -242,12 +280,7 @@ def qclaw_workspace(aid: str) -> Path:
 
 
 def qclaw_app_config() -> dict:
-    path = qclaw_home() / "qclaw.json"
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else {}
-    except Exception:
-        return {}
+    return load_qclaw_app_config(qclaw_app_config_path())
 
 
 def qclaw_node_binary(env: dict = None) -> str:
@@ -709,18 +742,18 @@ def qclaw_agent_configured(aid: str) -> bool:
     if not isinstance(items, list):
         return False
 
-    expected_workspace = str(qclaw_workspace(aid))
-    expected_agent_dir = str(qclaw_home() / "agents" / aid / "agent")
+    expected_workspace = qclaw_workspace(aid)
+    expected_agent_dir = qclaw_home() / "agents" / aid / "agent"
     for item in items:
         if not isinstance(item, dict) or item.get("id") != aid:
             continue
-        workspace = item.get("workspace") or expected_workspace
-        agent_dir = item.get("agentDir") or expected_agent_dir
+        workspace = resolve_path(item.get("workspace") or expected_workspace)
+        agent_dir = resolve_path(item.get("agentDir") or expected_agent_dir)
         return (
             workspace == expected_workspace
             and agent_dir == expected_agent_dir
-            and Path(workspace).is_dir()
-            and (Path(workspace) / "AGENTS.md").exists()
+            and workspace.is_dir()
+            and (workspace / "AGENTS.md").exists()
         )
     return False
 
@@ -746,11 +779,12 @@ def agent_install_needed(aid: str, state: dict, runtime: str = None) -> bool:
     runtime = normalize_runtime(runtime or state.get("runtime"))
     if state.get("install_rc") != 0:
         return True
-    if not openclaw_agent_configured(aid):
+    if runtime == "qclaw":
+        if not qclaw_agent_configured(aid):
+            return True
+    elif not openclaw_agent_configured(aid):
         return True
     if runtime == "hermes" and not hermes_agent_configured(aid):
-        return True
-    if runtime == "qclaw" and not qclaw_agent_configured(aid):
         return True
     project_runtime = cc_project_runtime(aid)
     if not project_runtime or project_runtime != runtime:

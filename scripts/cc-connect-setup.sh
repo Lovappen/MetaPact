@@ -1049,6 +1049,43 @@ PY
 )"
 info "cc-connect project 已配置: $AGENT_ID → $RUNTIME ($CONFIG_RESULT)"
 
+ensure_cc_connect_running() {
+  local reason="${1:-启动 cc-connect}" old_pids
+  if [ "$CC_CONNECT_CHANGED" = "1" ]; then
+    old_pids="$(cc_connect_running_pids | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
+    if [ -n "${old_pids:-}" ]; then
+      warn "$reason，重启旧 cc-connect 进程: $old_pids"
+      kill $old_pids 2>/dev/null || true
+      for _ in 1 2 3 4 5; do
+        [ -z "$(cc_connect_running_pids)" ] && break
+        sleep 1
+      done
+      old_pids="$(cc_connect_running_pids | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
+      if [ -n "${old_pids:-}" ]; then
+        warn "cc-connect 未及时退出，强制停止: $old_pids"
+        kill -9 $old_pids 2>/dev/null || true
+        sleep 1
+      fi
+    fi
+    CC_CONNECT_CHANGED=0
+  fi
+
+  if [ -n "$(cc_connect_running_pids)" ]; then
+    info "cc-connect 已在跑，跳过"
+    return 0
+  fi
+
+  if cc-connect daemon install --work-dir "$HOME/.cc-connect" --force >/dev/null 2>&1 && cc-connect daemon start --work-dir "$HOME/.cc-connect" >/dev/null 2>&1; then
+    info "cc-connect daemon 已启动 (launchd/systemd)"
+    dim "  状态: cc-connect daemon status   日志: cc-connect daemon logs -f"
+  else
+    nohup cc-connect </dev/null >"$HOME/.cc-connect/cc-connect.log" 2>&1 &
+    disown 2>/dev/null || true
+    info "cc-connect 后台已启 (PID $!)，日志: ~/.cc-connect/cc-connect.log"
+  fi
+  sleep 2
+}
+
 # ── 3. 引导平台 QR onboarding ─────────────────────────────────────────
 has_platform() {
   python3 - "$1" "$AGENT_ID" "$CC_CONFIG" <<'PY'
@@ -1081,7 +1118,12 @@ setup_platform() {
   echo
   warn "$desc 未配置，开始 QR onboarding..."
   dim "扫码完成后 cc-connect 会把凭据写进 config.toml，无需手动复制。"
-  cc-connect "$platform" setup --project "$AGENT_ID" --timeout 600 || warn "$desc onboarding 失败/超时（不影响其他流程）"
+  if cc-connect "$platform" setup --project "$AGENT_ID" --timeout 600; then
+    CC_CONNECT_CHANGED=1
+    ensure_cc_connect_running "$desc onboarding 完成"
+  else
+    warn "$desc onboarding 失败/超时（不影响其他流程）"
+  fi
 }
 
 step "3. 平台 QR onboarding"
@@ -1104,36 +1146,6 @@ fi
 echo
 # ── 4. 启动 cc-connect (daemon 优先，fallback 后台 nohup) ────────────────
 step "4. 启动 cc-connect"
-if [ "$CC_CONNECT_CHANGED" = "1" ]; then
-  old_pids="$(cc_connect_running_pids | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
-  if [ -n "${old_pids:-}" ]; then
-    warn "cc-connect 配置或二进制已更新，重启旧进程: $old_pids"
-    kill $old_pids 2>/dev/null || true
-    for _ in 1 2 3 4 5; do
-      [ -z "$(cc_connect_running_pids)" ] && break
-      sleep 1
-    done
-    old_pids="$(cc_connect_running_pids | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
-    if [ -n "${old_pids:-}" ]; then
-      warn "cc-connect 未及时退出，强制停止: $old_pids"
-      kill -9 $old_pids 2>/dev/null || true
-      sleep 1
-    fi
-  fi
-fi
-
-if [ -n "$(cc_connect_running_pids)" ]; then
-  info "cc-connect 已在跑，跳过"
-else
-  if cc-connect daemon install --work-dir "$HOME/.cc-connect" --force >/dev/null 2>&1 && cc-connect daemon start --work-dir "$HOME/.cc-connect" >/dev/null 2>&1; then
-    info "cc-connect daemon 已启动 (launchd/systemd)"
-    dim "  状态: cc-connect daemon status   日志: cc-connect daemon logs -f"
-  else
-    nohup cc-connect </dev/null >"$HOME/.cc-connect/cc-connect.log" 2>&1 &
-    disown 2>/dev/null || true
-    info "cc-connect 后台已启 (PID $!)，日志: ~/.cc-connect/cc-connect.log"
-  fi
-  sleep 2
-fi
+ensure_cc_connect_running "cc-connect 配置或二进制已更新"
 echo
 info "全部就绪 — 在已绑定的平台里 @ $AGENT_ID 找她"

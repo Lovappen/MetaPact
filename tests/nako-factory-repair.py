@@ -32,6 +32,8 @@ with tempfile.TemporaryDirectory() as tmp:
     assert "当前消息后端：" in server_source
     assert "QClaw" in server_source
     assert "qclaw_agent_configured" in server_source
+    assert "def qclaw_base_home" in server_source
+    assert "stateDir" in server_source
     assert "消息将进入 " not in server_source
     assert "JOB_WORKER_LOCKS" in server_source
     assert "with job_worker_lock(n):" in server_source
@@ -183,7 +185,7 @@ app_secret = "y"
         assert 'command = "/opt/QClaw/node"' in text
         assert 'args = ["/opt/QClaw/openclaw.mjs", "acp", "--session", "agent:agent-nako-5:session-cc-connect"]' in text
         assert 'display_name = "QClaw agent-nako-5"' in text
-        assert f'work_dir = "{Path(tmp) / ".qclaw" / "workspace-agent-nako-5"}"' in text
+        assert f'work_dir = "{(Path(tmp) / ".qclaw" / "workspace-agent-nako-5").resolve()}"' in text
         assert 'OPENCLAW_STATE_DIR' in text
         assert 'OPENCLAW_CONFIG_PATH' in text
         assert 'NAKO_AGENT_RUNTIME = "qclaw"' in text
@@ -453,6 +455,81 @@ token = "keep-other"
         encoding="utf-8",
     )
     assert module.qclaw_agent_configured("agent-nako-1")
+
+    qclaw_project = """[log]
+level = "info"
+
+[[projects]]
+name = "agent-nako-1"
+
+[projects.agent]
+type = "acp"
+
+[projects.agent.options]
+work_dir = "%s"
+command = "/opt/QClaw/node"
+args = ["/opt/QClaw/openclaw.mjs", "acp", "--session", "agent:agent-nako-1:session-cc-connect"]
+display_name = "QClaw agent-nako-1"
+env = { NAKO_AGENT_RUNTIME = "qclaw", QCLAW_HOME = "%s", OPENCLAW_STATE_DIR = "%s", OPENCLAW_CONFIG_PATH = "%s" }
+
+[[projects.platforms]]
+type = "feishu"
+
+[projects.platforms.options]
+app_id = "x"
+app_secret = "y"
+""" % (qclaw_workspace, Path(tmp) / ".qclaw", Path(tmp) / ".qclaw", qclaw_cfg)
+    cfg.write_text(qclaw_project, encoding="utf-8")
+    openclaw_cfg.unlink()
+    assert not module.openclaw_agent_configured("agent-nako-1")
+    assert not module.agent_install_needed("agent-nako-1", {"install_rc": 0, "runtime": "qclaw"}, "qclaw")
+
+    qclaw_app_home = Path(tmp) / ".qclaw-app"
+    qclaw_state_home = Path(tmp) / ".qclaw-state"
+    qclaw_app_home.mkdir(parents=True, exist_ok=True)
+    qclaw_state_home.mkdir(parents=True, exist_ok=True)
+    state_cfg = qclaw_state_home / "openclaw.json"
+    state_workspace = qclaw_state_home / "workspace-agent-nako-state"
+    state_agent_dir = qclaw_state_home / "agents" / "agent-nako-state" / "agent"
+    state_workspace.mkdir(parents=True, exist_ok=True)
+    state_agent_dir.mkdir(parents=True, exist_ok=True)
+    (state_workspace / "AGENTS.md").write_text("agent", encoding="utf-8")
+    (qclaw_app_home / "qclaw.json").write_text(
+        json.dumps({"stateDir": str(qclaw_state_home), "configPath": str(qclaw_state_home / "ignored.json")}),
+        encoding="utf-8",
+    )
+    (qclaw_state_home / "qclaw.json").write_text(
+        json.dumps({"configPath": str(state_cfg)}),
+        encoding="utf-8",
+    )
+    state_cfg.write_text(
+        json.dumps(
+            {
+                "agents": {
+                    "list": [
+                        {
+                            "id": "agent-nako-state",
+                            "workspace": str(state_workspace),
+                            "agentDir": str(state_agent_dir),
+                        }
+                    ]
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    old_qclaw_home = os.environ.get("QCLAW_HOME")
+    try:
+        os.environ["QCLAW_HOME"] = str(qclaw_app_home)
+        assert module.qclaw_home() == qclaw_state_home.resolve()
+        assert module.qclaw_config_path() == state_cfg.resolve()
+        assert module.qclaw_workspace("agent-nako-state") == state_workspace.resolve()
+        assert module.qclaw_agent_configured("agent-nako-state")
+    finally:
+        if old_qclaw_home is None:
+            os.environ.pop("QCLAW_HOME", None)
+        else:
+            os.environ["QCLAW_HOME"] = old_qclaw_home
 
     sessions_file = Path(tmp) / ".openclaw" / "agents" / "agent-nako-1" / "sessions" / "sessions.json"
     sessions_file.parent.mkdir(parents=True, exist_ok=True)
