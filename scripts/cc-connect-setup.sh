@@ -369,6 +369,110 @@ if old != serialized:
 PY
 }
 
+ensure_qclaw_agent_registration() {
+  python3 - "$QCLAW_HOME" "${QCLAW_OPENCLAW_CONFIG:-$QCLAW_HOME/openclaw.json}" "$AGENT_ID" "$QCLAW_WORKSPACE" "$DISPLAY_NAME" <<'PY'
+import json
+import re
+import sys
+import time
+from pathlib import Path
+
+qclaw_home, config_path, agent_id, workspace, display_name = sys.argv[1:]
+home = Path(qclaw_home).expanduser()
+config = Path(config_path).expanduser()
+workspace_path = Path(workspace).expanduser()
+agent_dir = home / "agents" / agent_id / "agent"
+workspace_path.mkdir(parents=True, exist_ok=True)
+agent_dir.mkdir(parents=True, exist_ok=True)
+config.parent.mkdir(parents=True, exist_ok=True)
+
+def load(path):
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+def identity_from_workspace():
+    text = ""
+    for name in ("IDENTITY.md", "AGENTS.md", "SOUL.md"):
+        path = workspace_path / name
+        if path.exists():
+            text += "\n" + path.read_text(encoding="utf-8", errors="ignore")
+    patterns = [
+        r"\*\*姓名\*\*[：:]\s*([^\n\r ]+)",
+        r"姓名[：:]\s*([^\n\r ]+)",
+        r"name[：:]\s*([^\n\r ]+)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text, re.I)
+        if match:
+            return {"name": match.group(1).strip()}
+    return {}
+
+cfg = load(config)
+agents = cfg.setdefault("agents", {})
+if not isinstance(agents, dict):
+    cfg["agents"] = agents = {}
+items = agents.setdefault("list", [])
+if not isinstance(items, list):
+    agents["list"] = items = []
+
+existing = {}
+existing_index = None
+for idx, item in enumerate(items):
+    if isinstance(item, dict) and item.get("id") == agent_id:
+        existing = item
+        existing_index = idx
+        break
+
+identity = existing.get("identity") if isinstance(existing.get("identity"), dict) else identity_from_workspace()
+if not identity and agent_id == "agent-nako":
+    identity = {
+        "name": "野木奈子",
+        "emoji": "🎀",
+        "theme": "核战后赛博世界专属战斗女仆",
+    }
+
+name = existing.get("name") or (identity.get("name") if isinstance(identity, dict) else "")
+if not name:
+    fallback = display_name.strip()
+    prefix = "QClaw "
+    name = fallback[len(prefix):] if fallback.startswith(prefix) else fallback
+if not name:
+    name = agent_id
+
+entry = dict(existing)
+entry.update({
+    "id": agent_id,
+    "name": name,
+    "workspace": str(workspace_path),
+    "agentDir": str(agent_dir),
+})
+if identity:
+    entry["identity"] = identity
+model = (
+    existing.get("model")
+    or (((agents.get("defaults") or {}).get("model") or {}).get("primary"))
+)
+if model:
+    entry["model"] = model
+
+if existing_index is None:
+    items.append(entry)
+else:
+    items[existing_index] = entry
+
+old = config.read_text(encoding="utf-8", errors="ignore") if config.exists() else ""
+new = json.dumps(cfg, ensure_ascii=False, indent=2) + "\n"
+if old != new:
+    if config.exists():
+        backup = config.with_name(f"openclaw.json.bak-cc-connect-qclaw-{time.strftime('%Y%m%d-%H%M%S')}")
+        backup.write_text(old, encoding="utf-8")
+    config.write_text(new, encoding="utf-8")
+PY
+}
+
 find_go() {
   local g
   for g in /usr/local/go/bin/go /usr/lib/go-1.25/bin/go /usr/lib/go-1.24/bin/go go; do
@@ -966,6 +1070,7 @@ elif [ "$RUNTIME" = "qclaw" ]; then
     exit 1
   }
   mkdir -p "$QCLAW_WORKSPACE"
+  ensure_qclaw_agent_registration
   ensure_qclaw_cc_session
 fi
 

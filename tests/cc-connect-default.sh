@@ -48,6 +48,7 @@ grep -Fq 'resolve_qclaw_layout' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq '"OPENCLAW_CONFIG_PATH": qclaw_config_path' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'QCLAW_CC_SESSION_SUFFIX="${QCLAW_CC_SESSION_SUFFIX:-session-cc-connect}"' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'ensure_qclaw_cc_session' "$ROOT/scripts/cc-connect-setup.sh"
+grep -Fq 'ensure_qclaw_agent_registration' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'f"agent:{agent_id}:{qclaw_session_suffix}"' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'sync_qclaw_runtime' "$ROOT/install.sh"
 grep -Fq 'f"  - name: {yaml_quote(name)}"' "$ROOT/install.sh"
@@ -214,6 +215,14 @@ data = json.loads(sessions.read_text(encoding="utf-8"))
 key = "agent:agent-test:session-cc-connect"
 assert list(data) == [key]
 assert data[key]["sessionFile"].startswith(str(state / "agents" / "agent-test" / "sessions"))
+qclaw_config = json.loads((state / "custom-openclaw.json").read_text(encoding="utf-8"))
+registered = [
+    item for item in qclaw_config["agents"]["list"]
+    if isinstance(item, dict) and item.get("id") == "agent-test"
+]
+assert len(registered) == 1
+assert registered[0]["workspace"] == str(state / "workspace-agent-test")
+assert registered[0]["agentDir"] == str(state / "agents" / "agent-test" / "agent")
 PY
 
 echo "cc-connect default source checks passed"
