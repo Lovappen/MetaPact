@@ -44,6 +44,8 @@ grep -Fq 'CC_CONNECT_CHANGED=1' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'info "$desc 已配，跳过"' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'openclaw|hermes|qclaw)' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'QCLAW_OPENCLAW_MJS' "$ROOT/scripts/cc-connect-setup.sh"
+grep -Fq 'resolve_qclaw_layout' "$ROOT/scripts/cc-connect-setup.sh"
+grep -Fq '"OPENCLAW_CONFIG_PATH": qclaw_config_path' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'QCLAW_CC_SESSION_SUFFIX="${QCLAW_CC_SESSION_SUFFIX:-session-cc-connect}"' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'ensure_qclaw_cc_session' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'f"agent:{agent_id}:{qclaw_session_suffix}"' "$ROOT/scripts/cc-connect-setup.sh"
@@ -138,6 +140,80 @@ expected = {
 found = {str(p.relative_to(agent_baks[0])) for p in agent_baks[0].rglob("*") if p.is_file()}
 missing = expected - found
 assert not missing, missing
+PY
+
+tmp2="$(mktemp -d)"
+trap 'rm -rf "$tmp" "$tmp2"' EXIT
+envfile2="$tmp2/bash_env"
+cat > "$envfile2" <<'EOF'
+cc-connect() {
+  case "$1" in
+    --version) echo "cc-connect lazycat/v1.3.3"; return 0 ;;
+    daemon) return 0 ;;
+    *) return 0 ;;
+  esac
+}
+ps() { return 0; }
+kill() { return 0; }
+sudo() { return 1; }
+EOF
+python3 - "$tmp2" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+app = root / ".qclaw-app"
+state = root / ".qclaw-state"
+app.mkdir(parents=True)
+state.mkdir(parents=True)
+(app / "qclaw.json").write_text(
+    json.dumps(
+        {
+            "stateDir": str(state),
+            "cli": {
+                "nodeBinary": "/bin/echo",
+                "openclawMjs": "/tmp/fake-openclaw.mjs",
+            },
+        }
+    ),
+    encoding="utf-8",
+)
+(state / "qclaw.json").write_text(
+    json.dumps({"configPath": str(state / "custom-openclaw.json")}),
+    encoding="utf-8",
+)
+PY
+(
+  cd "$tmp2"
+  HOME="$tmp2" QCLAW_HOME="$tmp2/.qclaw-app" BASH_ENV="$envfile2" \
+    bash "$ROOT/scripts/cc-connect-setup.sh" \
+      --agent-id agent-test --runtime qclaw --with-feishu --with-weixin \
+      --cc-connect-source skip --non-interactive >/dev/null
+)
+python3 - "$tmp2" <<'PY'
+import json
+import re
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+state = (root / ".qclaw-state").resolve()
+cfg = (root / ".cc-connect" / "config.toml").read_text(encoding="utf-8")
+assert f'work_dir = "{state / "workspace-agent-test"}"' in cfg
+assert 'command = "/bin/echo"' in cfg
+assert 'args = ["/tmp/fake-openclaw.mjs", "acp", "--session", "agent:agent-test:session-cc-connect"]' in cfg
+assert f'QCLAW_HOME = "{state}"' in cfg
+assert f'OPENCLAW_STATE_DIR = "{state}"' in cfg
+assert f'OPENCLAW_CONFIG_PATH = "{state / "custom-openclaw.json"}"' in cfg
+project = re.search(r'\[\[projects\]\].*', cfg, re.S).group(0)
+assert ".openclaw" not in project, project
+sessions = state / "agents" / "agent-test" / "sessions" / "sessions.json"
+assert sessions.exists()
+data = json.loads(sessions.read_text(encoding="utf-8"))
+key = "agent:agent-test:session-cc-connect"
+assert list(data) == [key]
+assert data[key]["sessionFile"].startswith(str(state / "agents" / "agent-test" / "sessions"))
 PY
 
 echo "cc-connect default source checks passed"

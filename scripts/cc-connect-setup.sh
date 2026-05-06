@@ -74,6 +74,8 @@ GO_FOR_CC_CONNECT=""
 HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
 HERMES_BIN="${HERMES_BIN:-}"
 QCLAW_HOME="${QCLAW_HOME:-$HOME/.qclaw}"
+QCLAW_BASE_HOME="$QCLAW_HOME"
+QCLAW_OPENCLAW_CONFIG="${QCLAW_OPENCLAW_CONFIG:-${OPENCLAW_CONFIG_PATH:-}}"
 QCLAW_NODE_BIN="${QCLAW_NODE_BIN:-}"
 QCLAW_OPENCLAW_MJS="${QCLAW_OPENCLAW_MJS:-}"
 QCLAW_CC_SESSION_SUFFIX="${QCLAW_CC_SESSION_SUFFIX:-session-cc-connect}"
@@ -194,8 +196,43 @@ PY
 }
 
 qclaw_json_value() {
-  qclaw_json_file_value "$QCLAW_HOME/qclaw.json" "$1"
+  local key="$1" value
+  value="$(qclaw_json_file_value "$QCLAW_HOME/qclaw.json" "$key")"
+  if [ -z "$value" ] && [ "$QCLAW_BASE_HOME" != "$QCLAW_HOME" ]; then
+    value="$(qclaw_json_file_value "$QCLAW_BASE_HOME/qclaw.json" "$key")"
+  fi
+  printf '%s\n' "$value"
 }
+
+resolve_qclaw_layout() {
+  local state_dir config_path state_config_path base_config
+  QCLAW_BASE_HOME="$(expand_path "$QCLAW_HOME")"
+  QCLAW_HOME="$QCLAW_BASE_HOME"
+  base_config="$QCLAW_BASE_HOME/qclaw.json"
+
+  state_dir="$(qclaw_json_file_value "$base_config" stateDir)"
+  if [ -n "$state_dir" ]; then
+    QCLAW_HOME="$(expand_path "$state_dir")"
+  fi
+
+  if [ -n "$QCLAW_OPENCLAW_CONFIG" ]; then
+    QCLAW_OPENCLAW_CONFIG="$(expand_path "$QCLAW_OPENCLAW_CONFIG")"
+  else
+    state_config_path="$(qclaw_json_file_value "$QCLAW_HOME/qclaw.json" configPath)"
+    config_path="${state_config_path:-$(qclaw_json_file_value "$base_config" configPath)}"
+    if [ -n "$config_path" ]; then
+      QCLAW_OPENCLAW_CONFIG="$(expand_path "$config_path")"
+    else
+      QCLAW_OPENCLAW_CONFIG="$QCLAW_HOME/openclaw.json"
+    fi
+  fi
+
+  QCLAW_WORKSPACE="$QCLAW_HOME/workspace-$AGENT_ID"
+}
+
+if [ "$RUNTIME" = "qclaw" ]; then
+  resolve_qclaw_layout
+fi
 
 resolve_qclaw_node_bin() {
   if [ -n "$QCLAW_NODE_BIN" ]; then
@@ -932,14 +969,14 @@ elif [ "$RUNTIME" = "qclaw" ]; then
   ensure_qclaw_cc_session
 fi
 
-CONFIG_CHANGED="$(python3 - "$CC_CONFIG" "$AGENT_ID" "$RUNTIME" "$DISPLAY_NAME" "$HOME" "$WORKSPACE" "$HERMES_HOME" "$HERMES_WORKSPACE" "${HERMES_BIN:-}" "$QCLAW_HOME" "$QCLAW_WORKSPACE" "${QCLAW_NODE_BIN:-}" "${QCLAW_OPENCLAW_MJS:-}" "$QCLAW_CC_SESSION_SUFFIX" "$PATH" <<'PY'
+CONFIG_CHANGED="$(python3 - "$CC_CONFIG" "$AGENT_ID" "$RUNTIME" "$DISPLAY_NAME" "$HOME" "$WORKSPACE" "$HERMES_HOME" "$HERMES_WORKSPACE" "${HERMES_BIN:-}" "$QCLAW_HOME" "$QCLAW_WORKSPACE" "${QCLAW_NODE_BIN:-}" "${QCLAW_OPENCLAW_MJS:-}" "${QCLAW_OPENCLAW_CONFIG:-$QCLAW_HOME/openclaw.json}" "$QCLAW_CC_SESSION_SUFFIX" "$PATH" <<'PY'
 import os
 import re
 import sys
 import time
 from pathlib import Path
 
-cfg_path, agent_id, runtime, display_name, home, openclaw_workspace, hermes_home, hermes_workspace, hermes_bin, qclaw_home, qclaw_workspace, qclaw_node_bin, qclaw_openclaw_mjs, qclaw_session_suffix, path_value = sys.argv[1:]
+cfg_path, agent_id, runtime, display_name, home, openclaw_workspace, hermes_home, hermes_workspace, hermes_bin, qclaw_home, qclaw_workspace, qclaw_node_bin, qclaw_openclaw_mjs, qclaw_config_path, qclaw_session_suffix, path_value = sys.argv[1:]
 path = Path(cfg_path)
 
 def q(value):
@@ -971,7 +1008,7 @@ elif runtime == "qclaw":
         "HOME": home,
         "QCLAW_HOME": qclaw_home,
         "OPENCLAW_STATE_DIR": qclaw_home,
-        "OPENCLAW_CONFIG_PATH": str(Path(qclaw_home) / "openclaw.json"),
+        "OPENCLAW_CONFIG_PATH": qclaw_config_path,
         "PATH": path_value,
         "OPENCLAW_OUTPUT_MODE": "acp",
         "OPENCLAW_CCCONNECT_PROJECT": agent_id,
