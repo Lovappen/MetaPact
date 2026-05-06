@@ -156,6 +156,23 @@ app_secret = "y"
     os.environ["QCLAW_NODE_BIN"] = "/opt/QClaw/node"
     os.environ["QCLAW_OPENCLAW_MJS"] = "/opt/QClaw/openclaw.mjs"
     try:
+        stale_qclaw_sessions = Path(tmp) / ".qclaw" / "agents" / "agent-nako-5" / "sessions" / "sessions.json"
+        stale_qclaw_sessions.parent.mkdir(parents=True, exist_ok=True)
+        stale_qclaw_sessions.write_text(
+            json.dumps(
+                {
+                    "agent:agent-nako-5:main": {
+                        "label": "ACP",
+                        "sessionId": "legacy-session",
+                        "sessionFile": str(stale_qclaw_sessions.parent / "legacy-session.jsonl"),
+                        "origin": {"provider": "acp", "surface": "cc-connect"},
+                        "deliveryContext": {"channel": "cc-connect"},
+                        "lastChannel": "cc-connect",
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
         cfg.write_text(
             """[log]
 level = "info"
@@ -196,7 +213,13 @@ app_secret = "y"
         assert qclaw_sessions.exists()
         qclaw_session_data = json.loads(qclaw_sessions.read_text(encoding="utf-8"))
         qclaw_key = "agent:agent-nako-5:session-cc-connect"
+        assert list(qclaw_session_data) == [qclaw_key]
         assert qclaw_key in qclaw_session_data
+        assert qclaw_session_data[qclaw_key]["label"] == "cc-connect 飞书/微信"
+        assert qclaw_session_data[qclaw_key]["lastChannel"] == "webchat"
+        assert qclaw_session_data[qclaw_key]["deliveryContext"]["channel"] == "webchat"
+        assert qclaw_session_data[qclaw_key]["origin"]["label"] == "cc-connect 飞书/微信"
+        assert qclaw_session_data[qclaw_key]["origin"]["provider"] == "webchat"
         qclaw_session_file = Path(qclaw_session_data[qclaw_key]["sessionFile"])
         assert qclaw_session_file.exists()
         assert '"cwd":"' in qclaw_session_file.read_text(encoding="utf-8")

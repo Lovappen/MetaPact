@@ -259,13 +259,28 @@ except Exception:
     sessions = {}
 
 key = f"agent:{agent_id}:{suffix}"
-legacy_key = f"agent:{agent_id}:main"
 now_ms = int(time.time() * 1000)
 
 entry = sessions.get(key)
 if not isinstance(entry, dict):
-    legacy = sessions.get(legacy_key)
-    entry = dict(legacy) if isinstance(legacy, dict) else {}
+    entry = {}
+
+for other_key, other_entry in list(sessions.items()):
+    if other_key == key or not other_key.startswith(f"agent:{agent_id}:"):
+        continue
+    if not isinstance(other_entry, dict):
+        continue
+    origin = other_entry.get("origin") if isinstance(other_entry.get("origin"), dict) else {}
+    delivery = other_entry.get("deliveryContext") if isinstance(other_entry.get("deliveryContext"), dict) else {}
+    stale_cc = (
+        other_entry.get("label") in ("ACP", "cc-connect", label)
+        or origin.get("provider") == "acp"
+        or origin.get("surface") == "cc-connect"
+        or delivery.get("channel") == "cc-connect"
+        or other_entry.get("lastChannel") == "cc-connect"
+    )
+    if stale_cc:
+        sessions.pop(other_key, None)
 
 session_id = str(entry.get("sessionId") or uuid4())
 session_file = entry.get("sessionFile")
@@ -279,16 +294,16 @@ except Exception:
 entry.update({
     "sessionId": session_id,
     "updatedAt": updated_at,
-    "label": entry.get("label") or label,
+    "label": label,
     "systemSent": bool(entry.get("systemSent", False)),
     "abortedLastRun": bool(entry.get("abortedLastRun", False)),
     "chatType": entry.get("chatType") or "direct",
-    "deliveryContext": {"channel": "cc-connect"},
-    "lastChannel": "cc-connect",
+    "deliveryContext": {"channel": "webchat"},
+    "lastChannel": "webchat",
     "origin": {
-        "label": "cc-connect",
-        "provider": "acp",
-        "surface": "cc-connect",
+        "label": label,
+        "provider": "webchat",
+        "surface": "webchat",
         "chatType": "direct",
     },
     "sessionFile": session_file,
@@ -1054,7 +1069,7 @@ ensure_cc_connect_running() {
   if [ "$CC_CONNECT_CHANGED" = "1" ]; then
     old_pids="$(cc_connect_running_pids | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
     if [ -n "${old_pids:-}" ]; then
-      warn "$reason，重启旧 cc-connect 进程: $old_pids"
+      warn "${reason}，重启旧 cc-connect 进程: $old_pids"
       kill $old_pids 2>/dev/null || true
       for _ in 1 2 3 4 5; do
         [ -z "$(cc_connect_running_pids)" ] && break
