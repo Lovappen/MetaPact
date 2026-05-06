@@ -1109,6 +1109,7 @@ setup_platform() {
   local platform="$1" desc="$2"
   if [ "$(has_platform "$platform")" = "yes" ]; then
     info "$desc 已配，跳过"
+    CC_CONNECT_CHANGED=1
     return 0
   fi
   if [ "$NON_INTERACTIVE" = "1" ]; then

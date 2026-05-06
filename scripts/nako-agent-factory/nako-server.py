@@ -14,7 +14,9 @@ Deps: only Python 3 stdlib + the host's openclaw/cc-connect/curl/bash.
 Listen: 0.0.0.0:8088 (override with NAKO_SERVER_PORT env).
 """
 import http.server, socketserver, json, os, re, socket, subprocess, threading, time, urllib.parse, fcntl, ipaddress, shutil, shlex
+from datetime import datetime, timezone
 from pathlib import Path
+from uuid import uuid4
 try:
     import tomllib
 except ImportError:
@@ -1235,6 +1237,7 @@ def cc_agent_options_for_runtime(name: str, runtime: str, env: dict = None) -> d
             "env": hermes_env,
         }
     if runtime == "qclaw":
+        ensure_qclaw_cc_session(name)
         qhome = qclaw_home()
         qclaw_env = {
             "HOME": str(HOME),
@@ -1265,6 +1268,97 @@ def cc_agent_options_for_runtime(name: str, runtime: str, env: dict = None) -> d
             "NAKO_AGENT_RUNTIME": "openclaw",
         },
     }
+
+
+def ensure_qclaw_cc_session(aid: str) -> bool:
+    session_dir = qclaw_home() / "agents" / aid / "sessions"
+    session_dir.mkdir(parents=True, exist_ok=True)
+    sessions_file = session_dir / "sessions.json"
+    try:
+        sessions = json.loads(sessions_file.read_text(encoding="utf-8")) if sessions_file.exists() else {}
+        if not isinstance(sessions, dict):
+            sessions = {}
+    except Exception:
+        sessions = {}
+
+    key = f"agent:{aid}:{QCLAW_CC_SESSION_SUFFIX}"
+    legacy_key = f"agent:{aid}:main"
+    now_ms = int(time.time() * 1000)
+    entry = sessions.get(key)
+    if not isinstance(entry, dict):
+        legacy = sessions.get(legacy_key)
+        entry = dict(legacy) if isinstance(legacy, dict) else {}
+
+    session_id = str(entry.get("sessionId") or uuid4())
+    session_file = entry.get("sessionFile")
+    if not isinstance(session_file, str) or not session_file:
+        session_file = str(session_dir / f"{session_id}.jsonl")
+    try:
+        updated_at = int(entry.get("updatedAt") or now_ms)
+    except Exception:
+        updated_at = now_ms
+
+    entry.update({
+        "sessionId": session_id,
+        "updatedAt": updated_at,
+        "label": entry.get("label") or "cc-connect 飞书/微信",
+        "systemSent": bool(entry.get("systemSent", False)),
+        "abortedLastRun": bool(entry.get("abortedLastRun", False)),
+        "chatType": entry.get("chatType") or "direct",
+        "deliveryContext": {"channel": "cc-connect"},
+        "lastChannel": "cc-connect",
+        "origin": {
+            "label": "cc-connect",
+            "provider": "acp",
+            "surface": "cc-connect",
+            "chatType": "direct",
+        },
+        "sessionFile": session_file,
+    })
+    sessions[key] = entry
+
+    path = resolve_path(session_file)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    changed = False
+    if not path.exists():
+        header = {
+            "type": "session",
+            "version": 3,
+            "id": session_id,
+            "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "cwd": str(qclaw_workspace(aid)),
+        }
+        path.write_text(json.dumps(header, ensure_ascii=False, separators=(",", ":")) + "\n", encoding="utf-8")
+        changed = True
+
+    serialized = json.dumps(sessions, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    old = sessions_file.read_text(encoding="utf-8") if sessions_file.exists() else ""
+    if old != serialized:
+        if sessions_file.exists():
+            backup = sessions_file.with_name(f"sessions.json.bak-cc-connect-{time.strftime('%Y%m%d-%H%M%S')}")
+            backup.write_text(old, encoding="utf-8")
+        sessions_file.write_text(serialized, encoding="utf-8")
+        changed = True
+    return changed
+
+
+def ensure_qclaw_cc_sessions_for_projects() -> list:
+    if not CC_CONFIG.exists():
+        return []
+    try:
+        text = CC_CONFIG.read_text(encoding="utf-8")
+    except Exception:
+        return []
+
+    ensured = []
+    for part in re.split(r"(?m)(?=^\[\[projects\]\]\s*$)", text):
+        if not part.startswith("[[projects]]") or project_runtime_from_text(part) != "qclaw":
+            continue
+        name_match = re.search(r'(?m)^name\s*=\s*"([^"]+)"\s*$', part)
+        name = name_match.group(1) if name_match else ""
+        if name and ensure_qclaw_cc_session(name):
+            ensured.append(name)
+    return ensured
 
 
 def cc_agent_option_lines(options: dict) -> dict:
@@ -1475,6 +1569,7 @@ def start_cc_connect(env: dict, reason: str = ""):
         log.parent.mkdir(parents=True, exist_ok=True)
         removed = prune_empty_cc_projects()
         repaired = repair_nako_cc_projects()
+        ensured_qclaw_sessions = ensure_qclaw_cc_sessions_for_projects()
         needs_gateway = has_openclaw_cc_projects()
         gateway_ok = ensure_openclaw_gateway(env) if needs_gateway else True
         approved_devices = approve_local_openclaw_device_repairs(env) if needs_gateway and gateway_ok else []
@@ -1490,6 +1585,8 @@ def start_cc_connect(env: dict, reason: str = ""):
                 f.write(("=== pruned empty projects: " + ", ".join(removed) + " ===\n").encode("utf-8"))
             if repaired:
                 f.write(("=== repaired projects: " + ", ".join(repaired) + " ===\n").encode("utf-8"))
+            if ensured_qclaw_sessions:
+                f.write(("=== ensured qclaw sessions: " + ", ".join(ensured_qclaw_sessions) + " ===\n").encode("utf-8"))
             if approved_devices:
                 f.write(("=== approved local openclaw device repairs: " + ", ".join(approved_devices) + " ===\n").encode("utf-8"))
             subprocess.Popen(["cc-connect"], stdout=f, stderr=subprocess.STDOUT,
@@ -1507,12 +1604,12 @@ def schedule_cc_connect_restart(env: dict, reason: str = "", delay: float = 2.0)
         CC_RESTART_TIMER.start()
 
 
-def schedule_reload_for_bound_platforms(n: int, bound: set, env: dict, reason: str) -> bool:
+def schedule_reload_for_bound_platforms(n: int, bound: set, env: dict, reason: str, force: bool = False) -> bool:
     if not bound:
         return False
     desired = set(bound)
     current = set(job_state(n).get("cc_reload_platforms") or [])
-    if desired == current:
+    if desired == current and not force:
         return False
     write_state(n, cc_reload_platforms=sorted(desired))
     schedule_cc_connect_restart(env, reason=reason)
@@ -1776,7 +1873,7 @@ def run_install_and_qr_locked(n: int, force_qr: bool = False, generation: int = 
             with log.open("a") as f:
                 f.write(f"\n=== detected bound platforms: {', '.join(sorted(bound_now))}; scheduling cc-connect reload ===\n")
             schedule_reload_for_bound_platforms(
-                n, bound_now, env, reason=f"{aid}:bound-{','.join(sorted(bound_now))}"
+                n, bound_now, env, reason=f"{aid}:bound-{','.join(sorted(bound_now))}", force=True
             )
             last_bound = set(bound_now)
 
@@ -1801,7 +1898,7 @@ def run_install_and_qr_locked(n: int, force_qr: bool = False, generation: int = 
                 platform_runtimes=platform_runtimes,
                 **rc_updates)
     if bound:
-        schedule_reload_for_bound_platforms(n, bound, env, reason=f"{aid}:qr-finished")
+        schedule_reload_for_bound_platforms(n, bound, env, reason=f"{aid}:qr-finished", force=True)
 
 
 def start_worker(n: int, force_qr: bool = False, reason: str = "", target_platforms=None, runtime: str = None) -> bool:

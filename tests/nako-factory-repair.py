@@ -33,12 +33,15 @@ with tempfile.TemporaryDirectory() as tmp:
     assert "QClaw" in server_source
     assert "qclaw_agent_configured" in server_source
     assert "def qclaw_base_home" in server_source
+    assert "ensure_qclaw_cc_session" in server_source
     assert "stateDir" in server_source
     assert "消息将进入 " not in server_source
     assert "JOB_WORKER_LOCKS" in server_source
     assert "with job_worker_lock(n):" in server_source
     assert "stop_qr_processes(n)" in server_source
     assert "bound_after_install" not in server_source
+    assert "force: bool = False" in server_source
+    assert "force=True" in server_source
 
     class Headers(dict):
         def get(self, name, default=None):
@@ -189,6 +192,14 @@ app_secret = "y"
         assert 'OPENCLAW_STATE_DIR' in text
         assert 'OPENCLAW_CONFIG_PATH' in text
         assert 'NAKO_AGENT_RUNTIME = "qclaw"' in text
+        qclaw_sessions = Path(tmp) / ".qclaw" / "agents" / "agent-nako-5" / "sessions" / "sessions.json"
+        assert qclaw_sessions.exists()
+        qclaw_session_data = json.loads(qclaw_sessions.read_text(encoding="utf-8"))
+        qclaw_key = "agent:agent-nako-5:session-cc-connect"
+        assert qclaw_key in qclaw_session_data
+        qclaw_session_file = Path(qclaw_session_data[qclaw_key]["sessionFile"])
+        assert qclaw_session_file.exists()
+        assert '"cwd":"' in qclaw_session_file.read_text(encoding="utf-8")
     finally:
         if old_qclaw_node is None:
             os.environ.pop("QCLAW_NODE_BIN", None)
@@ -530,6 +541,18 @@ app_secret = "y"
             os.environ.pop("QCLAW_HOME", None)
         else:
             os.environ["QCLAW_HOME"] = old_qclaw_home
+
+    calls = []
+    original_schedule = module.schedule_cc_connect_restart
+    try:
+        module.write_state(1, cc_reload_platforms=["feishu", "weixin"])
+        module.schedule_cc_connect_restart = lambda env, reason="", delay=2.0: calls.append((reason, delay))
+        assert not module.schedule_reload_for_bound_platforms(1, {"feishu", "weixin"}, {}, "same")
+        assert calls == []
+        assert module.schedule_reload_for_bound_platforms(1, {"feishu", "weixin"}, {}, "forced", force=True)
+        assert calls == [("forced", 2.0)]
+    finally:
+        module.schedule_cc_connect_restart = original_schedule
 
     sessions_file = Path(tmp) / ".openclaw" / "agents" / "agent-nako-1" / "sessions" / "sessions.json"
     sessions_file.parent.mkdir(parents=True, exist_ok=True)

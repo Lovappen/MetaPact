@@ -39,6 +39,7 @@ grep -Fq 'cc-connect daemon start --work-dir "$HOME/.cc-connect"' "$ROOT/scripts
 grep -Fq 'nohup cc-connect </dev/null >"$HOME/.cc-connect/cc-connect.log" 2>&1 &' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'ensure_cc_connect_running "$desc onboarding 完成"' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'CC_CONNECT_CHANGED=1' "$ROOT/scripts/cc-connect-setup.sh"
+grep -Fq 'info "$desc 已配，跳过"' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'openclaw|hermes|qclaw)' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'QCLAW_OPENCLAW_MJS' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'QCLAW_CC_SESSION_SUFFIX="${QCLAW_CC_SESSION_SUFFIX:-session-cc-connect}"' "$ROOT/scripts/cc-connect-setup.sh"
