@@ -43,19 +43,29 @@ CC_CONFIG  = HOME / ".cc-connect/config.toml"
 LOG_TAIL_BYTES = int(os.environ.get("NAKO_LOG_TAIL_BYTES", "30000"))
 JOB_DIR.mkdir(exist_ok=True)
 QR_PLATFORMS = ("feishu", "weixin")
+RUNTIMES = ("openclaw", "hermes", "qclaw")
+DEFAULT_RUNTIME = os.environ.get("NAKO_AGENT_RUNTIME", "openclaw").strip().lower()
+if DEFAULT_RUNTIME not in RUNTIMES:
+    DEFAULT_RUNTIME = "openclaw"
 OPENCLAW_GATEWAY_PORT = int(os.environ.get("OPENCLAW_GATEWAY_PORT", "18789"))
 OPENCLAW_GATEWAY_HEAP_MB = os.environ.get("OPENCLAW_GATEWAY_HEAP_MB", "2048")
 OPENCLAW_WATCHDOG_INTERVAL = int(os.environ.get("NAKO_GATEWAY_WATCHDOG_INTERVAL", "10"))
 NPM_RENAME_TMP_RE = re.compile(r"^\.[^/]+-[A-Za-z0-9]{6,}$")
+DEFAULT_TRUSTED_PROXY_CIDRS = (
+    "127.0.0.0/8,::1/128,"
+    "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,"
+    "169.254.0.0/16,fc00::/7,fe80::/10"
+)
 TRUSTED_PROXY_CIDRS = tuple(
     ipaddress.ip_network(c.strip())
-    for c in os.environ.get("NAKO_TRUSTED_PROXY_CIDRS", "127.0.0.0/8,::1/128,172.16.0.0/12").split(",")
+    for c in os.environ.get("NAKO_TRUSTED_PROXY_CIDRS", DEFAULT_TRUSTED_PROXY_CIDRS).split(",")
     if c.strip()
 )
 
 LOCK = threading.RLock()
 QR_PROCS = {}
 JOB_GENERATIONS = {}
+JOB_WORKER_LOCKS = {}
 CC_RESTART_LOCK = threading.RLock()
 CC_RESTART_TIMER = None
 OPENCLAW_GATEWAY_LOCK = threading.RLock()
@@ -103,6 +113,14 @@ def parse_ip(value: str):
         return None
 
 
+def usable_client_ip(value: str) -> bool:
+    try:
+        ip = ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    return not (ip.is_unspecified or ip.is_loopback or ip.is_multicast)
+
+
 def trusted_proxy(peer_ip: str) -> bool:
     try:
         ip = ipaddress.ip_address(peer_ip)
@@ -116,12 +134,22 @@ def forwarded_header_ip(headers):
     if xff:
         for part in xff.split(","):
             ip = parse_ip(part)
-            if ip:
+            if ip and usable_client_ip(ip):
                 return ip
 
-    for name in ("X-Real-IP", "CF-Connecting-IP", "True-Client-IP"):
+    for name in (
+        "X-Real-IP",
+        "X-Client-IP",
+        "X-Forwarded",
+        "X-Cluster-Client-IP",
+        "X-Original-Forwarded-For",
+        "X-Remote-IP",
+        "X-Remote-Addr",
+        "CF-Connecting-IP",
+        "True-Client-IP",
+    ):
         ip = parse_ip(headers.get(name))
-        if ip:
+        if ip and usable_client_ip(ip):
             return ip
 
     forwarded = headers.get("Forwarded")
@@ -131,7 +159,7 @@ def forwarded_header_ip(headers):
                 key, sep, val = part.strip().partition("=")
                 if sep and key.lower() == "for":
                     ip = parse_ip(val)
-                    if ip:
+                    if ip and usable_client_ip(ip):
                         return ip
     return None
 
@@ -153,6 +181,108 @@ def ensure_cc_connect_config():
 
 def agent_id_for(n: int) -> str:
     return f"agent-nako-{n}"
+
+
+def normalize_runtime(value: str) -> str:
+    value = (value or "").strip().lower()
+    return value if value in RUNTIMES else DEFAULT_RUNTIME
+
+
+def runtime_label(runtime: str) -> str:
+    if runtime == "hermes":
+        return "Hermes"
+    if runtime == "qclaw":
+        return "QClaw"
+    return "OpenClaw"
+
+
+def normalized_platform_runtimes(state: dict, bound: set, fallback_runtime: str) -> dict:
+    raw = state.get("platform_runtimes") if isinstance(state.get("platform_runtimes"), dict) else {}
+    fallback_runtime = normalize_runtime(fallback_runtime)
+    return {
+        plat: normalize_runtime(raw.get(plat) or fallback_runtime)
+        for plat in sorted(bound)
+        if plat in QR_PLATFORMS
+    }
+
+
+def hermes_home() -> Path:
+    return Path(os.environ.get("HERMES_HOME", str(HOME / ".hermes"))).expanduser()
+
+
+def hermes_workspace(aid: str) -> Path:
+    return hermes_home() / "workspace" / aid
+
+
+def hermes_command(env: dict = None) -> str:
+    configured = os.environ.get("HERMES_BIN")
+    if configured:
+        return configured
+    candidate = HOME / ".local/bin/hermes"
+    if candidate.exists():
+        return str(candidate)
+    found = shutil.which("hermes", path=(env or tool_env()).get("PATH"))
+    return found or "hermes"
+
+
+def qclaw_home() -> Path:
+    return Path(os.environ.get("QCLAW_HOME", str(HOME / ".qclaw"))).expanduser()
+
+
+def qclaw_config_path() -> Path:
+    configured = os.environ.get("QCLAW_OPENCLAW_CONFIG") or os.environ.get("OPENCLAW_CONFIG_PATH")
+    if configured:
+        return Path(configured).expanduser()
+    return qclaw_home() / "openclaw.json"
+
+
+def qclaw_workspace(aid: str) -> Path:
+    return qclaw_home() / f"workspace-{aid}"
+
+
+def qclaw_app_config() -> dict:
+    path = qclaw_home() / "qclaw.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def qclaw_node_binary(env: dict = None) -> str:
+    configured = os.environ.get("QCLAW_NODE_BIN")
+    if configured:
+        return configured
+    cli = qclaw_app_config().get("cli") or {}
+    if isinstance(cli, dict) and cli.get("nodeBinary"):
+        return str(cli["nodeBinary"])
+    mac_node = Path("/Applications/QClaw.app/Contents/Resources/node/node")
+    if mac_node.exists():
+        return str(mac_node)
+    found = shutil.which("node", path=(env or tool_env()).get("PATH"))
+    return found or "node"
+
+
+def qclaw_openclaw_mjs() -> str:
+    configured = os.environ.get("QCLAW_OPENCLAW_MJS")
+    if configured:
+        return configured
+    cli = qclaw_app_config().get("cli") or {}
+    if isinstance(cli, dict) and cli.get("openclawMjs"):
+        return str(cli["openclawMjs"])
+    return str(HOME / "Library/Application Support/QClaw/openclaw/node_modules/openclaw/openclaw.mjs")
+
+
+def toml_quote(value) -> str:
+    return json.dumps(str(value), ensure_ascii=False)
+
+
+def toml_array(values) -> str:
+    return "[" + ", ".join(toml_quote(v) for v in values) + "]"
+
+
+def toml_inline_table(items) -> str:
+    return "{ " + ", ".join(f"{k} = {toml_quote(v)}" for k, v in items.items()) + " }"
 
 
 def job_state(n: int) -> dict:
@@ -182,13 +312,32 @@ def read_log_tail(n: int, max_bytes: int = LOG_TAIL_BYTES) -> str:
 def status_payload(n: int) -> dict:
     state = job_state(n)
     aid = state.get("agent_id") or agent_id_for(n)
+    stored_runtime = normalize_runtime(state.get("runtime"))
+    runtime = stored_runtime
+    configured_runtime = cc_project_runtime(aid)
+    if configured_runtime in RUNTIMES and state.get("status") not in ("queued", "installing", "generating_qr"):
+        runtime = configured_runtime
     if state.get("status") not in ("unknown", "corrupt"):
         state.setdefault("agent_id", aid)
+        state.setdefault("runtime", runtime)
 
     bound = bound_platforms_for_agent(aid)
+    platform_runtimes = normalized_platform_runtimes(state, bound, stored_runtime)
     state["bound_platforms"] = sorted(bound)
     state["unbound_platforms"] = [plat for plat in QR_PLATFORMS if plat not in bound]
+    state["runtime"] = runtime
+    state["runtime_label"] = runtime_label(runtime)
+    state["platform_runtimes"] = platform_runtimes
+    state["platform_runtime_labels"] = {
+        plat: runtime_label(value) for plat, value in platform_runtimes.items()
+    }
     state["openclaw_agent_configured"] = openclaw_agent_configured(aid)
+    state["hermes_agent_configured"] = hermes_agent_configured(aid)
+    state["qclaw_agent_configured"] = qclaw_agent_configured(aid)
+    state["active_runtime_configured"] = {
+        "hermes": state["hermes_agent_configured"],
+        "qclaw": state["qclaw_agent_configured"],
+    }.get(runtime, state["openclaw_agent_configured"])
     with LOCK:
         active_qr = any(proc.poll() is None for proc in QR_PROCS.get(n, []))
     if state.get("status") == "awaiting_scan" and not active_qr:
@@ -197,6 +346,8 @@ def status_payload(n: int) -> dict:
         state["qr_refresh_in_progress"] = False
         write_state(n, status=next_status, qr_refresh_in_progress=False)
     requested = set(state.get("cc_reload_platforms") or [])
+    if bound and state.get("platform_runtimes") != platform_runtimes:
+        write_state(n, platform_runtimes=platform_runtimes)
     if bound and bound != requested:
         schedule_reload_for_bound_platforms(
             n, bound, tool_env(), reason=f"{aid}:status-bound-{','.join(sorted(bound))}"
@@ -467,6 +618,15 @@ def stop_qr_processes(n: int):
             proc.kill()
 
 
+def job_worker_lock(n: int):
+    with LOCK:
+        lock = JOB_WORKER_LOCKS.get(n)
+        if lock is None:
+            lock = threading.Lock()
+            JOB_WORKER_LOCKS[n] = lock
+        return lock
+
+
 def tool_env() -> dict:
     env = os.environ.copy()
     home = os.path.expanduser("~")
@@ -479,14 +639,20 @@ def tool_env() -> dict:
     return env
 
 
-def agent_install_command(aid: str) -> str:
+def agent_install_command(aid: str, runtime: str = None) -> str:
+    runtime = normalize_runtime(runtime)
     urls = " ".join(shlex.quote(url) for url in (INSTALL_URLS or DEFAULT_INSTALL_URLS))
     agent = shlex.quote(aid)
+    runtime_arg = shlex.quote(runtime)
     return (
         "set -o pipefail; rc=1; "
         f"for url in {urls}; do "
-        'echo "=== downloading installer: $url ==="; '
-        f"if curl --retry 3 --connect-timeout 20 -fsSL \"$url\" | bash -s -- --agent-id {agent} --non-interactive --force --with-cc-connect; then "
+        'echo "=== running installer: $url ==="; '
+        f"if case \"$url\" in "
+        f"file://*) installer_path=\"${{url#file://}}\"; bash \"$installer_path\" --agent-id {agent} --runtime {runtime_arg} --non-interactive --force --with-cc-connect ;; "
+        f"/*) bash \"$url\" --agent-id {agent} --runtime {runtime_arg} --non-interactive --force --with-cc-connect ;; "
+        f"*) curl --retry 3 --connect-timeout 20 -fsSL \"$url\" | bash -s -- --agent-id {agent} --runtime {runtime_arg} --non-interactive --force --with-cc-connect ;; "
+        f"esac; then "
         "exit 0; "
         "else "
         "rc=$?; "
@@ -521,8 +687,74 @@ def openclaw_agent_configured(aid: str) -> bool:
     return False
 
 
-def agent_install_needed(aid: str, state: dict) -> bool:
-    return state.get("install_rc") != 0 or not openclaw_agent_configured(aid)
+def hermes_agent_configured(aid: str) -> bool:
+    workspace = hermes_workspace(aid)
+    return (
+        workspace.is_dir()
+        and (workspace / "AGENTS.md").exists()
+        and (workspace / "SOUL.md").exists()
+    )
+
+
+def qclaw_agent_configured(aid: str) -> bool:
+    cfg_path = qclaw_config_path()
+    try:
+        cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+
+    agents = cfg.get("agents", {})
+    items = agents.get("list", []) if isinstance(agents, dict) else []
+    if not isinstance(items, list):
+        return False
+
+    expected_workspace = str(qclaw_workspace(aid))
+    expected_agent_dir = str(qclaw_home() / "agents" / aid / "agent")
+    for item in items:
+        if not isinstance(item, dict) or item.get("id") != aid:
+            continue
+        workspace = item.get("workspace") or expected_workspace
+        agent_dir = item.get("agentDir") or expected_agent_dir
+        return (
+            workspace == expected_workspace
+            and agent_dir == expected_agent_dir
+            and Path(workspace).is_dir()
+            and (Path(workspace) / "AGENTS.md").exists()
+        )
+    return False
+
+
+def cc_project_runtime(aid: str) -> str:
+    if not CC_CONFIG.exists():
+        return ""
+    try:
+        text = CC_CONFIG.read_text(encoding="utf-8")
+    except Exception:
+        return ""
+    for part in re.split(r"(?m)(?=^\[\[projects\]\]\s*$)", text):
+        if not part.startswith("[[projects]]"):
+            continue
+        name_match = re.search(r'(?m)^name\s*=\s*"([^"]+)"\s*$', part)
+        if (name_match.group(1) if name_match else "") != aid:
+            continue
+        return project_runtime_from_text(part)
+    return ""
+
+
+def agent_install_needed(aid: str, state: dict, runtime: str = None) -> bool:
+    runtime = normalize_runtime(runtime or state.get("runtime"))
+    if state.get("install_rc") != 0:
+        return True
+    if not openclaw_agent_configured(aid):
+        return True
+    if runtime == "hermes" and not hermes_agent_configured(aid):
+        return True
+    if runtime == "qclaw" and not qclaw_agent_configured(aid):
+        return True
+    project_runtime = cc_project_runtime(aid)
+    if not project_runtime or project_runtime != runtime:
+        return True
+    return False
 
 
 def is_cc_connect_main_args(args: str) -> bool:
@@ -929,6 +1161,87 @@ def prune_empty_cc_projects() -> list:
     return removed
 
 
+def project_runtime_from_text(part: str) -> str:
+    env_match = re.search(r'NAKO_AGENT_RUNTIME\s*=\s*"?(hermes|qclaw|openclaw)"?', part)
+    if env_match:
+        return env_match.group(1)
+    command_match = re.search(r'(?m)^command\s*=\s*"([^"]+)"\s*$', part)
+    command = command_match.group(1).lower() if command_match else ""
+    if "QCLAW_HOME" in part or ("OPENCLAW_STATE_DIR" in part and ".qclaw" in part):
+        return "qclaw"
+    if "hermes" in command:
+        return "hermes"
+    if "qclaw" in command:
+        return "qclaw"
+    if "openclaw" in command:
+        return "openclaw"
+    if "HERMES_HOME" in part:
+        return "hermes"
+    return "openclaw"
+
+
+def cc_agent_options_for_runtime(name: str, runtime: str, env: dict = None) -> dict:
+    runtime = normalize_runtime(runtime)
+    env = env or tool_env()
+    if runtime == "hermes":
+        hermes_env = {
+            "HOME": str(HOME),
+            "HERMES_HOME": str(hermes_home()),
+            "PATH": env.get("PATH", ""),
+            "OPENCLAW_OUTPUT_MODE": "acp",
+            "OPENCLAW_CCCONNECT_PROJECT": name,
+            "NAKO_AGENT_RUNTIME": "hermes",
+        }
+        return {
+            "work_dir": str(hermes_workspace(name)),
+            "command": hermes_command(env),
+            "args": ["acp"],
+            "display_name": f"Hermes {name}",
+            "env": hermes_env,
+        }
+    if runtime == "qclaw":
+        qhome = qclaw_home()
+        qclaw_env = {
+            "HOME": str(HOME),
+            "QCLAW_HOME": str(qhome),
+            "OPENCLAW_STATE_DIR": str(qhome),
+            "OPENCLAW_CONFIG_PATH": str(qclaw_config_path()),
+            "PATH": env.get("PATH", ""),
+            "OPENCLAW_OUTPUT_MODE": "acp",
+            "OPENCLAW_CCCONNECT_PROJECT": name,
+            "NAKO_AGENT_RUNTIME": "qclaw",
+        }
+        return {
+            "work_dir": str(qclaw_workspace(name)),
+            "command": qclaw_node_binary(env),
+            "args": [qclaw_openclaw_mjs(), "acp", "--session", f"agent:{name}:main"],
+            "display_name": f"QClaw {name}",
+            "env": qclaw_env,
+        }
+
+    return {
+        "work_dir": str(HOME / ".openclaw"),
+        "command": "openclaw",
+        "args": ["acp", "--session", f"agent:{name}:main"],
+        "display_name": f"OpenClaw {name}",
+        "env": {
+            "OPENCLAW_OUTPUT_MODE": "acp",
+            "OPENCLAW_CCCONNECT_PROJECT": name,
+            "NAKO_AGENT_RUNTIME": "openclaw",
+        },
+    }
+
+
+def cc_agent_option_lines(options: dict) -> dict:
+    return {
+        "work_dir": f"work_dir = {toml_quote(options['work_dir'])}",
+        "command": f"command = {toml_quote(options['command'])}",
+        "args": f"args = {toml_array(options['args'])}",
+        "display_name": f"display_name = {toml_quote(options['display_name'])}",
+        "env": f"env = {toml_inline_table(options['env'])}",
+    }
+
+
 def repair_nako_cc_projects() -> list:
     if not CC_CONFIG.exists():
         return []
@@ -956,6 +1269,7 @@ def repair_nako_cc_projects() -> list:
             continue
 
         original = part
+        runtime = project_runtime_from_text(part)
         if "[projects.agent]" not in part:
             insert = '\n[projects.agent]\ntype = "acp"\n\n[projects.agent.options]\n'
             marker = "\n[[projects.platforms]]"
@@ -988,13 +1302,12 @@ def repair_nako_cc_projects() -> list:
         next_table = re.search(r"(?m)^\[", part[rest_start:])
         insert_at = len(part) if next_table is None else rest_start + next_table.start()
         section = part[opt:insert_at]
-        needed = {
-            "work_dir": f'work_dir = "{HOME / ".openclaw"}"',
-            "command": 'command = "openclaw"',
-            "args": f'args = ["acp", "--session", "agent:{name}:main"]',
-            "display_name": f'display_name = "OpenClaw {name}"',
-            "env": f'env = {{ OPENCLAW_OUTPUT_MODE = "acp", OPENCLAW_CCCONNECT_PROJECT = "{name}" }}',
-        }
+        options = cc_agent_options_for_runtime(name, runtime)
+        if runtime == "hermes":
+            existing_command = re.search(r'(?m)^command\s*=\s*"([^"]*hermes[^"]*)"\s*$', part)
+            if existing_command and existing_command.group(1) != "hermes":
+                options["command"] = existing_command.group(1)
+        needed = cc_agent_option_lines(options)
         additions = []
         for key, line in needed.items():
             if re.search(rf"(?m)^{key}\s*=", section):
@@ -1107,13 +1420,16 @@ def ensure_openclaw_gateway(env: dict) -> bool:
 def gateway_watchdog():
     while True:
         port = OPENCLAW_GATEWAY_PORT
-        was_up = tcp_port_open("127.0.0.1", port)
-        if not was_up:
-            stop_openclaw_clients()
-        ok = ensure_openclaw_gateway(tool_env())
-        if ok and not was_up:
-            schedule_cc_connect_restart(tool_env(), reason="gateway-watchdog", delay=35.0)
-        elif ok and has_cc_projects() and not cc_connect_main_pids():
+        if has_openclaw_cc_projects():
+            was_up = tcp_port_open("127.0.0.1", port)
+            if not was_up:
+                stop_openclaw_clients()
+            ok = ensure_openclaw_gateway(tool_env())
+            if ok and not was_up:
+                schedule_cc_connect_restart(tool_env(), reason="gateway-watchdog", delay=35.0)
+            elif ok and has_cc_projects() and not cc_connect_main_pids():
+                schedule_cc_connect_restart(tool_env(), reason="cc-connect-watchdog", delay=2.0)
+        elif has_cc_projects() and not cc_connect_main_pids():
             schedule_cc_connect_restart(tool_env(), reason="cc-connect-watchdog", delay=2.0)
         time.sleep(OPENCLAW_WATCHDOG_INTERVAL)
 
@@ -1124,8 +1440,9 @@ def start_cc_connect(env: dict, reason: str = ""):
         log.parent.mkdir(parents=True, exist_ok=True)
         removed = prune_empty_cc_projects()
         repaired = repair_nako_cc_projects()
-        gateway_ok = ensure_openclaw_gateway(env)
-        approved_devices = approve_local_openclaw_device_repairs(env) if gateway_ok else []
+        needs_gateway = has_openclaw_cc_projects()
+        gateway_ok = ensure_openclaw_gateway(env) if needs_gateway else True
+        approved_devices = approve_local_openclaw_device_repairs(env) if needs_gateway and gateway_ok else []
 
         stop_cc_connect()
         stopped_openclaw = stop_openclaw_clients()
@@ -1177,6 +1494,28 @@ def has_cc_projects() -> bool:
     return re.search(r"(?m)^\[\[projects\]\]\s*$", text) is not None
 
 
+def cc_project_runtimes() -> set:
+    if not CC_CONFIG.exists():
+        return set()
+    try:
+        text = CC_CONFIG.read_text(encoding="utf-8")
+    except Exception:
+        return set()
+
+    runtimes = set()
+    for part in re.split(r"(?m)(?=^\[\[projects\]\]\s*$)", text):
+        if not part.startswith("[[projects]]"):
+            continue
+        if "[projects.agent]" not in part:
+            continue
+        runtimes.add(project_runtime_from_text(part))
+    return runtimes
+
+
+def has_openclaw_cc_projects() -> bool:
+    return "openclaw" in cc_project_runtimes()
+
+
 def existing_job_for_ip(client_ip: str, index: dict):
     raw = index.get(client_ip)
     if raw is None:
@@ -1192,40 +1531,84 @@ def existing_job_for_ip(client_ip: str, index: dict):
     return None
 
 
-def create_or_get_job_for_ip(client_ip: str):
+def create_or_get_job_for_ip(client_ip: str, runtime: str):
     client_ip = client_ip or "unknown"
+    runtime = normalize_runtime(runtime)
     with LOCK:
         index = load_ip_index()
         n = existing_job_for_ip(client_ip, index)
         if n is not None:
+            state = job_state(n)
+            aid = state.get("agent_id") or agent_id_for(n)
+            bound = bound_platforms_for_agent(aid)
+            platform_runtimes = normalized_platform_runtimes(
+                state, bound, normalize_runtime(state.get("runtime"))
+            )
+            update = {"platform_runtimes": platform_runtimes}
+            if not bound:
+                update["runtime"] = runtime
+            write_state(n, **update)
             return n, True, client_ip
 
         n = alloc_id()
         aid = f"agent-nako-{n}"
-        write_state(n, status="queued", agent_id=aid, client_ip=client_ip)
+        write_state(n, status="queued", agent_id=aid, client_ip=client_ip, runtime=runtime)
         index[client_ip] = n
         save_ip_index(index)
         return n, False, client_ip
 
 
-def run_install_and_qr(n: int, force_qr: bool = False, generation: int = None, target_platforms=None):
+def current_job_payload_for_ip(client_ip: str) -> dict:
+    client_ip = client_ip or "unknown"
+    with LOCK:
+        index = load_ip_index()
+        n = existing_job_for_ip(client_ip, index)
+    if n is None:
+        return {
+            "existing": False,
+            "client_ip": client_ip,
+            "status": "none",
+            "runtime": DEFAULT_RUNTIME,
+            "runtime_label": runtime_label(DEFAULT_RUNTIME),
+        }
+    payload = status_payload(n)
+    payload.update({
+        "existing": True,
+        "id": n,
+        "agent_id": agent_id_for(n),
+        "client_ip": client_ip,
+        "status_url": f"/status?id={n}",
+        "log_url": f"/log?id={n}",
+    })
+    return payload
+
+
+def run_install_and_qr(n: int, force_qr: bool = False, generation: int = None, target_platforms=None, runtime: str = None):
+    with job_worker_lock(n):
+        if generation is not None and not generation_current(n, generation):
+            return
+        return run_install_and_qr_locked(n, force_qr, generation, target_platforms, runtime)
+
+
+def run_install_and_qr_locked(n: int, force_qr: bool = False, generation: int = None, target_platforms=None, runtime: str = None):
     """Background worker: install agent when needed, then run QR onboarding."""
     aid = agent_id_for(n)
     log = JOB_DIR / f"{aid}.log"
     env = tool_env()
+    runtime = normalize_runtime(runtime or job_state(n).get("runtime"))
     if generation is None:
         generation = next_generation(n)
     target_platforms = [p for p in (target_platforms or []) if p in QR_PLATFORMS]
     ensure_cc_connect_config()
 
     state = job_state(n)
-    install_needed = agent_install_needed(aid, state)
+    install_needed = agent_install_needed(aid, state, runtime)
     if install_needed:
-        write_state(n, status="installing", agent_id=aid, qr_generation=generation)
+        write_state(n, status="installing", agent_id=aid, runtime=runtime, qr_generation=generation)
         with log.open("w") as f:
             # Install (idempotent)
             rc = subprocess.run(
-                ["bash", "-c", agent_install_command(aid)],
+                ["bash", "-c", agent_install_command(aid, runtime)],
                 stdout=f, stderr=subprocess.STDOUT, env=env).returncode
             f.write(f"\n=== install rc={rc} ===\n")
 
@@ -1234,13 +1617,16 @@ def run_install_and_qr(n: int, force_qr: bool = False, generation: int = None, t
                 write_state(n, status="install_failed", install_rc=rc)
             return
 
-        gateway_ok, stopped_clients, stopped_gateways = restart_openclaw_gateway(env)
+        if runtime == "openclaw":
+            gateway_ok, stopped_clients, stopped_gateways = restart_openclaw_gateway(env)
+        else:
+            gateway_ok, stopped_clients, stopped_gateways = True, [], []
         with log.open("a") as f:
             f.write(
-                "\n=== restarted openclaw gateway after install: "
-                f"ok={gateway_ok} clients={stopped_clients} gateways={stopped_gateways} ===\n"
+                f"\n=== runtime={runtime} post-install: "
+                f"gateway_ok={gateway_ok} clients={stopped_clients} gateways={stopped_gateways} ===\n"
             )
-        write_state(n, status="installed", install_rc=rc)
+        write_state(n, status="installed", runtime=runtime, install_rc=rc)
 
     if not generation_current(n, generation):
         return
@@ -1248,9 +1634,12 @@ def run_install_and_qr(n: int, force_qr: bool = False, generation: int = None, t
     platforms = target_platforms or unbound_platforms_for_agent(aid)
     if not platforms:
         bound = bound_platforms_for_agent(aid)
-        write_state(n, status="ready", qr_refresh_in_progress=False,
+        platform_runtimes = job_state(n).get("platform_runtimes")
+        platform_runtimes = platform_runtimes if isinstance(platform_runtimes, dict) else {}
+        write_state(n, status="ready", runtime=runtime, qr_refresh_in_progress=False,
                     bound_platforms=sorted(bound),
-                    unbound_platforms=[])
+                    unbound_platforms=[],
+                    platform_runtimes=platform_runtimes)
         schedule_reload_for_bound_platforms(n, bound, env, reason=f"{aid}:already-bound")
         return
 
@@ -1261,17 +1650,20 @@ def run_install_and_qr(n: int, force_qr: bool = False, generation: int = None, t
         )
 
     clear_qr = {}
+    platform_runtimes = job_state(n).get("platform_runtimes")
+    platform_runtimes = platform_runtimes if isinstance(platform_runtimes, dict) else {}
     for plat in platforms:
         qr_path = JOB_DIR / f"{aid}-{plat}.png"
         try:
             qr_path.unlink()
         except FileNotFoundError:
             pass
+        platform_runtimes.pop(plat, None)
         clear_qr[f"{plat}_qr_url"] = None
         clear_qr[f"{plat}_qr_image"] = None
         clear_qr[f"{plat}_rc"] = None
-    write_state(n, status="generating_qr", agent_id=aid, qr_generation=generation,
-                qr_refresh_in_progress=True, **clear_qr)
+    write_state(n, status="generating_qr", agent_id=aid, runtime=runtime, qr_generation=generation,
+                qr_refresh_in_progress=True, platform_runtimes=platform_runtimes, **clear_qr)
 
     procs = []
     url_patterns = {
@@ -1310,7 +1702,7 @@ def run_install_and_qr(n: int, force_qr: bool = False, generation: int = None, t
     if not generation_current(n, generation):
         return
 
-    write_state(n, status="awaiting_scan")
+    write_state(n, status="awaiting_scan", runtime=runtime)
 
     rc_updates = {}
     remaining = {plat: proc for plat, proc in procs}
@@ -1337,7 +1729,13 @@ def run_install_and_qr(n: int, force_qr: bool = False, generation: int = None, t
 
         bound_now = bound_platforms_for_agent(aid)
         unbound_now = [plat for plat in QR_PLATFORMS if plat not in bound_now]
+        platform_runtimes = job_state(n).get("platform_runtimes")
+        platform_runtimes = platform_runtimes if isinstance(platform_runtimes, dict) else {}
+        for plat in platforms:
+            if plat in bound_now:
+                platform_runtimes[plat] = runtime
         write_state(n, bound_platforms=sorted(bound_now), unbound_platforms=unbound_now,
+                    platform_runtimes=platform_runtimes,
                     **rc_updates)
         if bound_now and bound_now != last_bound:
             with log.open("a") as f:
@@ -1355,18 +1753,27 @@ def run_install_and_qr(n: int, force_qr: bool = False, generation: int = None, t
 
     bound = bound_platforms_for_agent(aid)
     unbound = [plat for plat in QR_PLATFORMS if plat not in bound]
+    platform_runtimes = job_state(n).get("platform_runtimes")
+    platform_runtimes = platform_runtimes if isinstance(platform_runtimes, dict) else {}
+    for plat in platforms:
+        if plat in bound:
+            platform_runtimes[plat] = runtime
     write_state(n, status="ready" if not unbound else "qr_expired",
+                runtime=runtime,
                 qr_refresh_in_progress=False,
                 bound_platforms=sorted(bound),
                 unbound_platforms=unbound,
+                platform_runtimes=platform_runtimes,
                 **rc_updates)
     if bound:
         schedule_reload_for_bound_platforms(n, bound, env, reason=f"{aid}:qr-finished")
 
 
-def start_worker(n: int, force_qr: bool = False, reason: str = "", target_platforms=None) -> bool:
+def start_worker(n: int, force_qr: bool = False, reason: str = "", target_platforms=None, runtime: str = None) -> bool:
     generation = next_generation(n)
+    runtime = normalize_runtime(runtime or job_state(n).get("runtime"))
     target_platforms = [p for p in (target_platforms or []) if p in QR_PLATFORMS]
+    stop_qr_processes(n)
     if force_qr:
         state = job_state(n)
         aid = state.get("agent_id") or agent_id_for(n)
@@ -1380,11 +1787,10 @@ def start_worker(n: int, force_qr: bool = False, reason: str = "", target_platfo
             clear_qr[f"{plat}_qr_url"] = None
             clear_qr[f"{plat}_qr_image"] = None
             clear_qr[f"{plat}_rc"] = None
-        write_state(n, status="generating_qr", qr_refresh_in_progress=True, **clear_qr)
-        stop_qr_processes(n)
+        write_state(n, status="generating_qr", runtime=runtime, qr_refresh_in_progress=True, **clear_qr)
     t = threading.Thread(
         target=run_install_and_qr,
-        args=(n, force_qr, generation, target_platforms),
+        args=(n, force_qr, generation, target_platforms, runtime),
         daemon=True,
     )
     t.start()
@@ -1396,6 +1802,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Cache-Control", "no-store, max-age=0")
         self.end_headers()
         self.wfile.write(json.dumps(obj, ensure_ascii=False).encode())
 
@@ -1403,35 +1810,56 @@ class Handler(http.server.BaseHTTPRequestHandler):
         u = urllib.parse.urlparse(self.path)
         q = urllib.parse.parse_qs(u.query)
         if u.path == "/":
-            self.send_response(200); self.send_header("Content-Type", "text/html; charset=utf-8"); self.end_headers()
+            self.send_response(200); self.send_header("Content-Type", "text/html; charset=utf-8"); self.send_header("Cache-Control", "no-store, max-age=0"); self.end_headers()
             self.wfile.write("""<!doctype html><html lang="zh-CN"><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>Nako Factory</title>
 <style>
 :root{color-scheme:light;--bg:#f6f7f9;--panel:#fff;--text:#17202a;--muted:#687385;--line:#dde3ea;--accent:#2563eb;--accent-dark:#1d4ed8;--ok:#0f8a5f;--warn:#a16207;--bad:#b42318;--shadow:0 14px 36px rgba(20,30,45,.08)}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,"PingFang SC","Microsoft YaHei",sans-serif}.page{width:min(1120px,100%);margin:0 auto;padding:28px 18px 36px}.topbar{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:18px}.brand h1{margin:0;font-size:26px;line-height:1.2;letter-spacing:0}.brand p{margin:6px 0 0;color:var(--muted)}button{border:0;border-radius:8px;background:var(--accent);color:#fff;padding:11px 16px;font-weight:700;font-size:15px;cursor:pointer;white-space:nowrap;box-shadow:0 8px 18px rgba(37,99,235,.18)}button:hover{background:var(--accent-dark)}button:disabled{cursor:wait;opacity:.72}.small-btn{width:100%;margin-top:12px;background:#fff;color:var(--accent);border:1px solid #bfd0ff;box-shadow:none;padding:9px 12px;font-size:14px}.small-btn:hover{background:#eef4ff}.summary{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 18px}.pill{display:inline-flex;align-items:center;min-height:30px;border:1px solid var(--line);border-radius:999px;background:#fff;padding:4px 10px;color:var(--muted);font-size:13px}.pill strong{color:var(--text);font-weight:700}.status-ready{color:var(--ok)}.status-working{color:var(--accent)}.status-warn{color:var(--warn)}.status-bad{color:var(--bad)}.qr-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-bottom:18px}.qr-card{background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow);padding:18px}.qr-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}.qr-title{font-size:18px;font-weight:800}.qr-state{font-size:13px;color:var(--muted);white-space:nowrap}.qr-wrap{display:grid;place-items:center;min-height:286px;border:1px dashed #cbd5e1;border-radius:8px;background:#f8fafc}.qr{width:min(260px,78vw);height:min(260px,78vw);image-rendering:pixelated}.qr-placeholder{display:flex;min-height:260px;align-items:center;justify-content:center;flex-direction:column;text-align:center;color:var(--muted);padding:22px}.qr-placeholder strong{display:block;color:var(--text);font-size:18px;margin-top:12px}.qr-placeholder span{display:block;margin-top:4px}.spinner{width:34px;height:34px;border-radius:999px;border:3px solid #dbe4ef;border-top-color:var(--accent);animation:spin 1s linear infinite}.check{display:grid;place-items:center;width:42px;height:42px;border-radius:999px;background:#e7f7ef;color:var(--ok);font-size:26px;font-weight:900}.qr-link{margin:12px 0 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.qr-link a{color:var(--accent);text-decoration:none}.qr-link a:hover{text-decoration:underline}.hint{margin:0 0 18px;color:var(--muted)}.details{display:grid;gap:10px;margin-top:10px}details{background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow)}summary{cursor:pointer;padding:13px 16px;font-weight:800}pre{margin:0;border-top:1px solid var(--line);background:#0f172a;color:#dbeafe;padding:14px 16px;max-height:340px;overflow:auto;white-space:pre-wrap;font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.empty{background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow);padding:26px;color:var(--muted)}@keyframes spin{to{transform:rotate(360deg)}}@media(max-width:760px){.page{padding:20px 12px 28px}.topbar{display:block}.topbar button{width:100%;margin-top:14px}.qr-grid{grid-template-columns:1fr}.qr-wrap{min-height:240px}.qr-placeholder{min-height:220px}.brand h1{font-size:23px}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,"PingFang SC","Microsoft YaHei",sans-serif}.page{width:min(1120px,100%);margin:0 auto;padding:28px 18px 36px}.topbar{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:18px}.brand h1{margin:0;font-size:26px;line-height:1.2;letter-spacing:0}.brand p{margin:6px 0 0;color:var(--muted)}.actions{display:grid;gap:10px;min-width:360px}.runtime-switch{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;border:1px solid var(--line);border-radius:8px;background:#fff;padding:4px}.runtime-switch input{position:absolute;opacity:0;pointer-events:none}.runtime-switch span{display:block;border-radius:6px;padding:8px 10px;text-align:center;font-weight:800;color:var(--muted);cursor:pointer}.runtime-switch input:checked+span{background:#e8f0ff;color:#1d4ed8}button{border:0;border-radius:8px;background:var(--accent);color:#fff;padding:11px 16px;font-weight:700;font-size:15px;cursor:pointer;white-space:nowrap;box-shadow:0 8px 18px rgba(37,99,235,.18)}button:hover{background:var(--accent-dark)}button:disabled{cursor:wait;opacity:.72}.small-btn{width:100%;margin-top:12px;background:#fff;color:var(--accent);border:1px solid #bfd0ff;box-shadow:none;padding:9px 12px;font-size:14px}.small-btn:hover{background:#eef4ff}.summary{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 18px}.pill{display:inline-flex;align-items:center;min-height:30px;border:1px solid var(--line);border-radius:999px;background:#fff;padding:4px 10px;color:var(--muted);font-size:13px}.pill strong{color:var(--text);font-weight:700}.status-ready{color:var(--ok)}.status-working{color:var(--accent)}.status-warn{color:var(--warn)}.status-bad{color:var(--bad)}.qr-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-bottom:18px}.qr-card{background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow);padding:18px}.qr-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}.qr-title{font-size:18px;font-weight:800}.qr-state{font-size:13px;color:var(--muted);white-space:nowrap}.qr-wrap{display:grid;place-items:center;min-height:286px;border:1px dashed #cbd5e1;border-radius:8px;background:#f8fafc}.qr{width:min(260px,78vw);height:min(260px,78vw);image-rendering:pixelated}.qr-placeholder{display:flex;min-height:260px;align-items:center;justify-content:center;flex-direction:column;text-align:center;color:var(--muted);padding:22px}.qr-placeholder strong{display:block;color:var(--text);font-size:18px;margin-top:12px}.qr-placeholder span{display:block;margin-top:4px}.spinner{width:34px;height:34px;border-radius:999px;border:3px solid #dbe4ef;border-top-color:var(--accent);animation:spin 1s linear infinite}.check{display:grid;place-items:center;width:42px;height:42px;border-radius:999px;background:#e7f7ef;color:var(--ok);font-size:26px;font-weight:900}.qr-link{margin:12px 0 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.qr-link a{color:var(--accent);text-decoration:none}.qr-link a:hover{text-decoration:underline}.hint{margin:0 0 18px;color:var(--muted)}.details{display:grid;gap:10px;margin-top:10px}details{background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow)}summary{cursor:pointer;padding:13px 16px;font-weight:800}pre{margin:0;border-top:1px solid var(--line);background:#0f172a;color:#dbeafe;padding:14px 16px;max-height:340px;overflow:auto;white-space:pre-wrap;font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.empty{background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow);padding:26px;color:var(--muted)}@keyframes spin{to{transform:rotate(360deg)}}@media(max-width:760px){.page{padding:20px 12px 28px}.topbar{display:block}.actions{min-width:0}.topbar button{width:100%}.qr-grid{grid-template-columns:1fr}.qr-wrap{min-height:240px}.qr-placeholder{min-height:220px}.brand h1{font-size:23px}}
 </style></head>
-<body><main class=page><div class=topbar><div class=brand><h1>Nako Agent Factory</h1><p>同一个客户端 IP 只会分配一个 agent；未绑定时再次点击会刷新二维码，已绑定平台可在卡片里解绑重扫。</p></div><button id=createBtn onclick="create()">生成 / 刷新二维码</button></div><div id=out><div class=empty>点击按钮后开始安装并生成飞书、微信二维码。</div></div></main>
+<body><main class=page><div class=topbar><div class=brand><h1>Nako Agent Factory</h1><p>同一个客户端 IP 只会分配一个 agent；可选择 OpenClaw、Hermes 或 QClaw 作为消息后端，已绑定平台可在卡片里解绑重扫。</p></div><div class=actions><div class=runtime-switch aria-label="Agent runtime"><label><input type=radio name=runtime value=openclaw checked><span>OpenClaw</span></label><label><input type=radio name=runtime value=hermes><span>Hermes</span></label><label><input type=radio name=runtime value=qclaw><span>QClaw</span></label></div><button id=createBtn onclick="create()" disabled>载入中...</button></div></div><div id=out><div class=empty>正在载入当前 agent...</div></div></main>
 <script>
 let timer=null;
+let lastState=null;
+let runtimeTouched=false;
+let desiredRuntime=null;
 const platforms=[
   {key:'feishu',name:'飞书',desc:'使用飞书 / Lark 手机 App 扫码绑定'},
   {key:'weixin',name:'微信',desc:'使用微信扫码连接 ilink 机器人'}
 ];
 const finalStatuses=['ready','qr_expired','install_failed','unknown','corrupt'];
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function validRuntime(s){return s==='hermes'||s==='qclaw'?s:'openclaw';}
+function selectedRuntime(){return validRuntime(desiredRuntime||document.querySelector('input[name=runtime]:checked')?.value||'openclaw');}
+function runtimeName(s){return s==='hermes'?'Hermes':(s==='qclaw'?'QClaw':'OpenClaw');}
+function currentRuntime(j){return j.runtime||'openclaw';}
+function updateActionText(){const btn=document.getElementById('createBtn');if(btn&&!btn.disabled)btn.textContent='切换到 '+runtimeName(selectedRuntime())+' / 刷新二维码';}
+function setRuntimeControl(value,touched=false){const v=validRuntime(value);desiredRuntime=v;if(touched)runtimeTouched=true;const input=document.querySelector('input[name=runtime][value="'+v+'"]');if(input)input.checked=true;updateActionText();}
+function initializeRuntimeControl(j){if(!runtimeTouched)setRuntimeControl(currentRuntime(j));}
 function statusLabel(s){return ({queued:'排队中',installing:'安装中',installed:'已安装',generating_qr:'生成二维码中',awaiting_scan:'等待扫码',ready:'就绪',qr_expired:'二维码已过期',install_failed:'安装失败',unknown:'未知',corrupt:'状态损坏'})[s]||s||'未知';}
 function statusClass(s){if(s==='ready')return'status-ready';if(s==='install_failed'||s==='corrupt')return'status-bad';if(s==='qr_expired'||s==='unknown')return'status-warn';return'status-working';}
 function isBound(j,key){return (j.bound_platforms||[]).includes(key);}
 function isUnbound(j,key){return (j.unbound_platforms||[]).includes(key);}
+function platformRuntime(j,key){return (j.platform_runtimes||{})[key]||j.runtime||'openclaw';}
 function summaryHTML(j){
-  return [
+  const current=currentRuntime(j);
+  const selected=selectedRuntime();
+  const pills=[
     '<span class="pill '+statusClass(j.status)+'"><strong>状态：</strong>'+esc(statusLabel(j.status))+'</span>',
     '<span class=pill><strong>Agent：</strong>'+esc(j.agent_id||'-')+'</span>',
-    '<span class=pill><strong>IP：</strong>'+esc(j.client_ip||'-')+'</span>'
-  ].join('');
+    '<span class=pill><strong>当前后端：</strong>'+esc(runtimeName(current))+'</span>'
+  ];
+  if(selected!==current){
+    pills.push('<span class=pill><strong>已选择：</strong>'+esc(runtimeName(selected))+'</span>');
+  }
+  pills.push('<span class=pill><strong>IP：</strong>'+esc(j.client_ip||'-')+'</span>');
+  return pills.join('');
 }
 function hintText(j){
   const unbound=(j.unbound_platforms||[]).map(x=>platforms.find(p=>p.key===x)?.name||x).join('、');
-  return unbound?('未绑定：'+unbound+'。二维码超时后再次点击上方按钮即可刷新。'):'飞书和微信均已绑定；如需换绑，点击对应卡片的“解绑并重扫”。';
+  const current=currentRuntime(j);
+  const backend=runtimeName(current);
+  const target=selectedRuntime()!==current?('已选择：'+runtimeName(selectedRuntime())+'；点击上方按钮后会切换并生成二维码。'):'';
+  return unbound?('当前后端：'+backend+'。'+target+'未绑定：'+unbound+'。二维码超时后再次点击上方按钮即可刷新。'):'当前后端：'+backend+'。'+target+'飞书和微信均已绑定；如需换绑，点击对应卡片的“解绑并重扫”。';
 }
 function qrHTML(j){return platforms.map(p=>renderQR(j,p)).join('');}
 function renderQR(j,p){
@@ -1440,12 +1868,13 @@ function renderQR(j,p){
   const bound=isBound(j,p.key);
   const working=['queued','installing','installed','generating_qr','awaiting_scan'].includes(j.status)||j.qr_refresh_in_progress;
   let body='';
-  let state=bound?'已绑定':(working?'正在生成':'待生成');
+  const backend=runtimeName(platformRuntime(j,p.key));
+  let state=bound?('已绑定到 '+backend):(working?'正在生成':'待生成');
   if(img&&!bound){
     body='<img class=qr src="'+esc(img)+'" alt="'+esc(p.name)+'二维码">';
     state='待扫码';
   }else if(bound){
-    body='<div class=qr-placeholder><div class=check>✓</div><strong>已绑定</strong><span>'+esc(p.name)+' 已可使用</span></div>';
+    body='<div class=qr-placeholder><div class=check>✓</div><strong>扫码绑定到 '+esc(backend)+'</strong><span>当前消息后端：'+esc(runtimeName(currentRuntime(j)))+'</span></div>';
   }else{
     body='<div class=qr-placeholder><div class=spinner></div><strong>正在生成二维码</strong><span>'+esc(p.desc)+'</span></div>';
   }
@@ -1454,6 +1883,7 @@ function renderQR(j,p){
   return '<section class=qr-card><div class=qr-head><div class=qr-title>'+esc(p.name)+'</div><div class=qr-state>'+esc(state)+'</div></div><div class=qr-wrap>'+body+'</div>'+link+action+'</section>';
 }
 function render(j){
+  lastState=j;
   document.getElementById('out').innerHTML='<div id=qrGrid class=qr-grid>'+qrHTML(j)+'</div><div id=summary class=summary>'+summaryHTML(j)+'</div><p id=hint class=hint>'+esc(hintText(j))+'</p><div class=details><details id=infoDetails><summary>运行信息</summary><pre id=info></pre></details><details id=logDetails><summary>安装 / 二维码日志</summary><pre id=log></pre></details></div>';
   updateDetails(j,true);
 }
@@ -1468,6 +1898,7 @@ function updateDetails(j,forceScroll){
   }
 }
 function updateLive(j){
+  lastState=j;
   const qr=document.getElementById('qrGrid');
   if(!qr){render(j);return;}
   qr.innerHTML=qrHTML(j);
@@ -1479,26 +1910,29 @@ function updateLive(j){
 }
 async function create(){
   const btn=document.getElementById('createBtn');
+  const runtime=selectedRuntime();
   btn.disabled=true;btn.textContent='处理中...';
   try{
-    const r=await fetch('/create',{method:'POST'});const j=await r.json();
+    const r=await fetch('/create?runtime='+encodeURIComponent(runtime),{method:'POST'});const j=await r.json();
     render(j);
     poll(j.id);
   }finally{
-    btn.disabled=false;btn.textContent='生成 / 刷新二维码';
+    btn.disabled=false;updateActionText();
   }
 }
 async function rebind(id,platform,name){
-  if(!confirm('解绑 '+name+' 并重新生成二维码？')) return;
+  const runtime=selectedRuntime();
+  const backend=runtimeName(runtime);
+  if(!confirm('解绑 '+name+' 并重新绑定到 '+backend+'？')) return;
   const btn=document.getElementById('createBtn');
   btn.disabled=true;btn.textContent='处理中...';
   try{
-    const r=await fetch('/rebind?id='+encodeURIComponent(id)+'&platform='+encodeURIComponent(platform),{method:'POST'});
+    const r=await fetch('/rebind?id='+encodeURIComponent(id)+'&platform='+encodeURIComponent(platform)+'&runtime='+encodeURIComponent(runtime),{method:'POST'});
     const j=await r.json();
     render(j);
     poll(j.id);
   }finally{
-    btn.disabled=false;btn.textContent='生成 / 刷新二维码';
+    btn.disabled=false;updateActionText();
   }
 }
 async function poll(id){
@@ -1509,8 +1943,38 @@ async function poll(id){
     timer=setTimeout(()=>poll(id),2000);
   }
 }
+function setCreateButton(enabled,text){
+  const btn=document.getElementById('createBtn');
+  if(!btn)return;
+  btn.disabled=!enabled;
+  btn.textContent=text||'生成 / 刷新二维码';
+}
+async function loadCurrent(){
+  try{
+    const r=await fetch('/current');
+    const j=await r.json();
+    if(j.existing){
+      initializeRuntimeControl(j);
+      render(j);
+      if(!finalStatuses.includes(j.status))poll(j.id);
+    }else{
+      setRuntimeControl(j.runtime||selectedRuntime());
+      document.getElementById('out').innerHTML='<div class=empty>选择后端并点击按钮，开始安装 agent 并生成飞书、微信二维码。</div>';
+    }
+  }finally{
+    setCreateButton(true);
+    updateActionText();
+  }
+}
+document.querySelectorAll('input[name=runtime]').forEach(input=>{
+  input.addEventListener('change',()=>{setRuntimeControl(input.value,true);if(lastState)updateLive(lastState);});
+});
+loadCurrent();
 </script></body></html>""".encode("utf-8"))
             return
+        if u.path == "/current":
+            client_ip = client_ip_from_request(self)
+            return self._json(200, current_job_payload_for_ip(client_ip))
         if u.path == "/status":
             try: n = int(q.get("id", ["0"])[0])
             except: return self._json(400, {"error": "bad id"})
@@ -1522,6 +1986,7 @@ async function poll(id){
             if not p.exists(): return self._json(404, {"error": "log not ready"})
             self.send_response(200); self.send_header("Content-Type", "text/plain; charset=utf-8")
             self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Cache-Control", "no-store, max-age=0")
             self.end_headers()
             self.wfile.write(p.read_text(errors="replace").encode("utf-8"))
             return
@@ -1542,18 +2007,22 @@ async function poll(id){
         q = urllib.parse.parse_qs(u.query)
         if u.path == "/create":
             client_ip = client_ip_from_request(self)
-            n, existing, client_ip = create_or_get_job_for_ip(client_ip)
+            runtime = normalize_runtime(q.get("runtime", [DEFAULT_RUNTIME])[0])
+            n, existing, client_ip = create_or_get_job_for_ip(client_ip, runtime)
             refresh_started = False
+            aid = agent_id_for(n)
+            bound_now = bound_platforms_for_agent(aid)
             if not existing:
-                refresh_started = start_worker(n, force_qr=False, reason="new")
-            elif agent_install_needed(agent_id_for(n), job_state(n)):
-                refresh_started = start_worker(n, force_qr=False, reason="repair")
+                refresh_started = start_worker(n, force_qr=False, reason="new", runtime=runtime)
+            elif agent_install_needed(aid, job_state(n), runtime):
+                refresh_started = start_worker(n, force_qr=False, reason="repair", runtime=runtime)
             elif should_refresh_qr(n):
-                refresh_started = start_worker(n, force_qr=True, reason="refresh")
+                refresh_started = start_worker(n, force_qr=True, reason="refresh", runtime=runtime)
             code = 200 if existing else 202
             payload = status_payload(n)
             payload.update({"id": n, "agent_id": agent_id_for(n),
-                            "client_ip": client_ip, "existing": existing,
+                            "client_ip": client_ip,
+                            "existing": existing,
                             "qr_refresh_started": refresh_started,
                             "status_url": f"/status?id={n}",
                             "log_url": f"/log?id={n}",
@@ -1572,14 +2041,21 @@ async function poll(id){
                 return self._json(404, {"error": "job not found"})
 
             aid = state.get("agent_id") or agent_id_for(n)
+            runtime = normalize_runtime(q.get("runtime", [state.get("runtime") or DEFAULT_RUNTIME])[0])
+            old_platform_runtime = normalized_platform_runtimes(
+                state, {plat}, normalize_runtime(state.get("runtime"))
+            ).get(plat)
             removed = remove_platform_binding_for_agent(aid, plat)
             removed_sessions = reset_cc_connect_sessions_for_platform(aid, plat)
-            old_openclaw_session = reset_openclaw_main_session(aid)
+            old_openclaw_session = reset_openclaw_main_session(aid) if old_platform_runtime == "openclaw" else ""
+            platform_runtimes = state.get("platform_runtimes")
+            platform_runtimes = platform_runtimes if isinstance(platform_runtimes, dict) else {}
+            platform_runtimes.pop(plat, None)
             log = log_path_for(n)
             log.parent.mkdir(exist_ok=True)
             with log.open("a") as f:
                 f.write(
-                    f"\n=== rebind requested platform={plat} removed={removed} "
+                    f"\n=== rebind requested old_runtime={old_platform_runtime or '-'} runtime={runtime} platform={plat} removed={removed} "
                     f"cc_sessions={','.join(removed_sessions) or '-'} "
                     f"openclaw_main={old_openclaw_session or '-'} ===\n"
                 )
@@ -1587,10 +2063,12 @@ async function poll(id){
                 n,
                 status="generating_qr",
                 agent_id=aid,
+                runtime=runtime,
                 qr_refresh_in_progress=True,
                 cc_reload_platforms=sorted(bound_platforms_for_agent(aid)),
+                platform_runtimes=platform_runtimes,
             )
-            refresh_started = start_worker(n, force_qr=True, reason=f"rebind-{plat}", target_platforms=[plat])
+            refresh_started = start_worker(n, force_qr=True, reason=f"rebind-{plat}", target_platforms=[plat], runtime=runtime)
             payload = status_payload(n)
             payload.update({
                 "id": n,

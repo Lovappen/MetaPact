@@ -15,7 +15,8 @@ bash install.sh
 5. **安装 skills** — 拷贝 `skills/{vision,hearing,voice,selfie,dokidoki,skill-log.sh}` 到 `~/.openclaw/skills/`。共享 `.env` 作为旧版 fallback 只填入新 key，已有值保留。
 6. **安装 agent 人设** — 拷贝 `agent/*.md` 到 `~/.openclaw/workspace/<id>/`。`custom.md` 首次创建空壳，之后永远不动。
 7. **合并 openclaw.json** — 备份旧配置 (`.bak-<ts>`)，把 agent 加到 `agents.list`，把 voice/selfie 的 provider key 写到 `skills.entries.*.env`。
-8. **冒烟测试** — 检查每个 skill 的脚本、依赖、env 是否齐。
+8. **runtime 接入** — 默认使用 OpenClaw；如果传 `--runtime hermes`，会把 workspace 同步到 `~/.hermes/workspace/<id>` 并让 cc-connect 调 `hermes acp`；如果传 `--runtime qclaw`，会同步到 `~/.qclaw/workspace-<id>` 并让 cc-connect 调 QClaw 自带的 OpenClaw ACP。
+9. **冒烟测试** — 检查每个 skill 的脚本、依赖、env 是否齐。
 
 ## Flags
 
@@ -23,6 +24,7 @@ bash install.sh
 |---|---|
 | `--force` | 覆盖已存在的人设文件（仍会备份） |
 | `--agent-id <id>` | 改 agent id（默认 `agent-nako`） |
+| `--runtime openclaw\|hermes\|qclaw` | 选择 cc-connect 消息后端；默认 `openclaw`，Hermes 模式要求已安装 `hermes`，QClaw 模式要求在同一 host/user 下已安装并启动过 QClaw 以生成 `~/.qclaw/qclaw.json` |
 | `--non-interactive` | 不交互；从环境变量读所有凭据 |
 | `--skip-skills` | 只装 agent 人设，跳过 skills |
 | `--skip-models` | 不做模型映射，沿用 `openclaw.json` 现有 primary |
@@ -31,6 +33,23 @@ bash install.sh
 | `--with-feishu` | 配置 cc-connect 并引导飞书 QR |
 | `--with-weixin` | 配置 cc-connect 并引导微信 QR |
 | `--cc-connect-source auto\|npm\|lazycat\|skip` | cc-connect 来源；默认 `auto`，微信会优先下载 CodeEagle fork release |
+
+卸载某个 agent 的 cc-connect 接入：
+
+```bash
+bash scripts/cc-connect-setup.sh --agent-id agent-nako --uninstall
+```
+
+如果要同时卸载 cc-connect daemon 并删除二进制，追加 `--purge-cc-connect`。
+
+一键完整卸载 cc-connect：
+
+```bash
+bash scripts/cc-connect-setup.sh --uninstall-all
+```
+
+完整卸载会停止 daemon/进程、移除二进制，并把 `~/.cc-connect` 移到
+`~/.cc-connect.bak-uninstall-all-*` 备份目录；不会删除 OpenClaw/Hermes/QClaw 数据。
 
 Windows PowerShell 对应参数使用 PascalCase，例如 `-ResetSecrets`、`-WithFeishu`、`-WithWeixin`、`-CcConnectSource lazycat`。PowerShell 的 cc-connect 自动接入会调用仓库里的 `scripts/cc-connect-setup.sh`，因此需要 Git Bash / WSL 等可用的 `bash`。
 

@@ -47,7 +47,7 @@ curl -fsSL https://cdn.jsdelivr.net/gh/Lovappen/MetaPact@main/install.sh | bash 
 
 ## 与 agent 无关的工具
 
-### `scripts/cc-connect-setup.sh` — 给任意 openclaw agent 做 cc-connect 多平台接入
+### `scripts/cc-connect-setup.sh` — 给任意 agent 做 cc-connect 多平台接入
 
 也支持 curl 一键，参数走 `bash -s --` 传：
 
@@ -61,13 +61,28 @@ curl -fsSL https://cdn.jsdelivr.net/gh/Lovappen/MetaPact@main/scripts/cc-connect
 
 # 本地 clone 后跑
 bash scripts/cc-connect-setup.sh --agent-id agent-foo --with-feishu --with-weixin
+
+# Hermes ACP 后端（Hermes 需已安装）
+bash scripts/cc-connect-setup.sh --agent-id agent-foo --runtime hermes --with-feishu
+
+# QClaw ACP 后端（QClaw 需已安装并已生成 ~/.qclaw/qclaw.json）
+bash scripts/cc-connect-setup.sh --agent-id agent-foo --runtime qclaw --with-feishu
+
+# 卸载某个 agent 的 cc-connect 接入
+bash scripts/cc-connect-setup.sh --agent-id agent-foo --uninstall
+
+# 一键完整卸载 cc-connect（配置会移到 ~/.cc-connect.bak-uninstall-all-*）
+bash scripts/cc-connect-setup.sh --uninstall-all
 ```
+
+QClaw 后端需要和 `cc-connect` 跑在同一个 host/user 下；如果 `cc-connect`
+在 Linux VM 里，不能直接执行宿主机 macOS 的 `QClaw.app`。
 
 完整 flag：`bash scripts/cc-connect-setup.sh --help`
 
 ### `scripts/nako-agent-factory/` — 局域网自助创建 Nako agent
 
-给一台 OpenClaw host 部署 8088 管理页：每个客户端 IP 只分配一个 `agent-nako-N`，页面生成 / 刷新飞书和微信二维码，并直接展示安装与 QR 日志。
+给一台 host 部署 8088 管理页：每个客户端 IP 只分配一个 `agent-nako-N`，页面可选择 OpenClaw、Hermes 或 QClaw 作为消息后端，生成 / 刷新飞书和微信二维码，并直接展示安装与 QR 日志。
 
 ```bash
 curl -fsSL https://cdn.jsdelivr.net/gh/Lovappen/MetaPact@main/scripts/nako-agent-factory/install.sh | sudo bash

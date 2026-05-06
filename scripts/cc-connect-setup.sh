@@ -1,21 +1,25 @@
 #!/bin/bash
-# cc-connect-setup.sh — 把 openclaw 上任意 agent 接到 cc-connect 多平台 host
+# cc-connect-setup.sh — 把 agent 接到 cc-connect 多平台 host
 #
 # 这个脚本与具体 agent 无关，可独立使用：
 #   1. 装/复用 cc-connect
 #   2. 在 ~/.cc-connect/config.toml idempotent 写入指向
-#      `openclaw acp --session agent:<id>:main` 的 project
+#      OpenClaw / Hermes / QClaw ACP 的 project
 #   3. 引导 QR-onboarding 飞书/微信等平台
 #
 # Usage:
 #   bash scripts/cc-connect-setup.sh [options]
 #
 # Flags:
-#   --agent-id <id>      openclaw agent id (默认 agent-nako)
-#   --display-name <n>   cc-connect 内显示名 (默认 OpenClaw <id>)
+#   --agent-id <id>      agent id (默认 agent-nako)
+#   --runtime <name>     openclaw|hermes|qclaw (默认 openclaw)
+#   --display-name <n>   cc-connect 内显示名 (默认按 runtime 生成)
 #   --with-feishu        自动跑 feishu QR 引导（若未配 feishu）
 #   --with-weixin        自动跑 weixin QR 引导（若未配 weixin）
 #   --cc-connect-source  auto|npm|lazycat|skip (默认 lazycat；CodeEagle fork)
+#   --uninstall          移除当前 agent 的 cc-connect project 与 session
+#   --purge-cc-connect   配合 --uninstall，额外卸载 daemon 并移除 cc-connect 二进制
+#   --uninstall-all      停止并完整移除 cc-connect：配置/会话/daemon/二进制
 #   --non-interactive    不询问，缺什么就跳过
 
 set -euo pipefail
@@ -63,9 +67,18 @@ CC_CONNECT_LAZYCAT_RELEASE_BASE="${CC_CONNECT_LAZYCAT_RELEASE_BASE:-https://gith
 CC_CONNECT_GO_MIN_VERSION="${CC_CONNECT_GO_MIN_VERSION:-1.25.0}"
 CC_CONNECT_GO_DOWNLOAD_VERSION="${CC_CONNECT_GO_DOWNLOAD_VERSION:-1.25.0}"
 AGENT_ID="agent-nako"
+RUNTIME="${NAKO_AGENT_RUNTIME:-openclaw}"
 DISPLAY_NAME=""
 CC_CONNECT_CHANGED=0
 GO_FOR_CC_CONNECT=""
+HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
+HERMES_BIN="${HERMES_BIN:-}"
+QCLAW_HOME="${QCLAW_HOME:-$HOME/.qclaw}"
+QCLAW_NODE_BIN="${QCLAW_NODE_BIN:-}"
+QCLAW_OPENCLAW_MJS="${QCLAW_OPENCLAW_MJS:-}"
+UNINSTALL=0
+PURGE_CC_CONNECT=0
+UNINSTALL_ALL=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -74,10 +87,14 @@ while [ $# -gt 0 ]; do
     --cc-connect-source) CC_CONNECT_SOURCE="$2"; shift 2 ;;
     --non-interactive) NON_INTERACTIVE=1; shift ;;
     --agent-id) AGENT_ID="$2"; shift 2 ;;
+    --runtime|--backend) RUNTIME="$2"; shift 2 ;;
     --display-name) DISPLAY_NAME="$2"; shift 2 ;;
+    --uninstall) UNINSTALL=1; shift ;;
+    --purge-cc-connect) PURGE_CC_CONNECT=1; shift ;;
+    --uninstall-all) UNINSTALL_ALL=1; shift ;;
     -h|--help)
       cat <<'HELP'
-cc-connect-setup.sh — 把 openclaw 上任意 agent 接到 cc-connect 多平台 host
+cc-connect-setup.sh — 把 agent 接到 cc-connect 多平台 host
 
 Usage:
   curl -fsSL https://cdn.jsdelivr.net/gh/Lovappen/MetaPact@main/scripts/cc-connect-setup.sh | bash
@@ -85,11 +102,15 @@ Usage:
   bash scripts/cc-connect-setup.sh [options]
 
 Flags:
-  --agent-id <id>      openclaw agent id (默认 agent-nako)
-  --display-name <n>   cc-connect 内显示名 (默认 "OpenClaw <id>")
+  --agent-id <id>      agent id (默认 agent-nako)
+  --runtime <name>     openclaw|hermes|qclaw (默认 openclaw)
+  --display-name <n>   cc-connect 内显示名 (默认按 runtime 生成)
   --with-feishu        自动跑 feishu QR 引导（若未配 feishu）
   --with-weixin        自动跑 weixin QR 引导（若未配 weixin）
   --cc-connect-source  auto|npm|lazycat|skip (默认 lazycat；CodeEagle fork)
+  --uninstall          移除当前 agent 的 cc-connect project 与 session
+  --purge-cc-connect   配合 --uninstall，额外卸载 daemon 并移除 cc-connect 二进制
+  --uninstall-all      停止并完整移除 cc-connect：配置/会话/daemon/二进制
   --non-interactive    不询问，缺什么就跳过
   -h, --help           本帮助
 HELP
@@ -97,15 +118,109 @@ HELP
     *) err "Unknown flag: $1"; exit 1 ;;
   esac
 done
-: ${DISPLAY_NAME:="OpenClaw $AGENT_ID"}
 
 case "$CC_CONNECT_SOURCE" in
   auto|npm|lazycat|skip) ;;
   *) err "--cc-connect-source 只支持 auto|npm|lazycat|skip"; exit 1 ;;
 esac
 
+case "$RUNTIME" in
+  openclaw|hermes|qclaw) ;;
+  *) err "--runtime 只支持 openclaw|hermes|qclaw"; exit 1 ;;
+esac
+
+if [ -z "$DISPLAY_NAME" ]; then
+  if [ "$RUNTIME" = "hermes" ]; then
+    DISPLAY_NAME="Hermes $AGENT_ID"
+  elif [ "$RUNTIME" = "qclaw" ]; then
+    DISPLAY_NAME="QClaw $AGENT_ID"
+  else
+    DISPLAY_NAME="OpenClaw $AGENT_ID"
+  fi
+fi
+
 CC_CONFIG="$HOME/.cc-connect/config.toml"
 WORKSPACE="$HOME/.openclaw/workspace/$AGENT_ID"
+HERMES_WORKSPACE="$HERMES_HOME/workspace/$AGENT_ID"
+QCLAW_WORKSPACE="$QCLAW_HOME/workspace-$AGENT_ID"
+
+resolve_hermes_bin() {
+  if [ -n "$HERMES_BIN" ]; then
+    printf '%s\n' "$HERMES_BIN"
+    return 0
+  fi
+  if [ -x "$HOME/.local/bin/hermes" ]; then
+    printf '%s\n' "$HOME/.local/bin/hermes"
+    return 0
+  fi
+  if command -v hermes >/dev/null 2>&1; then
+    command -v hermes
+    return 0
+  fi
+  return 1
+}
+
+qclaw_json_value() {
+  local key="$1"
+  python3 - "$QCLAW_HOME/qclaw.json" "$key" <<'PY' 2>/dev/null || true
+import json, sys
+from pathlib import Path
+
+path, key = sys.argv[1:]
+try:
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+except Exception:
+    data = {}
+cur = data
+for part in key.split("."):
+    if not isinstance(cur, dict):
+        cur = None
+        break
+    cur = cur.get(part)
+print(cur if isinstance(cur, str) else "")
+PY
+}
+
+resolve_qclaw_node_bin() {
+  if [ -n "$QCLAW_NODE_BIN" ]; then
+    printf '%s\n' "$QCLAW_NODE_BIN"
+    return 0
+  fi
+  local from_config
+  from_config="$(qclaw_json_value cli.nodeBinary)"
+  if [ -n "$from_config" ]; then
+    printf '%s\n' "$from_config"
+    return 0
+  fi
+  if [ -x "/Applications/QClaw.app/Contents/Resources/node/node" ]; then
+    printf '%s\n' "/Applications/QClaw.app/Contents/Resources/node/node"
+    return 0
+  fi
+  if command -v node >/dev/null 2>&1; then
+    command -v node
+    return 0
+  fi
+  return 1
+}
+
+resolve_qclaw_openclaw_mjs() {
+  if [ -n "$QCLAW_OPENCLAW_MJS" ]; then
+    printf '%s\n' "$QCLAW_OPENCLAW_MJS"
+    return 0
+  fi
+  local from_config
+  from_config="$(qclaw_json_value cli.openclawMjs)"
+  if [ -n "$from_config" ]; then
+    printf '%s\n' "$from_config"
+    return 0
+  fi
+  local mac_mjs="$HOME/Library/Application Support/QClaw/openclaw/node_modules/openclaw/openclaw.mjs"
+  if [ -f "$mac_mjs" ]; then
+    printf '%s\n' "$mac_mjs"
+    return 0
+  fi
+  return 1
+}
 
 find_go() {
   local g
@@ -150,7 +265,7 @@ PY
 go_meets_min() {
   local g="$1" v
   v="$(go_version_value "$g")"
-  [ -n "$v" ] && version_ge "$v" "$CC_CONNECT_GO_MIN_VERSION"
+  [ -n "$v" ] && version_ge "$v" "${CC_CONNECT_GO_MIN_VERSION:-1.25.0}"
 }
 
 find_go_for_lazycat() {
@@ -169,8 +284,8 @@ find_go_for_lazycat() {
 
 install_go_linux_tarball() {
   local arch url tmp archive install_root gobin
-  has_bin curl || { warn "缺少 curl，无法下载 Go $CC_CONNECT_GO_DOWNLOAD_VERSION"; return 1; }
-  has_bin tar || { warn "缺少 tar，无法安装 Go $CC_CONNECT_GO_DOWNLOAD_VERSION"; return 1; }
+  has_bin curl || { warn "缺少 curl，无法下载 Go ${CC_CONNECT_GO_DOWNLOAD_VERSION:-1.25.0}"; return 1; }
+  has_bin tar || { warn "缺少 tar，无法安装 Go ${CC_CONNECT_GO_DOWNLOAD_VERSION:-1.25.0}"; return 1; }
   arch="$(uname -m)"
   case "$arch" in
     x86_64|amd64) arch="amd64" ;;
@@ -178,10 +293,10 @@ install_go_linux_tarball() {
     *) warn "不支持自动安装 Go 的架构: $arch"; return 1 ;;
   esac
 
-  url="https://dl.google.com/go/go${CC_CONNECT_GO_DOWNLOAD_VERSION}.linux-${arch}.tar.gz"
+  url="https://dl.google.com/go/go${CC_CONNECT_GO_DOWNLOAD_VERSION:-1.25.0}.linux-${arch}.tar.gz"
   tmp="$(mktemp -d)"
   archive="$tmp/go.tgz"
-  info "下载 Go ${CC_CONNECT_GO_DOWNLOAD_VERSION} (${arch}) ..."
+  info "下载 Go ${CC_CONNECT_GO_DOWNLOAD_VERSION:-1.25.0} (${arch}) ..."
   if ! curl -fL --retry 3 --connect-timeout 20 "$url" -o "$archive"; then
     rm -rf "$tmp"
     return 1
@@ -196,7 +311,7 @@ install_go_linux_tarball() {
     sudo tar -C /usr/local -xzf "$archive"
     gobin="/usr/local/go/bin/go"
   else
-    install_root="$HOME/.local/go-${CC_CONNECT_GO_DOWNLOAD_VERSION}"
+    install_root="$HOME/.local/go-${CC_CONNECT_GO_DOWNLOAD_VERSION:-1.25.0}"
     rm -rf "$install_root"
     mkdir -p "$(dirname "$install_root")"
     tar -C "$(dirname "$install_root")" -xzf "$archive"
@@ -227,7 +342,7 @@ ensure_go_for_lazycat() {
       ;;
     Darwin)
       if has_bin brew; then
-        info "安装 Go（CodeEagle/cc-connect 构建需要 >= $CC_CONNECT_GO_MIN_VERSION）..."
+        info "安装 Go（CodeEagle/cc-connect 构建需要 >= ${CC_CONNECT_GO_MIN_VERSION:-1.25.0}）..."
         brew install go || true
       fi
       g="$(find_go_for_lazycat)" || return 1
@@ -274,7 +389,7 @@ install_cc_connect_binary() {
   elif command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
     sudo install -m 0755 "$src" "$dest"
   else
-    err "无法写入 $dest；请用 sudo 运行，或设置 CC_CONNECT_BIN=$HOME/.local/bin/cc-connect"
+    err "无法写入 ${dest}；请用 sudo 运行，或设置 CC_CONNECT_BIN=$HOME/.local/bin/cc-connect"
     return 1
   fi
   hash -r 2>/dev/null || true
@@ -345,7 +460,7 @@ install_cc_connect_lazycat() {
     return 1
   fi
   if ! ensure_go_for_lazycat; then
-    warn "缺少 Go >= $CC_CONNECT_GO_MIN_VERSION，无法构建 CodeEagle/cc-connect fork"
+    warn "缺少 Go >= ${CC_CONNECT_GO_MIN_VERSION:-1.25.0}，无法构建 CodeEagle/cc-connect fork"
     dim "  Linux 会尝试从 dl.google.com 自动安装 Go；失败时请手动安装后重跑"
     dim "  macOS: brew install go"
     return 1
@@ -374,6 +489,12 @@ install_cc_connect_lazycat() {
   return "$rc"
 }
 
+should_npm_fallback() {
+  [ "${CC_CONNECT_ALLOW_NPM_FALLBACK:-0}" = "1" ] && return 0
+  [ "$(uname -s)" = "Darwin" ] && return 0
+  return 1
+}
+
 install_cc_connect_npm() {
   if ! has_bin npm; then
     err "需要 npm 来装 cc-connect。先装 Node 22+ 再重跑（macOS: brew install node；Linux: see https://nodejs.org）"
@@ -385,9 +506,177 @@ install_cc_connect_npm() {
 }
 
 cc_connect_running_pids() {
-  pgrep -af "cc-connect" 2>/dev/null \
-    | awk '!/cc-connect-setup\.sh/ && !/cc-connect (feishu|weixin) setup/ {print $1}'
+  ps -eo pid=,args= 2>/dev/null | awk '
+    function trim(s) {
+      sub(/^[[:space:]]+/, "", s)
+      sub(/[[:space:]]+$/, "", s)
+      return s
+    }
+    function looks_like_cc_connect_main(args) {
+      args = trim(args)
+      return args == "cc-connect" \
+        || args == "cc-connect --force" \
+        || args ~ /^([^[:space:]]+\/)?cc-connect( --force)?$/ \
+        || args ~ /^node[[:space:]]+[^[:space:]]+\/cc-connect( --force)?$/
+    }
+    {
+      pid = $1
+      args = $0
+      sub(/^[[:space:]]*[0-9]+[[:space:]]+/, "", args)
+      if (looks_like_cc_connect_main(args)) print pid
+    }'
 }
+
+cc_connect_project_count() {
+  [ -f "$CC_CONFIG" ] || { printf '0\n'; return 0; }
+  python3 - "$CC_CONFIG" <<'PY'
+import re, sys
+try:
+    text = open(sys.argv[1], encoding="utf-8").read()
+except Exception:
+    text = ""
+print(len([p for p in re.split(r"(?m)(?=^\[\[projects\]\]\s*$)", text) if p.startswith("[[projects]]")]))
+PY
+}
+
+remove_cc_connect_project() {
+  [ -f "$CC_CONFIG" ] || return 1
+  python3 - "$CC_CONFIG" "$AGENT_ID" <<'PY'
+import os, re, sys, time
+from pathlib import Path
+
+path = Path(sys.argv[1])
+agent = sys.argv[2]
+text = path.read_text(encoding="utf-8")
+parts = re.split(r"(?m)(?=^\[\[projects\]\]\s*$)", text)
+kept = []
+removed = False
+for part in parts:
+    if not part.startswith("[[projects]]"):
+        kept.append(part)
+        continue
+    m = re.search(r'(?m)^name\s*=\s*"([^"]+)"\s*$', part)
+    if (m.group(1) if m else "") == agent:
+        removed = True
+        continue
+    kept.append(part)
+
+if not removed:
+    sys.exit(1)
+
+backup = path.with_name(f"config.toml.bak-uninstall-{agent}-{time.strftime('%Y%m%d-%H%M%S')}")
+backup.write_text(text, encoding="utf-8")
+new = "".join(kept).rstrip() + "\n"
+path.write_text(new, encoding="utf-8")
+os.chmod(path, 0o600)
+PY
+}
+
+remove_cc_connect_sessions() {
+  local session_dir="$HOME/.cc-connect/sessions" removed=0 file
+  [ -d "$session_dir" ] || return 0
+  for file in "$session_dir"/"$AGENT_ID"_*.json; do
+    [ -e "$file" ] || continue
+    rm -f "$file"
+    removed=$((removed + 1))
+  done
+  [ "$removed" -gt 0 ] && info "已删除 $removed 个 session 文件"
+}
+
+stop_cc_connect_processes() {
+  local old_pids
+  old_pids="$(cc_connect_running_pids | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
+  if [ -n "${old_pids:-}" ]; then
+    warn "停止 cc-connect 进程: $old_pids"
+    kill $old_pids 2>/dev/null || true
+  fi
+}
+
+purge_cc_connect_binary() {
+  local bin
+  bin="$(command -v cc-connect 2>/dev/null || true)"
+  if [ -n "$bin" ]; then
+    if [ -w "$bin" ]; then
+      rm -f "$bin"
+    elif command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
+      sudo rm -f "$bin"
+    else
+      warn "无法删除 ${bin}；请手动删除或用 sudo 重跑"
+      return 0
+    fi
+    info "已删除 cc-connect 二进制: $bin"
+  fi
+}
+
+backup_and_remove_cc_connect_home() {
+  local cc_home="$HOME/.cc-connect" backup
+  [ -e "$cc_home" ] || { dim "$cc_home 不存在，跳过"; return 0; }
+  backup="$HOME/.cc-connect.bak-uninstall-all-$(date +%Y%m%d-%H%M%S)"
+  if mv "$cc_home" "$backup"; then
+    info "已移除 ~/.cc-connect（备份: ${backup}）"
+  else
+    warn "无法移动 ${cc_home} 到 ${backup}；尝试直接删除原目录"
+    rm -rf "$cc_home"
+    info "已删除 $cc_home"
+  fi
+}
+
+uninstall_cc_connect_all() {
+  step "完整卸载 cc-connect"
+  if command -v cc-connect >/dev/null 2>&1; then
+    cc-connect daemon stop >/dev/null 2>&1 || true
+    cc-connect daemon uninstall >/dev/null 2>&1 || true
+  fi
+  stop_cc_connect_processes
+  backup_and_remove_cc_connect_home
+  purge_cc_connect_binary
+  info "cc-connect 已完整卸载；OpenClaw/Hermes/QClaw runtime 数据未删除"
+}
+
+uninstall_cc_connect_project() {
+  step "卸载 cc-connect 接入: $AGENT_ID"
+  if command -v cc-connect >/dev/null 2>&1; then
+    cc-connect daemon stop >/dev/null 2>&1 || true
+    [ "$PURGE_CC_CONNECT" = "1" ] && cc-connect daemon uninstall >/dev/null 2>&1 || true
+  fi
+  stop_cc_connect_processes
+
+  if remove_cc_connect_project; then
+    info "已从 $CC_CONFIG 移除 project: $AGENT_ID"
+  else
+    dim "$CC_CONFIG 中未找到 project: $AGENT_ID"
+  fi
+  remove_cc_connect_sessions
+
+  if [ "$PURGE_CC_CONNECT" = "1" ]; then
+    purge_cc_connect_binary
+    info "cc-connect purge 完成"
+    return 0
+  fi
+
+  if [ "$(cc_connect_project_count)" -gt 0 ]; then
+    if command -v cc-connect >/dev/null 2>&1; then
+      if cc-connect daemon start >/dev/null 2>&1; then
+        info "仍有其他 project，已重新启动 cc-connect daemon"
+      else
+        nohup cc-connect >>"$HOME/.cc-connect/cc-connect.log" 2>&1 &
+        info "仍有其他 project，已后台启动 cc-connect (PID $!)"
+      fi
+    fi
+  else
+    info "已无 cc-connect project，保持停止状态"
+  fi
+}
+
+if [ "$UNINSTALL_ALL" = "1" ]; then
+  uninstall_cc_connect_all
+  exit 0
+fi
+
+if [ "$UNINSTALL" = "1" ]; then
+  uninstall_cc_connect_project
+  exit 0
+fi
 
 # ── 1. 装 cc-connect ──────────────────────────────────────────────────
 # 既然你跑了这个脚本，说明你想用 cc-connect — 默认直接装，不再问。
@@ -398,8 +687,8 @@ elif [ "$CC_CONNECT_SOURCE" = "lazycat" ] || [ "$CC_CONNECT_SOURCE" = "auto" ]; 
   if cc_connect_has_native_video; then
     info "当前 cc-connect 已支持微信原生视频"
   elif ! install_cc_connect_lazycat_release && ! install_cc_connect_lazycat; then
-    if [ "${CC_CONNECT_ALLOW_NPM_FALLBACK:-0}" = "1" ]; then
-      warn "CodeEagle/cc-connect 安装失败，按 CC_CONNECT_ALLOW_NPM_FALLBACK=1 回退 npm"
+    if should_npm_fallback; then
+      warn "CodeEagle/cc-connect 安装失败，回退 npm 版 cc-connect"
       install_cc_connect_npm || exit 1
     else
       err "CodeEagle/cc-connect 安装失败；请修复网络/Go 环境后重跑，或显式设置 --cc-connect-source npm"
@@ -419,48 +708,155 @@ fi
 step "2. 配置 cc-connect 项目: $AGENT_ID"
 mkdir -p "$(dirname "$CC_CONFIG")"
 
-if [ ! -f "$CC_CONFIG" ]; then
-  cat > "$CC_CONFIG" <<EOF
-[server]
-data_dir = "$HOME/.cc-connect/data"
-log_level = "info"
-
-[[projects]]
-name = "$AGENT_ID"
-
-[projects.agent]
-type = "acp"
-
-[projects.agent.options]
-work_dir = "$HOME/.openclaw"
-command = "openclaw"
-args = ["acp", "--session", "agent:$AGENT_ID:main"]
-display_name = "$DISPLAY_NAME"
-env = { OPENCLAW_OUTPUT_MODE = "acp", OPENCLAW_CCCONNECT_PROJECT = "$AGENT_ID" }
-EOF
-  info "新建 $CC_CONFIG"
-else
-  if grep -q "name = \"$AGENT_ID\"" "$CC_CONFIG"; then
-    info "已存在 $AGENT_ID project，跳过 config 写入"
-  else
-    cat >> "$CC_CONFIG" <<EOF
-
-[[projects]]
-name = "$AGENT_ID"
-
-[projects.agent]
-type = "acp"
-
-[projects.agent.options]
-work_dir = "$HOME/.openclaw"
-command = "openclaw"
-args = ["acp", "--session", "agent:$AGENT_ID:main"]
-display_name = "$DISPLAY_NAME"
-env = { OPENCLAW_OUTPUT_MODE = "acp", OPENCLAW_CCCONNECT_PROJECT = "$AGENT_ID" }
-EOF
-    info "追加 $AGENT_ID project 到 $CC_CONFIG"
-  fi
+if [ "$RUNTIME" = "hermes" ]; then
+  HERMES_BIN="$(resolve_hermes_bin)" || {
+    err "选择 Hermes runtime，但找不到 hermes 命令。请先安装 Hermes，或设置 HERMES_BIN=/path/to/hermes"
+    exit 1
+  }
+  mkdir -p "$HERMES_WORKSPACE"
+elif [ "$RUNTIME" = "qclaw" ]; then
+  QCLAW_NODE_BIN="$(resolve_qclaw_node_bin)" || {
+    err "选择 QClaw runtime，但找不到 QClaw Node。请先安装 QClaw，或设置 QCLAW_NODE_BIN=/path/to/node"
+    exit 1
+  }
+  QCLAW_OPENCLAW_MJS="$(resolve_qclaw_openclaw_mjs)" || {
+    err "选择 QClaw runtime，但找不到 QClaw openclaw.mjs。请先启动一次 QClaw，或设置 QCLAW_OPENCLAW_MJS=/path/to/openclaw.mjs"
+    exit 1
+  }
+  mkdir -p "$QCLAW_WORKSPACE"
 fi
+
+CONFIG_CHANGED="$(python3 - "$CC_CONFIG" "$AGENT_ID" "$RUNTIME" "$DISPLAY_NAME" "$HOME" "$WORKSPACE" "$HERMES_HOME" "$HERMES_WORKSPACE" "${HERMES_BIN:-}" "$QCLAW_HOME" "$QCLAW_WORKSPACE" "${QCLAW_NODE_BIN:-}" "${QCLAW_OPENCLAW_MJS:-}" "$PATH" <<'PY'
+import os
+import re
+import sys
+import time
+from pathlib import Path
+
+cfg_path, agent_id, runtime, display_name, home, openclaw_workspace, hermes_home, hermes_workspace, hermes_bin, qclaw_home, qclaw_workspace, qclaw_node_bin, qclaw_openclaw_mjs, path_value = sys.argv[1:]
+path = Path(cfg_path)
+
+def q(value):
+    return '"' + str(value).replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+def arr(values):
+    return "[" + ", ".join(q(v) for v in values) + "]"
+
+def inline_table(items):
+    return "{ " + ", ".join(f"{key} = {q(value)}" for key, value in items) + " }"
+
+if runtime == "hermes":
+    command = hermes_bin or "hermes"
+    work_dir = hermes_workspace
+    args = ["acp"]
+    env = {
+        "HOME": home,
+        "HERMES_HOME": hermes_home,
+        "PATH": path_value,
+        "OPENCLAW_OUTPUT_MODE": "acp",
+        "OPENCLAW_CCCONNECT_PROJECT": agent_id,
+        "NAKO_AGENT_RUNTIME": "hermes",
+    }
+elif runtime == "qclaw":
+    command = qclaw_node_bin or "node"
+    work_dir = qclaw_workspace
+    args = [qclaw_openclaw_mjs, "acp", "--session", f"agent:{agent_id}:main"]
+    env = {
+        "HOME": home,
+        "QCLAW_HOME": qclaw_home,
+        "OPENCLAW_STATE_DIR": qclaw_home,
+        "OPENCLAW_CONFIG_PATH": str(Path(qclaw_home) / "openclaw.json"),
+        "PATH": path_value,
+        "OPENCLAW_OUTPUT_MODE": "acp",
+        "OPENCLAW_CCCONNECT_PROJECT": agent_id,
+        "NAKO_AGENT_RUNTIME": "qclaw",
+    }
+else:
+    command = "openclaw"
+    work_dir = str(Path(home) / ".openclaw")
+    args = ["acp", "--session", f"agent:{agent_id}:main"]
+    env = {
+        "OPENCLAW_OUTPUT_MODE": "acp",
+        "OPENCLAW_CCCONNECT_PROJECT": agent_id,
+        "NAKO_AGENT_RUNTIME": "openclaw",
+    }
+
+agent_section = "\n".join([
+    "[projects.agent]",
+    'type = "acp"',
+    "",
+    "[projects.agent.options]",
+    f"work_dir = {q(work_dir)}",
+    f"command = {q(command)}",
+    f"args = {arr(args)}",
+    f"display_name = {q(display_name)}",
+    f"env = {inline_table(env.items())}",
+    "",
+])
+
+if path.exists():
+    text = path.read_text(encoding="utf-8")
+else:
+    text = f'[server]\ndata_dir = "{home}/.cc-connect/data"\nlog_level = "info"\n'
+
+parts = re.split(r"(?m)(?=^\[\[projects\]\]\s*$)", text)
+kept = []
+found = False
+changed = False
+
+for part in parts:
+    if not part.startswith("[[projects]]"):
+        kept.append(part)
+        continue
+
+    name_match = re.search(r'(?m)^name\s*=\s*"([^"]+)"\s*$', part)
+    name = name_match.group(1) if name_match else ""
+    if name != agent_id:
+        kept.append(part)
+        continue
+
+    found = True
+    platform_match = re.search(r"(?m)^\[\[projects\.platforms\]\]\s*$", part)
+    platforms = part[platform_match.start():].lstrip("\n") if platform_match else ""
+    new_part = f'[[projects]]\nname = {q(agent_id)}\n\n{agent_section}'
+    if platforms:
+        new_part += "\n" + platforms
+    if new_part != part:
+        changed = True
+    kept.append(new_part)
+
+if not found:
+    if kept and kept[-1] and not kept[-1].endswith("\n"):
+        kept[-1] += "\n"
+    kept.append(f'\n[[projects]]\nname = {q(agent_id)}\n\n{agent_section}')
+    changed = True
+
+new_text = "".join(kept)
+path.parent.mkdir(parents=True, exist_ok=True)
+if changed or not path.exists():
+    if path.exists():
+        backup = path.with_name(f"config.toml.bak-runtime-{agent_id}-{runtime}-{time.strftime('%Y%m%d-%H%M%S')}")
+        backup.write_text(text, encoding="utf-8")
+    path.write_text(new_text, encoding="utf-8")
+    os.chmod(path, 0o600)
+print("updated" if changed else "unchanged")
+PY
+)"
+[ "$CONFIG_CHANGED" = "updated" ] && CC_CONNECT_CHANGED=1
+CONFIG_RESULT="$(python3 - "$CC_CONFIG" "$AGENT_ID" <<'PY'
+import re, sys
+text = open(sys.argv[1], encoding="utf-8").read()
+agent = sys.argv[2]
+parts = re.split(r"(?m)(?=^\[\[projects\]\]\s*$)", text)
+for part in parts:
+    if f'name = "{agent}"' in part:
+        command = re.search(r'(?m)^command\s*=\s*"([^"]+)"', part)
+        args = re.search(r'(?m)^args\s*=\s*(.+)$', part)
+        print((command.group(1) if command else "?") + " " + (args.group(1) if args else "[]"))
+        break
+PY
+)"
+info "cc-connect project 已配置: $AGENT_ID → $RUNTIME ($CONFIG_RESULT)"
 
 # ── 3. 引导平台 QR onboarding ─────────────────────────────────────────
 has_platform() {
@@ -520,7 +916,7 @@ step "4. 启动 cc-connect"
 if [ "$CC_CONNECT_CHANGED" = "1" ]; then
   old_pids="$(cc_connect_running_pids | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
   if [ -n "${old_pids:-}" ]; then
-    warn "cc-connect 已更新，重启旧进程: $old_pids"
+    warn "cc-connect 配置或二进制已更新，重启旧进程: $old_pids"
     kill $old_pids 2>/dev/null || true
     for _ in 1 2 3 4 5; do
       [ -z "$(cc_connect_running_pids)" ] && break

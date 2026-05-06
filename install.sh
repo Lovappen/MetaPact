@@ -10,6 +10,7 @@
 #   --list             : list available agents and exit
 #   --force             : overwrite existing persona files (user data still preserved)
 #   --agent-id ID       : rename the agent (default: agent-nako)
+#   --runtime NAME      : openclaw|hermes|qclaw messaging runtime (default: openclaw)
 #   --non-interactive   : no prompts; expects env vars set already; picks defaults
 #   --skip-skills       : skip skill install (persona only)
 #   --skip-models       : skip model mapping (keep existing primary)
@@ -61,6 +62,12 @@ WITH_CC_CONNECT=0
 WITH_FEISHU=0
 WITH_WEIXIN=0
 CC_CONNECT_SOURCE="${CC_CONNECT_SOURCE:-lazycat}"
+NAKO_AGENT_RUNTIME="${NAKO_AGENT_RUNTIME:-openclaw}"
+HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
+HERMES_BIN="${HERMES_BIN:-}"
+QCLAW_HOME="${QCLAW_HOME:-$HOME/.qclaw}"
+QCLAW_NODE_BIN="${QCLAW_NODE_BIN:-}"
+QCLAW_OPENCLAW_MJS="${QCLAW_OPENCLAW_MJS:-}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -68,6 +75,7 @@ while [ $# -gt 0 ]; do
     --list) LIST=1; shift ;;
     --force) FORCE=1; export FORCE; shift ;;
     --agent-id) AGENT_ID="$2"; shift 2 ;;
+    --runtime|--backend) NAKO_AGENT_RUNTIME="$2"; shift 2 ;;
     --non-interactive) NON_INTERACTIVE=1; export NON_INTERACTIVE; shift ;;
     --skip-skills) SKIP_SKILLS=1; shift ;;
     --skip-models) SKIP_MODELS=1; shift ;;
@@ -87,6 +95,11 @@ case "$CC_CONNECT_SOURCE" in
   *) err "--cc-connect-source 只支持 auto|npm|lazycat|skip"; exit 1 ;;
 esac
 
+case "$NAKO_AGENT_RUNTIME" in
+  openclaw|hermes|qclaw) ;;
+  *) err "--runtime 只支持 openclaw|hermes|qclaw"; exit 1 ;;
+esac
+
 if [ "$LIST" = "1" ]; then
   echo "可用 agent:"
   echo "  - nako"
@@ -103,6 +116,7 @@ cat <<BANNER
 ${C_BOLD}野木奈子 Agent Pack - 安装器${C_NC}
   ${C_DIM}Repo: github.com/Lovappen/MetaPact${C_NC}
   ${C_DIM}Agent: $AGENT_ID${C_NC}
+  ${C_DIM}Runtime: $NAKO_AGENT_RUNTIME${C_NC}
   ${C_DIM}Pack: $PACK_ROOT${C_NC}
 
 BANNER
@@ -238,6 +252,367 @@ openclaw_timed() {
   else
     openclaw "$@"
   fi
+}
+
+find_hermes_bin() {
+  if [ -n "${HERMES_BIN:-}" ]; then
+    printf '%s\n' "$HERMES_BIN"
+    return 0
+  fi
+  if [ -x "$HOME/.local/bin/hermes" ]; then
+    printf '%s\n' "$HOME/.local/bin/hermes"
+    return 0
+  fi
+  if command -v hermes >/dev/null 2>&1; then
+    command -v hermes
+    return 0
+  fi
+  return 1
+}
+
+qclaw_json_value() {
+  local key="$1"
+  python3 - "$QCLAW_HOME/qclaw.json" "$key" <<'PY' 2>/dev/null || true
+import json, sys
+from pathlib import Path
+
+path, key = sys.argv[1:]
+try:
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+except Exception:
+    data = {}
+cur = data
+for part in key.split("."):
+    if not isinstance(cur, dict):
+        cur = None
+        break
+    cur = cur.get(part)
+print(cur if isinstance(cur, str) else "")
+PY
+}
+
+find_qclaw_node_bin() {
+  if [ -n "${QCLAW_NODE_BIN:-}" ]; then
+    printf '%s\n' "$QCLAW_NODE_BIN"
+    return 0
+  fi
+  local from_config
+  from_config="$(qclaw_json_value cli.nodeBinary)"
+  if [ -n "$from_config" ]; then
+    printf '%s\n' "$from_config"
+    return 0
+  fi
+  if [ -x "/Applications/QClaw.app/Contents/Resources/node/node" ]; then
+    printf '%s\n' "/Applications/QClaw.app/Contents/Resources/node/node"
+    return 0
+  fi
+  if command -v node >/dev/null 2>&1; then
+    command -v node
+    return 0
+  fi
+  return 1
+}
+
+find_qclaw_openclaw_mjs() {
+  if [ -n "${QCLAW_OPENCLAW_MJS:-}" ]; then
+    printf '%s\n' "$QCLAW_OPENCLAW_MJS"
+    return 0
+  fi
+  local from_config
+  from_config="$(qclaw_json_value cli.openclawMjs)"
+  if [ -n "$from_config" ]; then
+    printf '%s\n' "$from_config"
+    return 0
+  fi
+  local mac_mjs="$HOME/Library/Application Support/QClaw/openclaw/node_modules/openclaw/openclaw.mjs"
+  if [ -f "$mac_mjs" ]; then
+    printf '%s\n' "$mac_mjs"
+    return 0
+  fi
+  return 1
+}
+
+sync_qclaw_runtime() {
+  QCLAW_NODE_BIN="$(find_qclaw_node_bin)" || {
+    err "选择 QClaw runtime，但找不到 QClaw Node。请先安装 QClaw，或设置 QCLAW_NODE_BIN=/path/to/node"
+    return 1
+  }
+  QCLAW_OPENCLAW_MJS="$(find_qclaw_openclaw_mjs)" || {
+    err "选择 QClaw runtime，但找不到 QClaw openclaw.mjs。请先启动一次 QClaw，或设置 QCLAW_OPENCLAW_MJS=/path/to/openclaw.mjs"
+    return 1
+  }
+
+  local qclaw_workspace="$QCLAW_HOME/workspace-$AGENT_ID"
+  local qclaw_agent_dir="$QCLAW_HOME/agents/$AGENT_ID/agent"
+  mkdir -p "$qclaw_workspace" "$qclaw_agent_dir" "$QCLAW_HOME/skills"
+  cp -R "$AGENT_WORKSPACE/." "$qclaw_workspace/"
+  if [ -d "$OPENCLAW_SKILLS_DIR" ]; then
+    cp -R "$OPENCLAW_SKILLS_DIR/." "$QCLAW_HOME/skills/"
+  fi
+
+  python3 - "$QCLAW_HOME" "$OPENCLAW_HOME" "$AGENT_ID" "${PRIMARY:-}" <<'PY'
+import json
+import sys
+import time
+from pathlib import Path
+
+qclaw_home, openclaw_home, agent_id, primary = sys.argv[1:]
+home = Path(qclaw_home).expanduser()
+home.mkdir(parents=True, exist_ok=True)
+config_path = home / "openclaw.json"
+openclaw_config_path = Path(openclaw_home).expanduser() / "openclaw.json"
+
+def load(path):
+    try:
+        return json.loads(Path(path).read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+cfg = load(config_path)
+source = load(openclaw_config_path)
+if not isinstance(cfg, dict):
+    cfg = {}
+agents = cfg.setdefault("agents", {})
+if not isinstance(agents, dict):
+    cfg["agents"] = agents = {}
+agents.setdefault("defaults", {})
+items = agents.setdefault("list", [])
+if not isinstance(items, list):
+    agents["list"] = items = []
+
+source_item = {}
+for item in ((source.get("agents") or {}).get("list") or []):
+    if isinstance(item, dict) and item.get("id") == agent_id:
+        source_item = item
+        break
+
+existing_item = {}
+for item in items:
+    if isinstance(item, dict) and item.get("id") == agent_id:
+        existing_item = item
+        break
+
+entry = {
+    "id": agent_id,
+    "name": source_item.get("name") or agent_id,
+    "workspace": str(home / f"workspace-{agent_id}"),
+    "agentDir": str(home / "agents" / agent_id / "agent"),
+}
+qclaw_default_model = (((agents.get("defaults") or {}).get("model") or {}).get("primary"))
+model = existing_item.get("model") or qclaw_default_model or source_item.get("model") or primary
+if model:
+    entry["model"] = model
+if isinstance(source_item.get("identity"), dict):
+    entry["identity"] = source_item["identity"]
+
+for idx, item in enumerate(items):
+    if isinstance(item, dict) and item.get("id") == agent_id:
+        merged = dict(item)
+        merged.update(entry)
+        items[idx] = merged
+        break
+else:
+    items.append(entry)
+
+old = config_path.read_text(encoding="utf-8", errors="ignore") if config_path.exists() else ""
+new = json.dumps(cfg, ensure_ascii=False, indent=2) + "\n"
+if old != new:
+    if config_path.exists():
+        backup = config_path.with_name(f"openclaw.json.bak-nako-qclaw-{time.strftime('%Y%m%d-%H%M%S')}")
+        backup.write_text(old, encoding="utf-8")
+    config_path.write_text(new, encoding="utf-8")
+PY
+
+  OPENCLAW_STATE_DIR="$QCLAW_HOME" OPENCLAW_CONFIG_PATH="$QCLAW_HOME/openclaw.json" \
+    "$QCLAW_NODE_BIN" "$QCLAW_OPENCLAW_MJS" agents list --json >/tmp/nako-qclaw-status.log 2>&1 \
+    && info "QClaw runtime 已同步: $qclaw_workspace" \
+    || warn "QClaw 状态检查未完全通过；已写入 workspace/config，日志 /tmp/nako-qclaw-status.log"
+}
+
+sync_hermes_runtime() {
+  HERMES_BIN="$(find_hermes_bin)" || {
+    err "选择 Hermes runtime，但找不到 hermes 命令。请先安装 Hermes，或设置 HERMES_BIN=/path/to/hermes"
+    return 1
+  }
+
+  local hermes_workspace="$HERMES_HOME/workspace/$AGENT_ID"
+  local hermes_skills="$HERMES_HOME/skills/openclaw-imports"
+  mkdir -p "$hermes_workspace" "$hermes_skills" "$HERMES_HOME/memories"
+
+  if "$HERMES_BIN" claw migrate --help >/dev/null 2>&1; then
+    "$HERMES_BIN" claw migrate \
+      --source "$OPENCLAW_HOME" \
+      --preset full \
+      --yes \
+      --workspace-target "$hermes_workspace" >/tmp/nako-hermes-migrate.log 2>&1 \
+      || warn "Hermes claw migrate 未完全成功，继续使用文件同步兜底；日志 /tmp/nako-hermes-migrate.log"
+  fi
+
+  cp -R "$AGENT_WORKSPACE/." "$hermes_workspace/"
+  if [ -d "$OPENCLAW_SKILLS_DIR" ]; then
+    cp -R "$OPENCLAW_SKILLS_DIR/." "$hermes_skills/"
+  fi
+  [ -f "$AGENT_WORKSPACE/SOUL.md" ] && cp "$AGENT_WORKSPACE/SOUL.md" "$HERMES_HOME/SOUL.md"
+  [ -f "$AGENT_WORKSPACE/USER.md" ] && cp "$AGENT_WORKSPACE/USER.md" "$HERMES_HOME/memories/USER.md"
+  [ -f "$AGENT_WORKSPACE/MEMORY.md" ] && cp "$AGENT_WORKSPACE/MEMORY.md" "$HERMES_HOME/memories/MEMORY.md"
+  [ -f "$AGENT_WORKSPACE/skills/.env" ] && cp "$AGENT_WORKSPACE/skills/.env" "$hermes_skills/.env.$AGENT_ID"
+
+  python3 - "$HERMES_HOME" "$OPENCLAW_HOME" "$AGENT_ID" "${PRIMARY:-}" "$PRESET_FILE" "$hermes_skills" "$OPENCLAW_SKILLS_DIR" <<'PY'
+import json
+import os
+import re
+import sys
+from pathlib import Path
+
+hermes_home, openclaw_home, agent_id, primary, preset_path, hermes_skills, openclaw_skills = sys.argv[1:]
+home = Path(hermes_home)
+home.mkdir(parents=True, exist_ok=True)
+provider, _, model = primary.partition("/")
+if not model:
+    model = primary
+
+def load_json(path):
+    try:
+        return json.loads(Path(path).read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+preset = load_json(preset_path)
+openclaw_cfg = load_json(Path(openclaw_home) / "openclaw.json")
+providers = {}
+providers.update(preset if isinstance(preset, dict) else {})
+providers.update(((openclaw_cfg.get("models") or {}).get("providers") or {}))
+
+def env_key_for(name):
+    table = {"zai": "ZAI_API_KEY", "glm": "GLM_API_KEY", "sensenova": "SENSENOVA_API_KEY"}
+    return table.get(name, re.sub(r"[^A-Za-z0-9]+", "_", name).upper() + "_API_KEY")
+
+def valid_secret(value):
+    return isinstance(value, str) and len(value.strip()) >= 8 and not value.lower().startswith("your-")
+
+def find_key_for_provider(name):
+    candidates = [
+        Path(openclaw_home) / "agents" / agent_id / "agent" / "auth-profiles.json",
+        Path(openclaw_home) / "agents" / "main" / "agent" / "auth-profiles.json",
+    ]
+    key_names = {"apiKey", "api_key", "apikey", "key", "token", "accessToken", "access_token"}
+
+    def walk(obj, provider_context=False):
+        if isinstance(obj, dict):
+            text = " ".join(str(v).lower() for v in obj.values() if isinstance(v, (str, int, float, bool)))
+            in_context = provider_context or name.lower() in text
+            for k, v in obj.items():
+                if in_context and k in key_names and valid_secret(v):
+                    return v.strip()
+            if name in obj:
+                hit = walk(obj[name], True)
+                if hit:
+                    return hit
+            for v in obj.values():
+                hit = walk(v, in_context)
+                if hit:
+                    return hit
+        elif isinstance(obj, list):
+            for item in obj:
+                hit = walk(item, provider_context)
+                if hit:
+                    return hit
+        return ""
+
+    for path in candidates:
+        hit = walk(load_json(path), False)
+        if hit:
+            return hit
+    return ""
+
+env_path = home / ".env"
+existing = {}
+if env_path.exists():
+    for line in env_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+        if not line or line.lstrip().startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        existing[key.strip()] = value.strip()
+
+additions = []
+for name in sorted(providers):
+    env_key = env_key_for(name)
+    if existing.get(env_key):
+        continue
+    secret = os.environ.get(env_key) or find_key_for_provider(name)
+    if secret:
+        additions.append(f"{env_key}={secret}")
+        if name == "zai" and not existing.get("GLM_API_KEY"):
+            additions.append(f"GLM_API_KEY={secret}")
+
+if additions:
+    with env_path.open("a", encoding="utf-8") as f:
+        if env_path.exists() and env_path.stat().st_size:
+            f.write("\n")
+        f.write("\n".join(additions) + "\n")
+    os.chmod(env_path, 0o600)
+elif not env_path.exists():
+    env_path.write_text("", encoding="utf-8")
+    os.chmod(env_path, 0o600)
+
+provider_cfg = providers.get(provider, {}) if provider else {}
+base_url = provider_cfg.get("baseUrl") or provider_cfg.get("base_url") or ""
+api_mode = "chat_completions"
+selected_key = env_key_for(provider) if provider else ""
+
+def yaml_quote(value):
+    return json.dumps(value, ensure_ascii=False)
+
+provider_lines = []
+for name, cfg in sorted(providers.items()):
+    models = [m.get("id") for m in (cfg.get("models") or []) if isinstance(m, dict) and m.get("id")]
+    if not models and name == provider and model:
+        models = [model]
+    provider_lines.extend([
+        f"  - name: {yaml_quote(name)}",
+        f"    base_url: {yaml_quote(cfg.get('baseUrl') or cfg.get('base_url') or '')}",
+        f"    key_env: {yaml_quote(env_key_for(name))}",
+        "    api_mode: chat_completions",
+        f"    model: {yaml_quote(models[0] if models else '')}",
+        "    models:",
+    ])
+    provider_lines.extend([f"      - {yaml_quote(m)}" for m in models] or ["      - \"\""])
+
+managed = "\n".join([
+    "# BEGIN NAKO HERMES RUNTIME",
+    "model:",
+    f"  default: {yaml_quote(model)}",
+    f"  provider: {yaml_quote(provider)}",
+    f"  base_url: {yaml_quote(base_url)}",
+    f"  api_mode: {yaml_quote(api_mode)}",
+    "custom_providers:",
+    *provider_lines,
+    "skills:",
+    "  external_dirs:",
+    f"    - {yaml_quote(hermes_skills)}",
+    f"    - {yaml_quote(openclaw_skills)}",
+    "# END NAKO HERMES RUNTIME",
+    "",
+])
+
+config_path = home / "config.yaml"
+old = config_path.read_text(encoding="utf-8", errors="ignore") if config_path.exists() else ""
+new = re.sub(
+    r"(?ms)^# BEGIN NAKO HERMES RUNTIME\n.*?^# END NAKO HERMES RUNTIME\n?",
+    "",
+    old,
+).rstrip()
+new = (new + "\n\n" if new else "") + managed
+if old != new:
+    if config_path.exists():
+        backup = config_path.with_name("config.yaml.bak-nako-hermes")
+        backup.write_text(old, encoding="utf-8")
+    config_path.write_text(new, encoding="utf-8")
+PY
+
+  HERMES_HOME="$HERMES_HOME" "$HERMES_BIN" status >/tmp/nako-hermes-status.log 2>&1 \
+    && info "Hermes runtime 已同步: $hermes_workspace" \
+    || warn "Hermes status 未完全通过；已写入 workspace/config，日志 /tmp/nako-hermes-status.log"
 }
 
 # 0) 修复常见配置障碍：缺 gateway.mode 直接 block 启动
@@ -721,11 +1096,23 @@ fi
 step "7. 合并 openclaw.json"
 "$SCRIPT_DIR/merge-config.sh" "$AGENT_ID" "${PRIMARY:-}"
 
+if [ "$NAKO_AGENT_RUNTIME" = "hermes" ]; then
+  step "7a. 同步 Hermes runtime"
+  sync_hermes_runtime
+elif [ "$NAKO_AGENT_RUNTIME" = "qclaw" ]; then
+  step "7a. 同步 QClaw runtime"
+  sync_qclaw_runtime
+fi
+
 # ─── Register cron jobs (idempotent) ────────────────────────────────────────
 step "7b. 注册 cron jobs (heartbeat / daily-script / missing-reminder)"
 
 gateway_up=0
-if has_bin openclaw; then
+if [ "$NAKO_AGENT_RUNTIME" = "hermes" ]; then
+  info "Hermes runtime 已选择，跳过 OpenClaw cron 注册"
+elif [ "$NAKO_AGENT_RUNTIME" = "qclaw" ]; then
+  info "QClaw runtime 已选择，跳过 OpenClaw cron 注册"
+elif has_bin openclaw; then
   for i in $(seq 1 25); do
     if openclaw_cron_ready; then
       gateway_up=1
@@ -739,7 +1126,9 @@ if has_bin openclaw; then
   done
 fi
 
-if [ "$gateway_up" = "0" ]; then
+if [ "$NAKO_AGENT_RUNTIME" = "hermes" ] || [ "$NAKO_AGENT_RUNTIME" = "qclaw" ]; then
+  :
+elif [ "$gateway_up" = "0" ]; then
   warn "gateway 自动启动失败，跳过 cron 注册"
   dim "  手动起后再 cron add，或重跑 installer："
   dim "    openclaw daemon install && openclaw daemon start"
@@ -791,6 +1180,7 @@ fi
 if [ "$WITH_CC_CONNECT" = "1" ] || { [ "$NON_INTERACTIVE" != "1" ] && confirm "现在配置 cc-connect 接入飞书/微信等多平台？" n; }; then
   step "8. cc-connect 多平台接入"
   CC_FLAGS=(--agent-id "$AGENT_ID")
+  CC_FLAGS+=(--runtime "$NAKO_AGENT_RUNTIME")
   [ "$NON_INTERACTIVE" = "1" ] && CC_FLAGS+=(--non-interactive)
   [ "$WITH_FEISHU" = "1" ]     && CC_FLAGS+=(--with-feishu)
   [ "$WITH_WEIXIN" = "1" ]     && CC_FLAGS+=(--with-weixin)
@@ -803,7 +1193,7 @@ fi
 # ─── @reboot persistence (no launchd/systemd → fall back to crontab) ───────
 # 在没有 launchd/systemd 的容器/精简 Linux 上，gateway / cc-connect 不会自动
 # 重启。用 user crontab @reboot 兜底，幂等：每次 install 重新装一次。
-if has_bin crontab && ! has_bin launchctl && ! systemctl --user status >/dev/null 2>&1; then
+if [ "$NAKO_AGENT_RUNTIME" = "openclaw" ] && has_bin crontab && ! has_bin launchctl && ! systemctl --user status >/dev/null 2>&1; then
   step "8b. 配置 @reboot 自动起 gateway + cc-connect"
   CRON_TAG="# nako-autostart"
   REBOOT_CMD="@reboot ( $(which openclaw 2>/dev/null) gateway --allow-unconfigured --auth none >/tmp/openclaw-gw.log 2>&1 & sleep 5 ; $(which cc-connect 2>/dev/null) >/tmp/cc-connect.log 2>&1 & ) $CRON_TAG"
@@ -819,7 +1209,13 @@ step "9. 冒烟测试"
 echo
 info "安装完成！"
 dim "下一步："
-dim "  1. 重启 gateway: launchctl kickstart -k gui/\$(id -u)/ai.openclaw.gateway  (macOS)"
+if [ "$NAKO_AGENT_RUNTIME" = "openclaw" ]; then
+  dim "  1. 重启 gateway: launchctl kickstart -k gui/\$(id -u)/ai.openclaw.gateway  (macOS)"
+elif [ "$NAKO_AGENT_RUNTIME" = "qclaw" ]; then
+  dim "  1. QClaw workspace: $QCLAW_HOME/workspace-$AGENT_ID"
+else
+  dim "  1. Hermes workspace: $HERMES_HOME/workspace/$AGENT_ID"
+fi
 dim "  2. 在飞书里 @ $AGENT_ID 或私聊它"
-dim "  3. 要定制：编辑 $AGENT_WORKSPACE/custom.md（升级不会动它）"
+dim "  3. 要定制：编辑 $AGENT_WORKSPACE/custom.md（Hermes/QClaw 会从这里同步）"
 dim "  4. 文档：仓库根目录 docs/nako/ 和 docs/advanced.md"
