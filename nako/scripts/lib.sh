@@ -100,9 +100,9 @@ has_bin() { command -v "$1" &>/dev/null; }
 
 # ───── Openclaw paths ─────
 OPENCLAW_HOME="${OPENCLAW_HOME:-$HOME/.openclaw}"
-OPENCLAW_CONFIG="$OPENCLAW_HOME/openclaw.json"
-OPENCLAW_SKILLS_DIR="$OPENCLAW_HOME/skills"
-OPENCLAW_WORKSPACES="$OPENCLAW_HOME/workspace"
+OPENCLAW_CONFIG="${OPENCLAW_CONFIG:-$OPENCLAW_HOME/openclaw.json}"
+OPENCLAW_SKILLS_DIR="${OPENCLAW_SKILLS_DIR:-$OPENCLAW_HOME/skills}"
+OPENCLAW_WORKSPACES="${OPENCLAW_WORKSPACES:-$OPENCLAW_HOME/workspace}"
 
 # Backup file with timestamp suffix
 backup_file() {

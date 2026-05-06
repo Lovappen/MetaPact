@@ -19,18 +19,18 @@ AGENT_ID="${1:-agent-nako}"
 PRIMARY="${2:-}"
 [ -z "$PRIMARY" ] && { err "usage: $0 <agent_id> <primary_model>"; exit 1; }
 
-CONFIG="$OPENCLAW_HOME/openclaw.json"
+CONFIG="$OPENCLAW_CONFIG"
 [ ! -f "$CONFIG" ] && { err "openclaw.json not found"; exit 1; }
 
 backup_file "$CONFIG"
 
-WORKSPACE="$OPENCLAW_WORKSPACES/$AGENT_ID"
-AGENT_DIR="$OPENCLAW_HOME/agents/$AGENT_ID/agent"
+WORKSPACE="${AGENT_WORKSPACE:-$OPENCLAW_WORKSPACES/$AGENT_ID}"
+AGENT_DIR="${NAKO_AGENT_CONFIG_DIR:-$OPENCLAW_HOME/agents/$AGENT_ID/agent}"
 mkdir -p "$WORKSPACE" "$AGENT_DIR"
 
-python3 - "$CONFIG" "$AGENT_ID" "$PRIMARY" "$WORKSPACE" "$AGENT_DIR" <<'PY'
+python3 - "$CONFIG" "$AGENT_ID" "$PRIMARY" "$WORKSPACE" "$AGENT_DIR" "$OPENCLAW_SKILLS_DIR" <<'PY'
 import json, sys, os
-path, agent_id, primary, workspace, agent_dir = sys.argv[1:]
+path, agent_id, primary, workspace, agent_dir, skills_dir = sys.argv[1:]
 cfg = json.load(open(path))
 
 # ── agents.list: upsert the agent entry
@@ -41,7 +41,11 @@ for a in lst:
     if a.get("id") == agent_id:
         a["workspace"] = workspace
         a["agentDir"] = agent_dir
-        a.setdefault("model", {})["primary"] = primary
+        model = a.get("model")
+        if not isinstance(model, dict):
+            model = {}
+            a["model"] = model
+        model["primary"] = primary
         found = True
         break
 if not found:
@@ -54,7 +58,7 @@ if not found:
     })
 
 # ── skills.entries: publish skill configuration for scripts to read directly.
-# The bash skills also keep ~/.openclaw/skills/.env compatibility, but
+# The bash skills also keep the runtime skills/.env compatibility, but
 # openclaw.json is now the canonical shared config for voice/selfie providers.
 skills = cfg.setdefault("skills", {})
 entries = skills.setdefault("entries", {})
@@ -76,10 +80,10 @@ set_env("voice", [
 ])
 set_env("selfie", ["FAL_KEY", "KIE_API_KEY", "OPENCLAW_GATEWAY_TOKEN"])
 
-# ── skills.load.extraDirs: ensure ~/.openclaw/skills is present
+# ── skills.load.extraDirs: ensure the runtime skills dir is present
 load = skills.setdefault("load", {})
 extras = load.setdefault("extraDirs", [])
-global_skills = os.path.expanduser("~/.openclaw/skills")
+global_skills = os.path.expanduser(skills_dir)
 if global_skills not in extras:
     extras.append(global_skills)
 

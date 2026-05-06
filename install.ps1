@@ -2,13 +2,15 @@
 #
 # Usage:
 #   iex (iwr -UseBasicParsing https://cdn.jsdelivr.net/gh/Lovappen/MetaPact@main/install.ps1).Content
-#   # or: pwsh install.ps1 [-Force] [-AgentId agent-nako] [-NonInteractive] [-SkipSkills] [-SkipModels] [-ResetSecrets] [-WithFeishu] [-WithWeixin] [-CcConnectSource auto|npm|lazycat|skip]
+#   # or: pwsh install.ps1 [-Force] [-AgentId agent-nako] [-Runtime openclaw|hermes|qclaw] [-NonInteractive] [-SkipSkills] [-SkipModels] [-ResetSecrets] [-WithFeishu] [-WithWeixin] [-CcConnectSource auto|npm|lazycat|skip]
 
 [CmdletBinding()]
 param(
   [switch]$Force,
   [string]$Agent = "nako",
   [string]$AgentId = "agent-nako",
+  [ValidateSet("openclaw","hermes","qclaw")]
+  [string]$Runtime = "openclaw",
   [switch]$NonInteractive,
   [switch]$SkipSkills,
   [switch]$SkipModels,
@@ -16,11 +18,22 @@ param(
   [switch]$WithCcConnect,
   [switch]$WithFeishu,
   [switch]$WithWeixin,
+  [switch]$UninstallCcConnect,
+  [switch]$UninstallAllCcConnect,
+  [switch]$PurgeCcConnect,
   [ValidateSet("auto","npm","lazycat","skip")]
   [string]$CcConnectSource = "lazycat"
 )
 
 $ErrorActionPreference = "Stop"
+if ($env:NAKO_AGENT_RUNTIME -and -not $PSBoundParameters.ContainsKey("Runtime")) {
+  if ($env:NAKO_AGENT_RUNTIME -in @("openclaw","hermes","qclaw")) {
+    $Runtime = $env:NAKO_AGENT_RUNTIME
+  } else {
+    Write-Host "[✗] NAKO_AGENT_RUNTIME 只支持 openclaw|hermes|qclaw" -ForegroundColor Red
+    exit 1
+  }
+}
 
 # ─── Colored output helpers ─────────────────────────────────────────────────
 function Info($m)  { Write-Host "[✓] $m" -ForegroundColor Green }
@@ -82,11 +95,95 @@ if ($Agent -ne "nako") {
 }
 $ScriptDir = Join-Path $PackRoot "scripts"
 
-$OpenclawHome = Join-Path $env:USERPROFILE ".openclaw"
-$OpenclawConfig = Join-Path $OpenclawHome "openclaw.json"
-$OpenclawSkills = Join-Path $OpenclawHome "skills"
-$AgentWorkspace = Join-Path $OpenclawHome "workspace\$AgentId"
+function Get-CcSetupPath {
+  $repoRootForSetup = Split-Path -Parent $PackRoot
+  $ccSetup = Join-Path $repoRootForSetup "scripts\cc-connect-setup.sh"
+  if (-not (Test-Path $ccSetup)) {
+    $ccSetup = Join-Path $ScriptDir "cc-connect-setup.sh"
+  }
+  return $ccSetup
+}
+
+function Invoke-CcSetup([string[]]$Flags) {
+  $ccSetup = Get-CcSetupPath
+  if (-not (Get-Command bash -ErrorAction SilentlyContinue)) {
+    Warn "未发现 bash。请安装 Git Bash / WSL 后运行：bash scripts/cc-connect-setup.sh $($Flags -join ' ')"
+    return 1
+  }
+  if (-not (Test-Path $ccSetup)) {
+    Warn "未找到 cc-connect-setup.sh，跳过 cc-connect 操作。"
+    return 1
+  }
+  & bash $ccSetup @Flags
+  return $LASTEXITCODE
+}
+
+if ($UninstallAllCcConnect) {
+  Step "cc-connect 一键完整卸载"
+  $rc = Invoke-CcSetup @("--uninstall-all")
+  exit $rc
+}
+
+if ($UninstallCcConnect) {
+  Step "cc-connect 卸载接入"
+  $flags = @("--agent-id", $AgentId, "--uninstall")
+  if ($PurgeCcConnect) { $flags += "--purge-cc-connect" }
+  $rc = Invoke-CcSetup $flags
+  exit $rc
+}
+
+function Resolve-InstallPath($path) {
+  if ([string]::IsNullOrWhiteSpace($path)) { return $path }
+  $expanded = [Environment]::ExpandEnvironmentVariables($path)
+  if ($expanded -eq "~") { $expanded = $env:USERPROFILE }
+  elseif ($expanded.StartsWith('~\')) { $expanded = Join-Path $env:USERPROFILE $expanded.Substring(2) }
+  elseif ($expanded.StartsWith("~/")) { $expanded = Join-Path $env:USERPROFILE $expanded.Substring(2) }
+  return [System.IO.Path]::GetFullPath($expanded)
+}
+
+function Get-QClawAppValue($path, $key) {
+  if (-not (Test-Path $path)) { return "" }
+  try {
+    $cur = Get-Content $path -Raw | ConvertFrom-Json
+    foreach ($part in $key.Split(".")) {
+      if ($null -eq $cur) { return "" }
+      $prop = $cur.PSObject.Properties[$part]
+      if ($null -eq $prop) { return "" }
+      $cur = $prop.Value
+    }
+    if ($cur -is [string]) { return $cur }
+  } catch {}
+  return ""
+}
+
+$DefaultOpenclawHome = Join-Path $env:USERPROFILE ".openclaw"
+$HermesHome = if ($env:HERMES_HOME) { $env:HERMES_HOME } else { Join-Path $env:USERPROFILE ".hermes" }
+$QclawHomeInput = if ($env:QCLAW_HOME) { $env:QCLAW_HOME } else { Join-Path $env:USERPROFILE ".qclaw" }
+$QclawHome = Resolve-InstallPath $QclawHomeInput
+
+if ($Runtime -eq "qclaw") {
+  $qclawAppConfig = Join-Path $QclawHome "qclaw.json"
+  $qclawStateDir = Get-QClawAppValue $qclawAppConfig "stateDir"
+  if ($qclawStateDir) {
+    $QclawHome = Resolve-InstallPath $qclawStateDir
+    $qclawAppConfig = Join-Path $QclawHome "qclaw.json"
+  }
+  $qclawConfigPath = Get-QClawAppValue $qclawAppConfig "configPath"
+  if ($qclawConfigPath) { $qclawConfigPath = Resolve-InstallPath $qclawConfigPath }
+  else { $qclawConfigPath = Join-Path $QclawHome "openclaw.json" }
+
+  $OpenclawHome = $QclawHome
+  $OpenclawConfig = $qclawConfigPath
+  $OpenclawSkills = Join-Path $QclawHome "skills"
+  $AgentWorkspace = Join-Path $QclawHome "workspace-$AgentId"
+} else {
+  $OpenclawHome = $DefaultOpenclawHome
+  $OpenclawConfig = Join-Path $OpenclawHome "openclaw.json"
+  $OpenclawSkills = Join-Path $OpenclawHome "skills"
+  $AgentWorkspace = Join-Path $OpenclawHome "workspace\$AgentId"
+}
 $AgentDataDir = Join-Path $OpenclawHome "agents\$AgentId"
+$AgentConfigDir = Join-Path $AgentDataDir "agent"
 
 if ($WithFeishu -or $WithWeixin) { $WithCcConnect = $true }
 
@@ -94,6 +191,7 @@ Write-Host ""
 Write-Host "野木奈子 Agent Pack - 安装器 (Windows)" -ForegroundColor White -BackgroundColor DarkBlue
 Dim "  Repo:  github.com/Lovappen/MetaPact"
 Dim "  Agent: $AgentId"
+Dim "  Runtime: $Runtime"
 Dim "  Pack:  $PackRoot"
 Write-Host ""
 
@@ -106,13 +204,24 @@ foreach ($b in @("python", "jq", "curl")) {
   else { ErrL $b; $MissingHard += $b }
 }
 
-if (-not (Test-Path $OpenclawHome)) {
-  ErrL "$OpenclawHome 不存在 — 请先 npm i -g openclaw"; exit 1
-}
-Info "openclaw 目录 $OpenclawHome"
+if ($Runtime -eq "qclaw") {
+  $qclawAppConfig = Join-Path $QclawHome "qclaw.json"
+  if (-not (Test-Path $qclawAppConfig)) {
+    ErrL "选择 QClaw runtime，但找不到 $qclawAppConfig。请先下载安装并启动一次 QClaw。"
+    exit 1
+  }
+  Info "QClaw 目录 $QclawHome"
+  if (-not (Test-Path $OpenclawConfig)) { ErrL "QClaw openclaw.json 不存在: $OpenclawConfig"; exit 1 }
+  Info "QClaw openclaw.json"
+} else {
+  if (-not (Test-Path $OpenclawHome)) {
+    ErrL "$OpenclawHome 不存在 — 请先 npm i -g openclaw"; exit 1
+  }
+  Info "openclaw 目录 $OpenclawHome"
 
-if (-not (Test-Path $OpenclawConfig)) { ErrL "openclaw.json 不存在"; exit 1 }
-Info "openclaw.json"
+  if (-not (Test-Path $OpenclawConfig)) { ErrL "openclaw.json 不存在"; exit 1 }
+  Info "openclaw.json"
+}
 
 if ($MissingHard.Count -gt 0) {
   ErrL "请先装：$($MissingHard -join ', ')"
@@ -154,8 +263,13 @@ if ((Test-Path $AgentWorkspace) -or (Test-Path $AgentDataDir)) {
       '^用别的' {
         $new = Ask "新 agent id" "${AgentId}2"
         $AgentId = $new
-        $AgentWorkspace = Join-Path $OpenclawHome "workspace\$AgentId"
+        if ($Runtime -eq "qclaw") {
+          $AgentWorkspace = Join-Path $QclawHome "workspace-$AgentId"
+        } else {
+          $AgentWorkspace = Join-Path $OpenclawHome "workspace\$AgentId"
+        }
         $AgentDataDir = Join-Path $OpenclawHome "agents\$AgentId"
+        $AgentConfigDir = Join-Path $AgentDataDir "agent"
       }
       '^中止' { ErrL "已中止"; exit 0 }
     }
@@ -192,6 +306,15 @@ if ($SkipModels) {
   $cfg = Get-Content $OpenclawConfig -Raw | ConvertFrom-Json
   $Primary = $cfg.agents.defaults.model.primary
   Info "跳过模型映射，继承 primary: $Primary"
+} elseif ($Runtime -eq "qclaw") {
+  try {
+    $cfg = Get-Content $OpenclawConfig -Raw | ConvertFrom-Json
+    $Primary = $cfg.agents.defaults.model.primary
+  } catch {
+    $Primary = ""
+  }
+  if (-not $Primary) { $Primary = "qclaw/modelroute" }
+  Info "QClaw 主模型继承: $Primary"
 } else {
   $avail = Get-AvailableModels
   Write-Host "已配置的 provider/model："
@@ -512,7 +635,8 @@ cfg = json.load(open(path))
 agent_id = '$AgentId'
 primary = '$Primary'
 workspace = r'$AgentWorkspace'
-agent_data_dir = r'$AgentDataDir\agent'
+agent_data_dir = r'$AgentConfigDir'
+skills_dir = r'$OpenclawSkills'
 
 agents = cfg.setdefault('agents', {})
 lst = agents.setdefault('list', [])
@@ -521,7 +645,11 @@ for a in lst:
     if a.get('id') == agent_id:
         a['workspace'] = workspace
         a['agentDir'] = agent_data_dir
-        a.setdefault('model', {})['primary'] = primary
+        model = a.get('model')
+        if not isinstance(model, dict):
+            model = {}
+            a['model'] = model
+        model['primary'] = primary
         found = True; break
 if not found:
     lst.append({'id': agent_id, 'name': agent_id, 'workspace': workspace,
@@ -542,7 +670,7 @@ set_env('selfie', ['FAL_KEY','KIE_API_KEY','OPENCLAW_GATEWAY_TOKEN'])
 
 load = skills.setdefault('load', {})
 extras = load.setdefault('extraDirs', [])
-gs = os.path.expanduser('~/.openclaw/skills')
+gs = os.path.expanduser(skills_dir)
 if gs not in extras: extras.append(gs)
 
 open(path, 'w', encoding='utf-8').write(json.dumps(cfg, indent=2, ensure_ascii=False) + '\n')
@@ -550,30 +678,165 @@ print(f'merged: agent={agent_id}, primary={primary}')
 "@
 Info "openclaw.json 已合并"
 
+function Copy-DirectoryContents($src, $dst) {
+  if (-not (Test-Path $src)) { return }
+  if (-not (Test-Path $dst)) { New-Item -ItemType Directory -Path $dst -Force | Out-Null }
+  Get-ChildItem -Path $src -Force | ForEach-Object {
+    Copy-Item -Path $_.FullName -Destination $dst -Recurse -Force
+  }
+}
+
+function Sync-HermesRuntime {
+  $hermesWorkspace = Join-Path $HermesHome "workspace\$AgentId"
+  $hermesSkills = Join-Path $HermesHome "skills\openclaw-imports"
+  New-Item -ItemType Directory -Path $hermesWorkspace, $hermesSkills -Force | Out-Null
+  Copy-DirectoryContents $AgentWorkspace $hermesWorkspace
+  Copy-DirectoryContents $OpenclawSkills $hermesSkills
+  Info "Hermes runtime 已同步: $hermesWorkspace"
+}
+
+function Sync-QClawRuntime {
+  $qclawAppConfig = Join-Path $QclawHome "qclaw.json"
+  if (-not (Test-Path $qclawAppConfig)) {
+    ErrL "选择 QClaw runtime，但找不到 $qclawAppConfig。请先下载安装并启动一次 QClaw。"
+    exit 1
+  }
+
+  $qclawWorkspace = Join-Path $QclawHome "workspace-$AgentId"
+  $qclawAgentDir = Join-Path $QclawHome "agents\$AgentId\agent"
+  $qclawSkills = Join-Path $QclawHome "skills"
+  New-Item -ItemType Directory -Path $qclawWorkspace, $qclawAgentDir, $qclawSkills -Force | Out-Null
+  if ($AgentWorkspace -ne $qclawWorkspace) { Copy-DirectoryContents $AgentWorkspace $qclawWorkspace }
+  if ($OpenclawSkills -ne $qclawSkills) { Copy-DirectoryContents $OpenclawSkills $qclawSkills }
+
+  $env:NAKO_PS_QCLAW_HOME = $QclawHome
+  $env:NAKO_PS_QCLAW_CONFIG = $OpenclawConfig
+  $env:NAKO_PS_OPENCLAW_CONFIG = $OpenclawConfig
+  $env:NAKO_PS_AGENT_ID = $AgentId
+  $env:NAKO_PS_PRIMARY = $Primary
+  python -c @'
+import json
+import os
+import time
+from pathlib import Path
+
+qclaw_home = Path(os.environ["NAKO_PS_QCLAW_HOME"])
+qclaw_config = Path(os.environ["NAKO_PS_QCLAW_CONFIG"])
+openclaw_config = Path(os.environ["NAKO_PS_OPENCLAW_CONFIG"])
+agent_id = os.environ["NAKO_PS_AGENT_ID"]
+primary = os.environ.get("NAKO_PS_PRIMARY", "")
+config_path = qclaw_config
+source_path = openclaw_config
+
+def load(path):
+    try:
+        return json.loads(Path(path).read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+cfg = load(config_path)
+source = load(source_path)
+if not isinstance(cfg, dict):
+    cfg = {}
+agents = cfg.setdefault("agents", {})
+if not isinstance(agents, dict):
+    cfg["agents"] = agents = {}
+agents.setdefault("defaults", {})
+items = agents.setdefault("list", [])
+if not isinstance(items, list):
+    agents["list"] = items = []
+
+source_item = {}
+for item in ((source.get("agents") or {}).get("list") or []):
+    if isinstance(item, dict) and item.get("id") == agent_id:
+        source_item = item
+        break
+
+existing_item = {}
+for item in items:
+    if isinstance(item, dict) and item.get("id") == agent_id:
+        existing_item = item
+        break
+
+def primary_model(value):
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        primary_value = value.get("primary")
+        if isinstance(primary_value, str):
+            return primary_value
+    return ""
+
+default_identity = {
+    "name": "野木奈子",
+    "emoji": "🎀",
+    "theme": "核战后赛博世界专属战斗女仆",
+}
+identity = (
+    existing_item.get("identity") if isinstance(existing_item.get("identity"), dict)
+    else source_item.get("identity") if isinstance(source_item.get("identity"), dict)
+    else default_identity
+)
+name = existing_item.get("name") or source_item.get("name") or ""
+if not name or name == agent_id:
+    name = identity.get("name") or agent_id
+
+entry = {
+    "id": agent_id,
+    "name": name,
+    "workspace": str(qclaw_home / f"workspace-{agent_id}"),
+    "agentDir": str(qclaw_home / "agents" / agent_id / "agent"),
+    "identity": identity,
+}
+qclaw_default_model = (((agents.get("defaults") or {}).get("model") or {}).get("primary"))
+model = (
+    primary_model(existing_item.get("model"))
+    or qclaw_default_model
+    or primary_model(source_item.get("model"))
+    or primary
+)
+if model:
+    entry["model"] = model
+
+for idx, item in enumerate(items):
+    if isinstance(item, dict) and item.get("id") == agent_id:
+        merged = dict(item)
+        merged.update(entry)
+        items[idx] = merged
+        break
+else:
+    items.append(entry)
+
+old = config_path.read_text(encoding="utf-8", errors="ignore") if config_path.exists() else ""
+new = json.dumps(cfg, ensure_ascii=False, indent=2) + "\n"
+if old != new:
+    if config_path.exists():
+        backup = config_path.with_name(f"openclaw.json.bak-nako-qclaw-{time.strftime('%Y%m%d-%H%M%S')}")
+        backup.write_text(old, encoding="utf-8")
+    config_path.write_text(new, encoding="utf-8")
+'@
+  Info "QClaw runtime 已同步: $qclawWorkspace"
+}
+
+if ($Runtime -eq "hermes") {
+  Step "7a. 同步 Hermes runtime"
+  Sync-HermesRuntime
+} elseif ($Runtime -eq "qclaw") {
+  Step "7a. 同步 QClaw runtime"
+  Sync-QClawRuntime
+}
+
 # ─── cc-connect 多平台 (可选) ──────────────────────────────────────────────
 if ($WithCcConnect -or ((-not $NonInteractive) -and (Confirm "现在配置 cc-connect 接入飞书/微信等多平台？"))) {
   Step "8. cc-connect 多平台接入"
-  $CcFlags = @("--agent-id", $AgentId)
+  $CcFlags = @("--agent-id", $AgentId, "--runtime", $Runtime)
   if ($NonInteractive) { $CcFlags += "--non-interactive" }
   if ($WithFeishu) { $CcFlags += "--with-feishu" }
   if ($WithWeixin) { $CcFlags += "--with-weixin" }
   $CcFlags += @("--cc-connect-source", $CcConnectSource)
-
-  $RepoRoot = Split-Path -Parent $PackRoot
-  $CcSetup = Join-Path $RepoRoot "scripts\cc-connect-setup.sh"
-  if (-not (Test-Path $CcSetup)) {
-    $CcSetup = Join-Path $ScriptDir "cc-connect-setup.sh"
-  }
-
-  if (-not (Get-Command bash -ErrorAction SilentlyContinue)) {
-    Warn "未发现 bash，跳过 cc-connect 自动接入。可在 Git Bash / WSL 中运行 scripts/cc-connect-setup.sh。"
-  } elseif (-not (Test-Path $CcSetup)) {
-    Warn "未找到 cc-connect-setup.sh，跳过 cc-connect 自动接入。"
-  } else {
-    & bash $CcSetup @CcFlags
-    if ($LASTEXITCODE -ne 0) {
-      Warn "cc-connect 配置未完成（可后续手动跑 scripts/cc-connect-setup.sh）"
-    }
+  $rc = Invoke-CcSetup $CcFlags
+  if ($rc -ne 0) {
+    Warn "cc-connect 配置未完成（可后续手动跑 scripts/cc-connect-setup.sh）"
   }
 }
 
@@ -581,7 +844,15 @@ if ($WithCcConnect -or ((-not $NonInteractive) -and (Confirm "现在配置 cc-co
 Write-Host ""
 Info "安装完成！"
 Dim "下一步："
-Dim "  1. 重启 openclaw gateway（Windows: 关闭进程后重开）"
-Dim "  2. 在飞书里 @ $AgentId 或私聊它"
-Dim "  3. 定制在 $AgentWorkspace\custom.md（升级不会动它）"
+if ($Runtime -eq "qclaw") {
+  $qclawNextWorkspace = Join-Path $QclawHome "workspace-$AgentId"
+  Dim "  1. QClaw workspace: $qclawNextWorkspace"
+} elseif ($Runtime -eq "hermes") {
+  $hermesNextWorkspace = Join-Path $HermesHome "workspace\$AgentId"
+  Dim "  1. Hermes workspace: $hermesNextWorkspace"
+} else {
+  Dim "  1. 重启 openclaw gateway（Windows: 关闭进程后重开）"
+}
+Dim "  2. 在飞书/微信里找 $AgentId"
+Dim "  3. 定制在 $AgentWorkspace\custom.md（升级不会动它；Hermes/QClaw 会从这里同步）"
 Dim "  4. 文档在 $PackRoot\docs\"

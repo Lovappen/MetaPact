@@ -68,11 +68,17 @@ bash scripts/cc-connect-setup.sh --agent-id agent-foo --runtime hermes --with-fe
 # QClaw ACP 后端（QClaw 需已安装并已生成 ~/.qclaw/qclaw.json）
 bash scripts/cc-connect-setup.sh --agent-id agent-foo --runtime qclaw --with-feishu
 
+# 从 0 直接安装 Nako 到 QClaw（不要求 ~/.openclaw/openclaw.json）
+bash install.sh --runtime qclaw --agent-id agent-nako --non-interactive
+
 # 卸载某个 agent 的 cc-connect 接入
 bash scripts/cc-connect-setup.sh --agent-id agent-foo --uninstall
 
 # 一键完整卸载 cc-connect（配置会移到 ~/.cc-connect.bak-uninstall-all-*）
 bash scripts/cc-connect-setup.sh --uninstall-all
+
+# Windows PowerShell: 通过 QClaw 接入飞书/微信
+pwsh install.ps1 -Runtime qclaw -WithFeishu -WithWeixin
 ```
 
 QClaw 后端需要和 `cc-connect` 跑在同一个 host/user 下；如果 `cc-connect`

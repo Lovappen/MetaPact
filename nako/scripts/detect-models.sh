@@ -7,7 +7,7 @@
 set -euo pipefail
 
 OPENCLAW_HOME="${OPENCLAW_HOME:-$HOME/.openclaw}"
-CONFIG="$OPENCLAW_HOME/openclaw.json"
+CONFIG="${OPENCLAW_CONFIG:-$OPENCLAW_HOME/openclaw.json}"
 
 [ ! -f "$CONFIG" ] && { echo "ERROR: openclaw.json not found at $CONFIG" >&2; exit 1; }
 command -v python3 >/dev/null || { echo "ERROR: python3 required" >&2; exit 1; }

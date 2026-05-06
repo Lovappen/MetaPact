@@ -100,6 +100,69 @@ case "$NAKO_AGENT_RUNTIME" in
   *) err "--runtime 只支持 openclaw|hermes|qclaw"; exit 1 ;;
 esac
 
+expand_path() {
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "$1" <<'PY'
+import os
+import sys
+from pathlib import Path
+
+print(str(Path(os.path.expanduser(sys.argv[1])).resolve()))
+PY
+  else
+    printf '%s\n' "$1"
+  fi
+}
+
+qclaw_app_value_early() {
+  local path="$1" key="$2"
+  [ -f "$path" ] || return 0
+  command -v python3 >/dev/null 2>&1 || return 0
+  python3 - "$path" "$key" <<'PY' 2>/dev/null || true
+import json
+import sys
+from pathlib import Path
+
+path, key = sys.argv[1:]
+try:
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+except Exception:
+    data = {}
+cur = data
+for part in key.split("."):
+    if not isinstance(cur, dict):
+        cur = None
+        break
+    cur = cur.get(part)
+print(cur if isinstance(cur, str) else "")
+PY
+}
+
+if [ "$NAKO_AGENT_RUNTIME" = "qclaw" ]; then
+  QCLAW_HOME="$(expand_path "$QCLAW_HOME")"
+  QCLAW_APP_CONFIG="$QCLAW_HOME/qclaw.json"
+  _qclaw_state_dir="$(qclaw_app_value_early "$QCLAW_APP_CONFIG" stateDir)"
+  if [ -n "$_qclaw_state_dir" ]; then
+    QCLAW_HOME="$(expand_path "$_qclaw_state_dir")"
+    QCLAW_APP_CONFIG="$QCLAW_HOME/qclaw.json"
+  fi
+  QCLAW_OPENCLAW_CONFIG="$(qclaw_app_value_early "$QCLAW_APP_CONFIG" configPath)"
+  if [ -n "$QCLAW_OPENCLAW_CONFIG" ]; then
+    QCLAW_OPENCLAW_CONFIG="$(expand_path "$QCLAW_OPENCLAW_CONFIG")"
+  else
+    QCLAW_OPENCLAW_CONFIG="$QCLAW_HOME/openclaw.json"
+  fi
+
+  OPENCLAW_HOME="$QCLAW_HOME"
+  OPENCLAW_CONFIG="$QCLAW_OPENCLAW_CONFIG"
+  OPENCLAW_SKILLS_DIR="$QCLAW_HOME/skills"
+  OPENCLAW_WORKSPACES="$QCLAW_HOME/workspace"
+fi
+
+export OPENCLAW_HOME OPENCLAW_CONFIG OPENCLAW_SKILLS_DIR OPENCLAW_WORKSPACES
+export QCLAW_HOME
+[ -n "${QCLAW_OPENCLAW_CONFIG:-}" ] && export QCLAW_OPENCLAW_CONFIG
+
 if [ "$LIST" = "1" ]; then
   echo "可用 agent:"
   echo "  - nako"
@@ -129,14 +192,24 @@ for b in python3 jq curl; do
   if has_bin "$b"; then info "$b"; else err "$b"; MISSING_HARD+=("$b"); fi
 done
 
-if [ ! -d "$OPENCLAW_HOME" ]; then
-  err "~/.openclaw 不存在 — 请先安装 openclaw (npm i -g openclaw)"
-  exit 1
-fi
-info "openclaw 目录 $OPENCLAW_HOME"
+if [ "$NAKO_AGENT_RUNTIME" = "qclaw" ]; then
+  if [ ! -f "$QCLAW_HOME/qclaw.json" ]; then
+    err "选择 QClaw runtime，但找不到 $QCLAW_HOME/qclaw.json。请先下载安装并启动一次 QClaw。"
+    exit 1
+  fi
+  info "QClaw 目录 $QCLAW_HOME"
+  [ ! -f "$OPENCLAW_CONFIG" ] && { err "QClaw openclaw.json 不存在: $OPENCLAW_CONFIG"; exit 1; }
+  info "QClaw openclaw.json"
+else
+  if [ ! -d "$OPENCLAW_HOME" ]; then
+    err "~/.openclaw 不存在 — 请先安装 openclaw (npm i -g openclaw)"
+    exit 1
+  fi
+  info "openclaw 目录 $OPENCLAW_HOME"
 
-[ ! -f "$OPENCLAW_CONFIG" ] && { err "openclaw.json 不存在"; exit 1; }
-info "openclaw.json"
+  [ ! -f "$OPENCLAW_CONFIG" ] && { err "openclaw.json 不存在"; exit 1; }
+  info "openclaw.json"
+fi
 
 if [ "${#MISSING_HARD[@]}" -gt 0 ]; then
   err "请先装这些依赖：${MISSING_HARD[*]}"
@@ -345,22 +418,24 @@ sync_qclaw_runtime() {
   local qclaw_workspace="$QCLAW_HOME/workspace-$AGENT_ID"
   local qclaw_agent_dir="$QCLAW_HOME/agents/$AGENT_ID/agent"
   mkdir -p "$qclaw_workspace" "$qclaw_agent_dir" "$QCLAW_HOME/skills"
-  cp -R "$AGENT_WORKSPACE/." "$qclaw_workspace/"
-  if [ -d "$OPENCLAW_SKILLS_DIR" ]; then
+  if [ "$AGENT_WORKSPACE" != "$qclaw_workspace" ]; then
+    cp -R "$AGENT_WORKSPACE/." "$qclaw_workspace/"
+  fi
+  if [ -d "$OPENCLAW_SKILLS_DIR" ] && [ "$OPENCLAW_SKILLS_DIR" != "$QCLAW_HOME/skills" ]; then
     cp -R "$OPENCLAW_SKILLS_DIR/." "$QCLAW_HOME/skills/"
   fi
 
-  python3 - "$QCLAW_HOME" "$OPENCLAW_HOME" "$AGENT_ID" "${PRIMARY:-}" <<'PY'
+  python3 - "$QCLAW_HOME" "${QCLAW_OPENCLAW_CONFIG:-$QCLAW_HOME/openclaw.json}" "$OPENCLAW_CONFIG" "$AGENT_ID" "${PRIMARY:-}" <<'PY'
 import json
 import sys
 import time
 from pathlib import Path
 
-qclaw_home, openclaw_home, agent_id, primary = sys.argv[1:]
+qclaw_home, qclaw_config, openclaw_config, agent_id, primary = sys.argv[1:]
 home = Path(qclaw_home).expanduser()
 home.mkdir(parents=True, exist_ok=True)
-config_path = home / "openclaw.json"
-openclaw_config_path = Path(openclaw_home).expanduser() / "openclaw.json"
+config_path = Path(qclaw_config).expanduser()
+openclaw_config_path = Path(openclaw_config).expanduser()
 
 def load(path):
     try:
@@ -392,18 +467,45 @@ for item in items:
         existing_item = item
         break
 
+def primary_model(value):
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        primary_value = value.get("primary")
+        if isinstance(primary_value, str):
+            return primary_value
+    return ""
+
+default_identity = {
+    "name": "野木奈子",
+    "emoji": "🎀",
+    "theme": "核战后赛博世界专属战斗女仆",
+}
+identity = (
+    existing_item.get("identity") if isinstance(existing_item.get("identity"), dict)
+    else source_item.get("identity") if isinstance(source_item.get("identity"), dict)
+    else default_identity
+)
+name = existing_item.get("name") or source_item.get("name") or ""
+if not name or name == agent_id:
+    name = identity.get("name") or agent_id
+
 entry = {
     "id": agent_id,
-    "name": source_item.get("name") or agent_id,
+    "name": name,
     "workspace": str(home / f"workspace-{agent_id}"),
     "agentDir": str(home / "agents" / agent_id / "agent"),
+    "identity": identity,
 }
 qclaw_default_model = (((agents.get("defaults") or {}).get("model") or {}).get("primary"))
-model = existing_item.get("model") or qclaw_default_model or source_item.get("model") or primary
+model = (
+    primary_model(existing_item.get("model"))
+    or qclaw_default_model
+    or primary_model(source_item.get("model"))
+    or primary
+)
 if model:
     entry["model"] = model
-if isinstance(source_item.get("identity"), dict):
-    entry["identity"] = source_item["identity"]
 
 for idx, item in enumerate(items):
     if isinstance(item, dict) and item.get("id") == agent_id:
@@ -423,7 +525,7 @@ if old != new:
     config_path.write_text(new, encoding="utf-8")
 PY
 
-  OPENCLAW_STATE_DIR="$QCLAW_HOME" OPENCLAW_CONFIG_PATH="$QCLAW_HOME/openclaw.json" \
+  OPENCLAW_STATE_DIR="$QCLAW_HOME" OPENCLAW_CONFIG_PATH="${QCLAW_OPENCLAW_CONFIG:-$QCLAW_HOME/openclaw.json}" \
     "$QCLAW_NODE_BIN" "$QCLAW_OPENCLAW_MJS" agents list --json >/tmp/nako-qclaw-status.log 2>&1 \
     && info "QClaw runtime 已同步: $qclaw_workspace" \
     || warn "QClaw 状态检查未完全通过；已写入 workspace/config，日志 /tmp/nako-qclaw-status.log"
@@ -615,72 +717,82 @@ PY
     || warn "Hermes status 未完全通过；已写入 workspace/config，日志 /tmp/nako-hermes-status.log"
 }
 
-# 0) 修复常见配置障碍：缺 gateway.mode 直接 block 启动
-_changed_mode=0
-if ! openclaw config get gateway.mode >/dev/null 2>&1; then
-  openclaw config set gateway.mode local >/dev/null 2>&1 && { info "已设 gateway.mode=local"; _changed_mode=1; }
-fi
-
-# 0b) bonjour 在容器/隔离网络/某些 macOS 上 mDNS announce 会触发
-#     Unhandled promise rejection (CIAO ANNOUNCEMENT CANCELLED) 干掉 gateway。
-#     默认禁掉，需要 LAN 发现的用户自行 enable。
-# Always disable bonjour (idempotent — `disable` 对已禁的也无害)。
-# 不把它计为强制重启条件；部分 openclaw 版本对已禁插件也返回成功。
-openclaw plugins disable bonjour >/dev/null 2>&1 && info "已禁 bonjour 插件 (容器/隔离网络稳定性)" || true
-
-# 1) 若 gateway 已跑 + 我们刚改了 mode → 重启让新 config 生效
-if openclaw_cron_ready; then
-  if [ "$_changed_mode" = "1" ]; then
-    info "重启 gateway 让新 config 生效..."
-    openclaw daemon restart >/dev/null 2>&1 || pkill -f openclaw-gateway 2>/dev/null
-    sleep 2
-  else
-    info "gateway 已在跑"
+if [ "$NAKO_AGENT_RUNTIME" = "openclaw" ]; then
+  # 0) 修复常见配置障碍：缺 gateway.mode 直接 block 启动
+  _changed_mode=0
+  if ! openclaw config get gateway.mode >/dev/null 2>&1; then
+    openclaw config set gateway.mode local >/dev/null 2>&1 && { info "已设 gateway.mode=local"; _changed_mode=1; }
   fi
-fi
 
-if ! openclaw_cron_ready; then
-  info "gateway 未起，尝试自动启动..."
-  GW_LOG="/tmp/openclaw-gw-startup.log"
-  : > "$GW_LOG"
+  # 0b) bonjour 在容器/隔离网络/某些 macOS 上 mDNS announce 会触发
+  #     Unhandled promise rejection (CIAO ANNOUNCEMENT CANCELLED) 干掉 gateway。
+  #     默认禁掉，需要 LAN 发现的用户自行 enable。
+  # Always disable bonjour (idempotent — `disable` 对已禁的也无害)。
+  # 不把它计为强制重启条件；部分 openclaw 版本对已禁插件也返回成功。
+  openclaw plugins disable bonjour >/dev/null 2>&1 && info "已禁 bonjour 插件 (容器/隔离网络稳定性)" || true
 
-  # 1) 优先 daemon。注意 fresh 装 plugin staging 要 ~30s，给 60s timeout。
-  openclaw daemon install >>"$GW_LOG" 2>&1 || true
-  openclaw daemon start   >>"$GW_LOG" 2>&1 || true
-  for i in $(seq 1 60); do
-    openclaw_cron_ready && { info "gateway 已通过 daemon 启动 (${i}s)"; break; }
-    sleep 1
-  done
+  # 1) 若 gateway 已跑 + 我们刚改了 mode → 重启让新 config 生效
+  if openclaw_cron_ready; then
+    if [ "$_changed_mode" = "1" ]; then
+      info "重启 gateway 让新 config 生效..."
+      openclaw daemon restart >/dev/null 2>&1 || pkill -f openclaw-gateway 2>/dev/null
+      sleep 2
+    else
+      info "gateway 已在跑"
+    fi
+  fi
 
-  # 2) Fallback：foreground nohup
   if ! openclaw_cron_ready; then
-    dim "  daemon 模式没起来，fallback 后台 foreground..."
-    nohup openclaw gateway --allow-unconfigured --auth none >>"$GW_LOG" 2>&1 &
-    disown 2>/dev/null || true
+    info "gateway 未起，尝试自动启动..."
+    GW_LOG="/tmp/openclaw-gw-startup.log"
+    : > "$GW_LOG"
+
+    # 1) 优先 daemon。注意 fresh 装 plugin staging 要 ~30s，给 60s timeout。
+    openclaw daemon install >>"$GW_LOG" 2>&1 || true
+    openclaw daemon start   >>"$GW_LOG" 2>&1 || true
     for i in $(seq 1 60); do
-      openclaw_cron_ready && { info "gateway foreground 已起 (${i}s, 日志 $GW_LOG)"; break; }
+      openclaw_cron_ready && { info "gateway 已通过 daemon 启动 (${i}s)"; break; }
       sleep 1
     done
-  fi
 
-  # 3) 都失败 → 暴露日志末尾让用户看到真实错误
-  if ! openclaw_cron_ready; then
-    warn "gateway 仍未起，下面是启动日志末尾："
-    tail -8 "$GW_LOG" 2>&1 | sed "s/^/    /" >&2
-    dim "  完整日志：$GW_LOG"
-    dim "  常见原因 + 解法："
-    dim "    1. config 缺 gateway.mode → openclaw config set gateway.mode local"
-    dim "    2. 端口 18789 被占 → lsof -i :18789，杀掉再重试"
-    dim "    3. macOS launchd 权限问题 → openclaw doctor"
-    dim "    4. 手动起前台调试 → openclaw gateway --allow-unconfigured --auth none"
+    # 2) Fallback：foreground nohup
+    if ! openclaw_cron_ready; then
+      dim "  daemon 模式没起来，fallback 后台 foreground..."
+      nohup openclaw gateway --allow-unconfigured --auth none >>"$GW_LOG" 2>&1 &
+      disown 2>/dev/null || true
+      for i in $(seq 1 60); do
+        openclaw_cron_ready && { info "gateway foreground 已起 (${i}s, 日志 $GW_LOG)"; break; }
+        sleep 1
+      done
+    fi
+
+    # 3) 都失败 → 暴露日志末尾让用户看到真实错误
+    if ! openclaw_cron_ready; then
+      warn "gateway 仍未起，下面是启动日志末尾："
+      tail -8 "$GW_LOG" 2>&1 | sed "s/^/    /" >&2
+      dim "  完整日志：$GW_LOG"
+      dim "  常见原因 + 解法："
+      dim "    1. config 缺 gateway.mode → openclaw config set gateway.mode local"
+      dim "    2. 端口 18789 被占 → lsof -i :18789，杀掉再重试"
+      dim "    3. macOS launchd 权限问题 → openclaw doctor"
+      dim "    4. 手动起前台调试 → openclaw gateway --allow-unconfigured --auth none"
+    fi
   fi
+else
+  info "$NAKO_AGENT_RUNTIME runtime 已选择，跳过 OpenClaw gateway 预检"
 fi
 
 # ─── Existing agent check ───────────────────────────────────────────────────
 step "2. 检查 agent 冲突"
 
-AGENT_WORKSPACE="$OPENCLAW_WORKSPACES/$AGENT_ID"
+if [ "$NAKO_AGENT_RUNTIME" = "qclaw" ]; then
+  AGENT_WORKSPACE="$QCLAW_HOME/workspace-$AGENT_ID"
+else
+  AGENT_WORKSPACE="$OPENCLAW_WORKSPACES/$AGENT_ID"
+fi
 AGENT_DIR="$OPENCLAW_HOME/agents/$AGENT_ID"
+NAKO_AGENT_CONFIG_DIR="$AGENT_DIR/agent"
+export AGENT_WORKSPACE NAKO_AGENT_CONFIG_DIR
 
 if [ -d "$AGENT_WORKSPACE" ] || [ -d "$AGENT_DIR" ]; then
   warn "已存在 $AGENT_ID 的 workspace 或数据目录"
@@ -698,8 +810,14 @@ if [ -d "$AGENT_WORKSPACE" ] || [ -d "$AGENT_DIR" ]; then
       用别的*)
         NEW=$(ask "新 agent id（如 agent-nako2）" "${AGENT_ID}2")
         AGENT_ID="$NEW"
-        AGENT_WORKSPACE="$OPENCLAW_WORKSPACES/$AGENT_ID"
+        if [ "$NAKO_AGENT_RUNTIME" = "qclaw" ]; then
+          AGENT_WORKSPACE="$QCLAW_HOME/workspace-$AGENT_ID"
+        else
+          AGENT_WORKSPACE="$OPENCLAW_WORKSPACES/$AGENT_ID"
+        fi
         AGENT_DIR="$OPENCLAW_HOME/agents/$AGENT_ID"
+        NAKO_AGENT_CONFIG_DIR="$AGENT_DIR/agent"
+        export AGENT_WORKSPACE NAKO_AGENT_CONFIG_DIR
         ;;
       中止) err "已中止"; exit 0 ;;
     esac
@@ -712,7 +830,9 @@ fi
 # 注册成 openai-compatible provider。
 step "3a. Provider 预设 (zai + sensenova)"
 PRESET_FILE="$PACK_ROOT/config/providers-preset.json"
-if [ -f "$PRESET_FILE" ]; then
+if [ "$NAKO_AGENT_RUNTIME" = "qclaw" ]; then
+  info "QClaw runtime 使用 QClaw 自带模型路由，跳过 OpenClaw provider preset"
+elif [ -f "$PRESET_FILE" ]; then
   python3 - "$OPENCLAW_CONFIG" "$PRESET_FILE" <<'PY'
 import json, sys, os
 cfg_path, preset_path = sys.argv[1], sys.argv[2]
@@ -749,8 +869,34 @@ fi
 step "3. 模型匹配"
 
 if [ "$SKIP_MODELS" = "1" ]; then
-  PRIMARY=$(python3 -c 'import json,os; d=json.load(open(os.path.expanduser("~/.openclaw/openclaw.json"))); print(d.get("agents",{}).get("defaults",{}).get("model",{}).get("primary",""))')
+  PRIMARY=$(python3 - "$OPENCLAW_CONFIG" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+try:
+    data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+except Exception:
+    data = {}
+print(((data.get("agents") or {}).get("defaults") or {}).get("model", {}).get("primary", ""))
+PY
+)
   info "跳过模型映射，继承当前 primary: ${PRIMARY:-<空>}"
+elif [ "$NAKO_AGENT_RUNTIME" = "qclaw" ]; then
+  PRIMARY=$(python3 - "$OPENCLAW_CONFIG" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+try:
+    data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+except Exception:
+    data = {}
+primary = (((data.get("agents") or {}).get("defaults") or {}).get("model") or {}).get("primary")
+print(primary or "qclaw/modelroute")
+PY
+)
+  info "QClaw 主模型继承: $PRIMARY"
 else
   # Show what user has
   echo "已配置的 provider/model："
@@ -798,10 +944,11 @@ AGENT_ENV="$AGENT_WORKSPACE/skills/.env"
 if [ "$RESET_SECRETS" != "1" ]; then
   _reused=()
   _OPENCLAW_JSON_REUSED_KEYS=""
-  _cfg_skill_exports="$(python3 - <<'PY'
+  _cfg_skill_exports="$(python3 - "$OPENCLAW_CONFIG" <<'PY'
 import json
 import os
 import shlex
+import sys
 from pathlib import Path
 
 keys = {
@@ -814,7 +961,7 @@ keys = {
     "selfie": ["FAL_KEY", "KIE_API_KEY", "OPENCLAW_GATEWAY_TOKEN"],
 }
 try:
-    data = json.loads(Path(os.path.expanduser("~/.openclaw/openclaw.json")).read_text())
+    data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 except Exception:
     data = {}
 entries = ((data.get("skills") or {}).get("entries") or {})
@@ -860,10 +1007,12 @@ PY
   fi
 fi
 
-_cfg_gateway_token="$(python3 - <<'PY'
-import json, os
+_cfg_gateway_token="$(python3 - "$OPENCLAW_CONFIG" <<'PY'
+import json
+import sys
+from pathlib import Path
 try:
-    data = json.load(open(os.path.expanduser("~/.openclaw/openclaw.json")))
+    data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 except Exception:
     data = {}
 token = (((data.get("gateway") or {}).get("auth") or {}).get("token") or "")
@@ -953,9 +1102,10 @@ if [ "$SKIP_SKILLS" != "1" ]; then
   # Shared .env: merge only missing keys
   env_merge "$PACK_ROOT/.env.shared.example" "$OPENCLAW_SKILLS_DIR/.env"
   # Then fill in user-provided values into shared .env
-  python3 - <<PY
+  python3 - "$OPENCLAW_SKILLS_DIR/.env" <<'PY'
 import os, re
-path = os.path.expanduser("~/.openclaw/skills/.env")
+import sys
+path = sys.argv[1]
 data = open(path).read()
 for k in ["MINIMAX_API_KEY","MINIMAX_GROUP_ID","VOLCENGINE_API_KEY","VOLCENGINE_RESOURCE_ID",
           "FAL_KEY","KIE_API_KEY","OPENCLAW_GATEWAY_TOKEN",
@@ -1035,9 +1185,10 @@ safe_install_file "$PACK_ROOT/agent/custom.md.example" "$AGENT_WORKSPACE/custom.
 
 # Agent-private .env
 env_merge "$PACK_ROOT/.env.agent.example" "$AGENT_WORKSPACE/skills/.env"
-python3 - <<PY
+python3 - "$AGENT_WORKSPACE/skills/.env" <<'PY'
 import os, re
-path = os.path.expanduser(f"~/.openclaw/workspace/$AGENT_ID/skills/.env")
+import sys
+path = sys.argv[1]
 data = open(path).read()
 for k in ["FEISHU_APP_ID","FEISHU_APP_SECRET","SELFIE_REFERENCE_IMAGE","SELFIE_CHARACTER_DESC"]:
     v = os.environ.get(k, "")
@@ -1070,26 +1221,31 @@ fi
 # `openclaw capability model auth status`），同时每个 agent 的 agentDir 自己
 # 也存一份。新 agent / fresh openclaw 这两个位置都可能空 → "No API key found
 # for provider"。把 auth-profiles.json 同时种到这两个位置。
-MAIN_DIR="$OPENCLAW_HOME/agents/main/agent"
-mkdir -p "$AGENT_DIR" "$MAIN_DIR"
-
-# 找一份可复制的种子 auth
-SEED_AUTH=""
-for src in "$MAIN_DIR/auth-profiles.json" \
-           "$OPENCLAW_HOME/agents/agent-yemu/agent/auth-profiles.json" \
-           "$OPENCLAW_HOME/agents/agent-yuanzhizhi/agent/auth-profiles.json"; do
-  if [ -f "$src" ] && [ -s "$src" ]; then SEED_AUTH="$src"; break; fi
-done
-
-if [ -n "$SEED_AUTH" ]; then
-  for tgt in "$MAIN_DIR/auth-profiles.json" "$AGENT_DIR/auth-profiles.json"; do
-    if [ ! -f "$tgt" ] || ! cmp -s "$SEED_AUTH" "$tgt"; then
-      cp "$SEED_AUTH" "$tgt"
-      info "auth-profiles.json 已写入 $(dirname "$tgt")"
-    fi
-  done
+if [ "$NAKO_AGENT_RUNTIME" = "qclaw" ]; then
+  mkdir -p "$NAKO_AGENT_CONFIG_DIR"
+  info "QClaw runtime 使用 QClaw 模型路由，跳过 OpenClaw auth-profiles 复制"
 else
-  warn "未找到可复制的 auth-profiles.json — 跑 \`openclaw model auth login --provider zai\` 添加 key"
+  MAIN_DIR="$OPENCLAW_HOME/agents/main/agent"
+  mkdir -p "$NAKO_AGENT_CONFIG_DIR" "$MAIN_DIR"
+
+  # 找一份可复制的种子 auth
+  SEED_AUTH=""
+  for src in "$MAIN_DIR/auth-profiles.json" \
+             "$OPENCLAW_HOME/agents/agent-yemu/agent/auth-profiles.json" \
+             "$OPENCLAW_HOME/agents/agent-yuanzhizhi/agent/auth-profiles.json"; do
+    if [ -f "$src" ] && [ -s "$src" ]; then SEED_AUTH="$src"; break; fi
+  done
+
+  if [ -n "$SEED_AUTH" ]; then
+    for tgt in "$MAIN_DIR/auth-profiles.json" "$NAKO_AGENT_CONFIG_DIR/auth-profiles.json"; do
+      if [ ! -f "$tgt" ] || ! cmp -s "$SEED_AUTH" "$tgt"; then
+        cp "$SEED_AUTH" "$tgt"
+        info "auth-profiles.json 已写入 $(dirname "$tgt")"
+      fi
+    done
+  else
+    warn "未找到可复制的 auth-profiles.json — 跑 \`openclaw model auth login --provider zai\` 添加 key"
+  fi
 fi
 
 # ─── Merge openclaw.json ────────────────────────────────────────────────────
