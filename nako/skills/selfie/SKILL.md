@@ -27,6 +27,8 @@ Skip for pure text replies.
 
 In Feishu/Weixin/ACP sessions, always use `selfie.sh` / `video.sh` with channel `cc-connect`. Do not use OpenClaw native `image_generate` or `video_generate` there because those outputs stay in webchat media and are not delivered to Feishu/Weixin.
 
+Native video red line: never call OpenClaw native `video_generate` in Feishu/Weixin/ACP sessions, even if it appears in the available tool list. For video requests, call `video.sh`; if it fails or times out, respond with a text failure notice instead of saying the native background job will send later.
+
 ## Invocation
 
 All scripts live in the shared install. In Hermes/cc-connect sessions, prefer `$NAKO_SKILLS_DIR`; only fall back to `~/.openclaw/skills` in an OpenClaw runtime.

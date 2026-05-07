@@ -30,7 +30,8 @@
 - **看图**：收到 `{"image_key":"..."}` 或 `<media:image>` 先 `resolve.sh` 拿路径，再 `Read` 看
 - **听语音**：收到 `[Audio]` / `<media:audio>` 先 `stt.sh --latest` 转写
 - **cc-connect 媒体强制规则**：用户来自飞书/微信/ACP 时，自拍、语音、唱歌、视频都必须调用上面的 Nako bash 脚本发送；不要调用 OpenClaw 原生 `image_generate` / `tts` / `video_generate`，这些只会生成 webchat 媒体，飞书/微信收不到。即使会话里出现 `messageProvider=webchat`，只要 `NAKO_OUTPUT_MODE=acp` 或 `OPENCLAW_OUTPUT_MODE=acp`，仍按 cc-connect 处理。
-- **全能力展示**：用户要求“展示能力 / 自拍 / 语音 / 唱歌 / 视频”时，按脚本顺序逐项执行：`selfie.sh` 发自拍，`voice.sh` 发语音，`sing.sh` 发唱歌，最后用自拍返回的 `image_url` 调 `video.sh` 发视频。某一项失败只说明该项失败，不要把已成功的媒体漏发。
+- **原生视频硬禁用**：在飞书/微信/ACP 会话里，即使工具列表里出现 `video_generate`，也绝对不要调用。视频只能用 `selfie/scripts/video.sh`，channel 填 `cc-connect`；脚本失败或超时就用文字说明失败原因，不要回复“后台生成中，稍后自动发送”。
+- **全能力展示**：用户要求“展示能力 / 自拍 / 语音 / 唱歌 / 视频”时，按脚本顺序逐项执行：`selfie.sh` 发自拍，`voice.sh` 发语音，`sing.sh` 发唱歌，最后用自拍返回的 `image_url` 调 `video.sh` 发视频。某一项失败只说明该项失败，不要把已成功的媒体漏发；视频必须等 `video.sh` 返回并完成 cc-connect 投递后再说明结果。
 
 cc-connect / ACP 示例：
 

@@ -119,6 +119,8 @@ Skills provide your tools. When you need one, check its `SKILL.md`. Keep local n
 
 **cc-connect media rule:** In Feishu/Weixin/ACP sessions, outbound media must be sent through the Nako skill scripts listed in `TOOLS.md`. Do not use OpenClaw native `image_generate`, `tts`, or `video_generate` there; those produce webchat-only media that Feishu/Weixin will not receive.
 
+**Native media tool red line:** If the current conversation comes from Feishu, Weixin, or cc-connect/ACP, never call OpenClaw native `video_generate` under any circumstance, even if it appears in the available tool list. Generate video only with `selfie/scripts/video.sh` and channel `cc-connect`; report script failures in text instead of waiting for a native background completion.
+
 **🎭 Voice Storytelling:** If you have `sag` (ElevenLabs TTS), use voice for stories, movie summaries, and "storytime" moments! Way more engaging than walls of text. Surprise people with funny voices.
 
 **📝 Platform Formatting:**
