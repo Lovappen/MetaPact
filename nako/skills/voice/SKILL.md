@@ -1,12 +1,12 @@
 ---
 name: voice
-description: Send voice/song audio to Feishu — voice.sh does plain TTS (MiniMax or Volcengine); sing.sh generates a full song with melody via MiniMax music-2.6
+description: Send voice/song audio through the active Nako messaging channel — voice.sh does plain TTS (MiniMax or Volcengine); sing.sh generates a full song with melody via MiniMax music-2.6
 allowed-tools: Bash(curl:*) Bash(jq:*) Bash(xxd:*) Bash(base64:*) Bash(uuidgen:*) Bash(sleep:*) Bash(ffprobe:*) Bash(*/voice.sh:*) Bash(*/sing.sh:*) Bash(*/setup.sh:*) Read Write
 ---
 
 # Voice — 语音消息
 
-将文本转为语音，以飞书语音消息形式发送。支持 MiniMax 和火山引擎两个 TTS 引擎。
+将文本转为语音，并通过当前 Nako 消息通道发送。支持 MiniMax 和火山引擎两个 TTS 引擎。
 
 ## 何时使用
 
@@ -41,7 +41,7 @@ bash "${NAKO_SKILLS_DIR:-$HOME/.openclaw/skills}/voice/scripts/voice.sh" "<文�
 | 参数 | 必须 | 默认值 | 说明 |
 |------|------|--------|------|
 | text | 是 | — | 要合成的文本，建议 500 字以内 |
-| channel | 是 | — | 飞书 chat_id（`oc_xxx`）或 open_id（`ou_xxx`）；Hermes/cc-connect 会话可用 `feishu` 自动路由 |
+| channel | 是 | — | 飞书 chat_id（`oc_xxx`）或 open_id（`ou_xxx`）；Hermes/cc-connect/ACP 会话用 `cc-connect` 自动路由到当前活跃会话（`feishu` 只作为旧别名兼容） |
 | provider | 否 | auto | `minimax` / `volcengine` / `auto`（按 key 自动选择） |
 | voice_id | 否 | 按引擎默认 | 音色 ID，见下方音色表 |
 | speed | 否 | 1.0 | 语速倍率 0.5–2.0 |
@@ -57,7 +57,12 @@ bash "${NAKO_SKILLS_DIR:-$HOME/.openclaw/skills}/voice/scripts/voice.sh" "今天
 
 # 慢速温柔语音（适合晚安）
 bash "${NAKO_SKILLS_DIR:-$HOME/.openclaw/skills}/voice/scripts/voice.sh" "晚安，做个好梦哦……" "oc_xxx" minimax female-tianmei 0.85
+
+# Hermes / cc-connect 当前会话（飞书、微信等都走当前活跃会话）
+bash "${NAKO_SKILLS_DIR:-$HOME/.openclaw/skills}/voice/scripts/voice.sh" "主人大人，我在这里哦。" "cc-connect" auto female-tianmei 1.0
 ```
+
+微信/iLink 目前不支持外部 bot 主动发送原生语音气泡；微信通道会把 MP3 作为文件附件发送。
 
 ## TTS 引擎
 
@@ -100,7 +105,7 @@ bash "${NAKO_SKILLS_DIR:-$HOME/.openclaw/skills}/voice/scripts/sing.sh" "<歌词
 | 参数 | 必须 | 默认 | 说明 |
 |---|---|---|---|
 | lyrics | 是 | — | 歌词。支持段落标签 `[intro]` `[verse]` `[pre chorus]` `[chorus]` `[bridge]` `[outro]`，用 `\n` 换行 |
-| channel | 是 | — | chat_id (`oc_xxx`) 或 open_id (`ou_xxx`) |
+| channel | 是 | — | chat_id (`oc_xxx`) / open_id (`ou_xxx`)；Hermes/cc-connect/ACP 会话用 `cc-connect` 自动路由 |
 | style_prompt | 否 | `Indie pop, gentle, warm female vocal, acoustic guitar` | 风格描述：流派+情绪+乐器+人声性别 |
 | model | 否 | `music-2.6` | `music-2.6` 或 `music-2.6-free`（免费版配额有限） |
 

@@ -118,10 +118,27 @@ _infer_ccconnect_project() {
   return 1
 }
 
+_ccconnect_session_files() {
+  local project="$1"
+  local candidate dir file
+
+  for candidate in "${CC_CONNECT_SESSION_DIR:-}" \
+    "${CC_CONNECT_API_DATA_DIR:-}/sessions" "${CC_CONNECT_API_DATA_DIR:-}/.cc-connect/sessions" \
+    "${CC_CONNECT_DATA_DIR:-}/sessions" "${CC_CONNECT_DATA_DIR:-}/.cc-connect/sessions" \
+    "$HOME/.cc-connect/sessions" "$HOME/.cc-connect/.cc-connect/sessions"; do
+    [ -n "$candidate" ] || continue
+    dir="$candidate"
+    [ -d "$dir" ] || continue
+    for file in "$dir"/"$project"_*.json; do
+      [ -f "$file" ] || continue
+      printf '%s\n' "$file"
+    done
+  done | awk '!seen[$0]++'
+}
+
 _infer_ccconnect_session() {
   local project="$1"
-  local data_dir="${CC_CONNECT_DATA_DIR:-$HOME/.cc-connect}"
-  local session_file=""
+  local session_file="" line="" updated="" session="" best_session="" best_updated=""
 
   if [ -n "${NAKO_CCCONNECT_SESSION:-${OPENCLAW_CCCONNECT_SESSION:-}}" ]; then
     printf '%s\n' "${NAKO_CCCONNECT_SESSION:-${OPENCLAW_CCCONNECT_SESSION:-}}"
@@ -129,19 +146,31 @@ _infer_ccconnect_session() {
   fi
 
   [ -n "$project" ] || return 1
-  session_file="$(ls -t "$data_dir"/sessions/"$project"_*.json 2>/dev/null | head -1 || true)"
-  [ -n "$session_file" ] || return 1
+  while IFS= read -r session_file; do
+    [ -n "$session_file" ] || continue
+    line="$(jq -r '
+      (.active_session // {}) as $active
+      | (.sessions // {}) as $sessions
+      | $active
+      | to_entries
+      | map(. + {updated: ($sessions[.value].updated_at // $sessions[.value].created_at // "")})
+      | sort_by(.updated)
+      | last
+      | select(.key)
+      | "\(.updated)\t\(.key)"
+    ' "$session_file" 2>/dev/null | tail -1 || true)"
+    [ -n "$line" ] || continue
+    updated="${line%%$'\t'*}"
+    session="${line#*$'\t'}"
+    [ -n "$session" ] || continue
+    if [ -z "$best_session" ] || [ "$updated" \> "$best_updated" ]; then
+      best_updated="$updated"
+      best_session="$session"
+    fi
+  done < <(_ccconnect_session_files "$project")
 
-  jq -r '
-    (.active_session // {}) as $active
-    | (.sessions // {}) as $sessions
-    | $active
-    | to_entries
-    | map(. + {updated: ($sessions[.value].updated_at // $sessions[.value].created_at // "")})
-    | sort_by(.updated)
-    | last
-    | .key // empty
-  ' "$session_file" 2>/dev/null
+  [ -n "$best_session" ] || return 1
+  printf '%s\n' "$best_session"
 }
 
 _ccconnect_api_data_dir() {

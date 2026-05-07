@@ -36,7 +36,7 @@ bash "${NAKO_SKILLS_DIR:-$HOME/.openclaw/skills}/selfie/scripts/selfie.sh" "<pro
 | Arg | Required | Default | Notes |
 |-----|----------|---------|-------|
 | prompt | yes | — | Include `$SELFIE_CHARACTER_DESC` traits. |
-| channel | yes | — | Feishu `oc_*` / `ou_*` chat id, or `feishu` in Hermes/cc-connect sessions for auto-route. |
+| channel | yes | — | Feishu `oc_*` / `ou_*` chat id, or `cc-connect` in Hermes/cc-connect/ACP sessions for active-session routing (`feishu` remains a legacy alias). |
 | caption | no | `Generated with Grok Imagine` | |
 | aspect_ratio | no | `1:1` | |
 | format | no | `jpeg` | fal only |

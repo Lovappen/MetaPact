@@ -12,6 +12,18 @@ for script in "$ROOT/nako/skills/voice/scripts/voice.sh" "$ROOT/nako/skills/voic
   grep -Fq 'MP3 文件已保留' "$script"
 done
 
+for script in \
+  "$ROOT/nako/skills/voice/scripts/voice.sh" \
+  "$ROOT/nako/skills/voice/scripts/sing.sh" \
+  "$ROOT/nako/skills/selfie/scripts/selfie.sh" \
+  "$ROOT/nako/skills/selfie/scripts/video.sh"; do
+  grep -Fq '_ccconnect_session_files()' "$script"
+  grep -Fq 'CC_CONNECT_SESSION_DIR' "$script"
+  grep -Fq '$HOME/.cc-connect/.cc-connect/sessions' "$script"
+  grep -Fq 'done < <(_ccconnect_session_files "$project")' "$script"
+  grep -Fq 'best_session="$session"' "$script"
+done
+
 grep -Fq '需要语音/视频转码（ffmpeg）吗？现在安装' "$ROOT/install.sh"
 grep -Fq 'brew install ffmpeg' "$ROOT/install.sh"
 grep -Fq 'sudo apt-get install -y ffmpeg libavcodec-extra' "$ROOT/install.sh"
