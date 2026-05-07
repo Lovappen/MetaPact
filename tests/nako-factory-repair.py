@@ -87,6 +87,51 @@ model:
     persisted = json.loads((Path(tmp) / ".nako-jobs" / "agent-nako-9.json").read_text(encoding="utf-8"))
     assert persisted["model_info"]["provider"] == "zai"
     assert persisted["model_default"] == "glm-4.5-flash"
+    openclaw_config = Path(tmp) / ".openclaw" / "openclaw.json"
+    openclaw_config.parent.mkdir(parents=True, exist_ok=True)
+    openclaw_config.write_text(
+        json.dumps(
+            {
+                "models": {
+                    "providers": {
+                        "sensenova": {
+                            "baseUrl": "https://api.sensenova.cn/compatible-mode/v2",
+                            "api": "openai-completions",
+                        }
+                    }
+                },
+                "agents": {
+                    "defaults": {"model": {"primary": "zai/glm-4.7"}},
+                    "list": [
+                        {
+                            "id": "agent-nako-10",
+                            "workspace": str(Path(tmp) / ".openclaw" / "workspace" / "agent-nako-10"),
+                            "agentDir": str(Path(tmp) / ".openclaw" / "agents" / "agent-nako-10" / "agent"),
+                            "model": {"primary": "sensenova/SenseChat-Character-Agt"},
+                        }
+                    ],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    (Path(tmp) / ".openclaw" / "workspace" / "agent-nako-10").mkdir(parents=True, exist_ok=True)
+    (Path(tmp) / ".openclaw" / "agents" / "agent-nako-10" / "agent").mkdir(parents=True, exist_ok=True)
+    module.write_state(
+        10,
+        status="ready",
+        agent_id="agent-nako-10",
+        runtime="openclaw",
+        model_info={"runtime": "hermes", "provider": "zai"},
+        model_label="zai/glm-4.5-flash",
+    )
+    openclaw_payload = module.status_payload(10)
+    assert openclaw_payload["model_info"]["runtime"] == "openclaw"
+    assert openclaw_payload["model_label"] == "sensenova/SenseChat-Character-Agt"
+    assert openclaw_payload["model_source"] == str(openclaw_config)
+    persisted = json.loads((Path(tmp) / ".nako-jobs" / "agent-nako-10.json").read_text(encoding="utf-8"))
+    assert persisted["model_info"]["runtime"] == "openclaw"
+    assert persisted["model_label"] == "sensenova/SenseChat-Character-Agt"
 
     class Headers(dict):
         def get(self, name, default=None):
@@ -679,6 +724,84 @@ app_secret = "y"
         assert calls == [("forced", 2.0)]
     finally:
         module.schedule_cc_connect_restart = original_schedule
+
+    module.CC_CONFIG.write_text(
+        """language = "en"
+
+[[projects]]
+name = "agent-nako-empty"
+
+[projects.agent]
+type = "acp"
+
+[projects.agent.options]
+work_dir = "/tmp/openclaw"
+command = "openclaw"
+args = ["acp"]
+env = { NAKO_AGENT_RUNTIME = "openclaw" }
+""",
+        encoding="utf-8",
+    )
+    assert module.cc_project_names() == ["agent-nako-empty"]
+    assert not module.has_cc_projects()
+    assert module.cc_project_runtimes() == set()
+
+    run_calls = []
+
+    class FakeCompleted:
+        returncode = 0
+        stdout = ""
+
+    original_run = module.subprocess.run
+    original_popen = module.subprocess.Popen
+    original_stop_cc = module.stop_cc_connect
+    original_stop_openclaw = module.stop_openclaw_clients
+    original_socket_compat = module.ensure_cc_connect_api_socket_compat
+    try:
+        module.subprocess.run = lambda args, **kwargs: run_calls.append(args) or FakeCompleted()
+        module.subprocess.Popen = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("unexpected cc-connect fallback"))
+        module.stop_cc_connect = lambda: None
+        module.stop_openclaw_clients = lambda: []
+        module.ensure_cc_connect_api_socket_compat = lambda work_dir: False
+        module.start_cc_connect({}, "empty-project")
+    finally:
+        module.subprocess.run = original_run
+        module.subprocess.Popen = original_popen
+        module.stop_cc_connect = original_stop_cc
+        module.stop_openclaw_clients = original_stop_openclaw
+        module.ensure_cc_connect_api_socket_compat = original_socket_compat
+    assert any(Path(call[0]).name == "cc-connect" and call[1:3] == ["daemon", "stop"] for call in run_calls)
+    assert not any("install" in call for call in run_calls)
+    assert 'name = "agent-nako-empty"' in module.CC_CONFIG.read_text(encoding="utf-8")
+    assert "cc-connect start skipped: no project platforms configured" in (
+        Path(tmp) / ".cc-connect" / "cc-connect.log"
+    ).read_text(encoding="utf-8")
+
+    module.CC_CONFIG.write_text(
+        """language = "en"
+
+[[projects]]
+name = "agent-nako-ready"
+
+[projects.agent]
+type = "acp"
+
+[projects.agent.options]
+work_dir = "/tmp/openclaw"
+command = "openclaw"
+args = ["acp"]
+env = { NAKO_AGENT_RUNTIME = "openclaw" }
+
+[[projects.platforms]]
+type = "weixin"
+
+[projects.platforms.options]
+token = "token_x"
+""",
+        encoding="utf-8",
+    )
+    assert module.has_cc_projects()
+    assert module.cc_project_runtimes() == {"openclaw"}
 
     sessions_file = Path(tmp) / ".openclaw" / "agents" / "agent-nako-1" / "sessions" / "sessions.json"
     sessions_file.parent.mkdir(parents=True, exist_ok=True)

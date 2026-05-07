@@ -497,11 +497,53 @@ def hermes_model_info() -> dict:
     }
 
 
+def openclaw_model_info(aid: str) -> dict:
+    cfg_path = HOME / ".openclaw/openclaw.json"
+    if not cfg_path.exists():
+        return {}
+    try:
+        cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+    agents = cfg.get("agents") if isinstance(cfg.get("agents"), dict) else {}
+    primary = ""
+    for item in agents.get("list", []) or []:
+        if not isinstance(item, dict) or item.get("id") != aid:
+            continue
+        model = item.get("model") if isinstance(item.get("model"), dict) else {}
+        primary = model.get("primary") or ""
+        break
+    if not primary:
+        defaults = agents.get("defaults") if isinstance(agents.get("defaults"), dict) else {}
+        model = defaults.get("model") if isinstance(defaults.get("model"), dict) else {}
+        primary = model.get("primary") or ""
+    if not primary:
+        return {}
+
+    provider, _, model = primary.partition("/")
+    if not model:
+        provider, model = "", provider
+
+    providers = ((cfg.get("models") or {}).get("providers") or {}) if isinstance(cfg.get("models"), dict) else {}
+    provider_cfg = providers.get(provider) if provider else {}
+    provider_cfg = provider_cfg if isinstance(provider_cfg, dict) else {}
+    return {
+        "runtime": "openclaw",
+        "source": str(cfg_path),
+        "provider": provider,
+        "model": model,
+        "label": primary,
+        "base_url": provider_cfg.get("baseUrl") or provider_cfg.get("base_url") or "",
+        "api_mode": provider_cfg.get("api") or "",
+        "api_key_env": "",
+        "api_key_configured": False,
+    }
+
+
 def runtime_model_state_fields(aid: str, runtime: str) -> dict:
     runtime = normalize_runtime(runtime)
-    info = hermes_model_info() if runtime == "hermes" else {}
-    if not info:
-        return {}
+    info = hermes_model_info() if runtime == "hermes" else openclaw_model_info(aid) if runtime == "openclaw" else {}
     return {
         "model_info": info,
         "model_provider": info.get("provider") or "",
@@ -616,6 +658,10 @@ def cc_project_names(prefix: str = "agent-nako-") -> list:
         if name and (not prefix or name.startswith(prefix)):
             names.append(name)
     return names
+
+
+def cc_project_has_platforms(part: str) -> bool:
+    return re.search(r"(?m)^\[\[projects\.platforms\]\]\s*$", part) is not None
 
 
 def bound_platforms_for_agent(aid: str) -> set:
@@ -2033,7 +2079,7 @@ def start_cc_connect(env: dict, reason: str = ""):
         log = HOME / ".cc-connect/cc-connect.log"
         work_dir = HOME / ".cc-connect"
         log.parent.mkdir(parents=True, exist_ok=True)
-        removed = prune_empty_cc_projects()
+        removed = []
         repaired = repair_nako_cc_projects()
         normalized_global = normalize_cc_global_options()
         normalized = []
@@ -2044,6 +2090,7 @@ def start_cc_connect(env: dict, reason: str = ""):
             if sync_hermes_feishu_env_for_project(aid):
                 synced_hermes_feishu.append(aid)
         ensured_qclaw_sessions = ensure_qclaw_cc_sessions_for_projects()
+        startable = has_cc_projects()
         needs_gateway = has_openclaw_cc_projects()
         gateway_ok = ensure_openclaw_gateway(env) if needs_gateway else True
         approved_devices = approve_local_openclaw_device_repairs(env) if needs_gateway and gateway_ok else []
@@ -2075,6 +2122,9 @@ def start_cc_connect(env: dict, reason: str = ""):
                            stdout=f, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                            env=env, check=False)
             stop_cc_connect()
+            if not startable:
+                f.write(b"=== cc-connect start skipped: no project platforms configured ===\n")
+                return
             install_rc = subprocess.run(
                 [cc_bin, "daemon", "install", "--work-dir", str(work_dir), "--force"],
                 stdout=f, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
@@ -2129,7 +2179,10 @@ def has_cc_projects() -> bool:
         text = CC_CONFIG.read_text(encoding="utf-8")
     except Exception:
         return False
-    return re.search(r"(?m)^\[\[projects\]\]\s*$", text) is not None
+    for part in re.split(r"(?m)(?=^\[\[projects\]\]\s*$)", text):
+        if part.startswith("[[projects]]") and cc_project_has_platforms(part):
+            return True
+    return False
 
 
 def cc_project_runtimes() -> set:
@@ -2143,6 +2196,8 @@ def cc_project_runtimes() -> set:
     runtimes = set()
     for part in re.split(r"(?m)(?=^\[\[projects\]\]\s*$)", text):
         if not part.startswith("[[projects]]"):
+            continue
+        if not cc_project_has_platforms(part):
             continue
         if "[projects.agent]" not in part:
             continue

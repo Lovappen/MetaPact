@@ -1044,6 +1044,26 @@ print(len([p for p in re.split(r"(?m)(?=^\[\[projects\]\]\s*$)", text) if p.star
 PY
 }
 
+cc_connect_has_startable_projects() {
+  [ -f "$CC_CONFIG" ] || { printf 'no\n'; return 0; }
+  python3 - "$CC_CONFIG" <<'PY'
+import re
+import sys
+
+try:
+    text = open(sys.argv[1], encoding="utf-8").read()
+except Exception:
+    print("no")
+    raise SystemExit(0)
+
+for part in re.split(r"(?m)(?=^\[\[projects\]\]\s*$)", text):
+    if part.startswith("[[projects]]") and re.search(r"(?m)^\[\[projects\.platforms\]\]\s*$", part):
+        print("yes")
+        raise SystemExit(0)
+print("no")
+PY
+}
+
 remove_cc_connect_project() {
   [ -f "$CC_CONFIG" ] || return 1
   python3 - "$CC_CONFIG" "$AGENT_ID" <<'PY'
@@ -1520,6 +1540,13 @@ ensure_cc_connect_running() {
       fi
     fi
     CC_CONNECT_CHANGED=0
+  fi
+
+  if [ "$(cc_connect_has_startable_projects)" != "yes" ]; then
+    cc-connect daemon stop --work-dir "$HOME/.cc-connect" >/dev/null 2>&1 || true
+    stop_cc_connect_processes
+    dim "cc-connect 还没有平台绑定，跳过启动；扫码完成后 Nako Factory 会自动重启"
+    return 0
   fi
 
   if [ -n "$(cc_connect_running_pids)" ]; then
