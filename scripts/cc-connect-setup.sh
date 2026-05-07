@@ -1428,15 +1428,29 @@ elif runtime == "qclaw":
         "PATH": path_value,
         "OPENCLAW_OUTPUT_MODE": "acp",
         "OPENCLAW_CCCONNECT_PROJECT": agent_id,
+        "NAKO_OUTPUT_MODE": "acp",
+        "NAKO_CCCONNECT_PROJECT": agent_id,
+        "NAKO_AGENT_WORKSPACE": qclaw_workspace,
+        "NAKO_SKILLS_DIR": str(Path(qclaw_home) / "skills"),
+        "NAKO_MEDIA_HOME": str(Path(qclaw_home) / "media"),
         "NAKO_AGENT_RUNTIME": "qclaw",
     }
 else:
     command = "openclaw"
     work_dir = str(Path(home) / ".openclaw")
     args = ["acp", "--session", f"agent:{agent_id}:main"]
+    openclaw_home = str(Path(home) / ".openclaw")
     env = {
+        "HOME": home,
+        "OPENCLAW_HOME": openclaw_home,
+        "PATH": path_value,
         "OPENCLAW_OUTPUT_MODE": "acp",
         "OPENCLAW_CCCONNECT_PROJECT": agent_id,
+        "NAKO_OUTPUT_MODE": "acp",
+        "NAKO_CCCONNECT_PROJECT": agent_id,
+        "NAKO_AGENT_WORKSPACE": openclaw_workspace,
+        "NAKO_SKILLS_DIR": str(Path(openclaw_home) / "skills"),
+        "NAKO_MEDIA_HOME": str(Path(openclaw_home) / "media"),
         "NAKO_AGENT_RUNTIME": "openclaw",
     }
 

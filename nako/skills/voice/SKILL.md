@@ -19,6 +19,8 @@ allowed-tools: Bash(curl:*) Bash(jq:*) Bash(xxd:*) Bash(base64:*) Bash(uuidgen:*
 
 **不要用于**：普通文字对话、技术说明、超长文本（>500 字请分段）
 
+在飞书/微信/ACP 会话里，语音和唱歌必须用 `voice.sh` / `sing.sh` 且 channel 填 `cc-connect`。不要调用 OpenClaw 原生 `tts`，那只会生成 webchat 媒体，飞书/微信收不到。
+
 ## 说话 vs 唱歌：选对脚本
 
 | 场景 | 用 | 说明 |

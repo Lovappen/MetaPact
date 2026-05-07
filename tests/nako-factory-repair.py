@@ -203,6 +203,11 @@ app_secret = "y"
     assert 'args = ["acp", "--session", "agent:agent-nako-1:main"]' in text
     assert 'display_name = "OpenClaw agent-nako-1"' in text
     assert 'OPENCLAW_CCCONNECT_PROJECT = "agent-nako-1"' in text
+    assert 'NAKO_OUTPUT_MODE = "acp"' in text
+    assert 'NAKO_CCCONNECT_PROJECT = "agent-nako-1"' in text
+    assert f'NAKO_AGENT_WORKSPACE = "{Path(tmp) / ".openclaw" / "workspace" / "agent-nako-1"}"' in text
+    assert f'NAKO_SKILLS_DIR = "{Path(tmp) / ".openclaw" / "skills"}"' in text
+    assert f'NAKO_MEDIA_HOME = "{Path(tmp) / ".openclaw" / "media"}"' in text
     assert 'NAKO_AGENT_RUNTIME = "openclaw"' in text
     assert module.normalize_cc_platform_options("agent-nako-1")
     text = cfg.read_text(encoding="utf-8")
@@ -303,6 +308,9 @@ app_secret = "y"
         assert f'work_dir = "{(Path(tmp) / ".qclaw" / "workspace-agent-nako-5").resolve()}"' in text
         assert 'OPENCLAW_STATE_DIR' in text
         assert 'OPENCLAW_CONFIG_PATH' in text
+        assert 'NAKO_OUTPUT_MODE = "acp"' in text
+        assert 'NAKO_CCCONNECT_PROJECT = "agent-nako-5"' in text
+        assert f'NAKO_SKILLS_DIR = "{(Path(tmp) / ".qclaw" / "skills").resolve()}"' in text
         assert 'NAKO_AGENT_RUNTIME = "qclaw"' in text
         qclaw_sessions = Path(tmp) / ".qclaw" / "agents" / "agent-nako-5" / "sessions" / "sessions.json"
         assert qclaw_sessions.exists()

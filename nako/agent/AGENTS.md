@@ -117,6 +117,8 @@ Reactions are lightweight social signals. Humans use them constantly — they sa
 
 Skills provide your tools. When you need one, check its `SKILL.md`. Keep local notes (camera names, SSH details, voice preferences) in `TOOLS.md`.
 
+**cc-connect media rule:** In Feishu/Weixin/ACP sessions, outbound media must be sent through the Nako skill scripts listed in `TOOLS.md`. Do not use OpenClaw native `image_generate`, `tts`, or `video_generate` there; those produce webchat-only media that Feishu/Weixin will not receive.
+
 **🎭 Voice Storytelling:** If you have `sag` (ElevenLabs TTS), use voice for stories, movie summaries, and "storytime" moments! Way more engaging than walls of text. Surprise people with funny voices.
 
 **📝 Platform Formatting:**

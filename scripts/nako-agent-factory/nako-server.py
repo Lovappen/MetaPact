@@ -293,6 +293,10 @@ def hermes_workspace(aid: str) -> Path:
     return hermes_home() / "workspace" / aid
 
 
+def openclaw_workspace(aid: str) -> Path:
+    return HOME / ".openclaw" / "workspace" / aid
+
+
 def hermes_command(env: dict = None) -> str:
     configured = os.environ.get("HERMES_BIN")
     if configured:
@@ -1709,6 +1713,11 @@ def cc_agent_options_for_runtime(name: str, runtime: str, env: dict = None) -> d
             "PATH": env.get("PATH", ""),
             "OPENCLAW_OUTPUT_MODE": "acp",
             "OPENCLAW_CCCONNECT_PROJECT": name,
+            "NAKO_OUTPUT_MODE": "acp",
+            "NAKO_CCCONNECT_PROJECT": name,
+            "NAKO_AGENT_WORKSPACE": str(qclaw_workspace(name)),
+            "NAKO_SKILLS_DIR": str(qhome / "skills"),
+            "NAKO_MEDIA_HOME": str(qhome / "media"),
             "NAKO_AGENT_RUNTIME": "qclaw",
         }
         return {
@@ -1719,14 +1728,23 @@ def cc_agent_options_for_runtime(name: str, runtime: str, env: dict = None) -> d
             "env": qclaw_env,
         }
 
+    ohome = HOME / ".openclaw"
     return {
-        "work_dir": str(HOME / ".openclaw"),
+        "work_dir": str(ohome),
         "command": "openclaw",
         "args": ["acp", "--session", f"agent:{name}:main"],
         "display_name": f"OpenClaw {name}",
         "env": {
+            "HOME": str(HOME),
+            "OPENCLAW_HOME": str(ohome),
+            "PATH": env.get("PATH", ""),
             "OPENCLAW_OUTPUT_MODE": "acp",
             "OPENCLAW_CCCONNECT_PROJECT": name,
+            "NAKO_OUTPUT_MODE": "acp",
+            "NAKO_CCCONNECT_PROJECT": name,
+            "NAKO_AGENT_WORKSPACE": str(openclaw_workspace(name)),
+            "NAKO_SKILLS_DIR": str(ohome / "skills"),
+            "NAKO_MEDIA_HOME": str(ohome / "media"),
             "NAKO_AGENT_RUNTIME": "openclaw",
         },
     }

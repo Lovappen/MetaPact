@@ -29,6 +29,17 @@
 - **说话 vs 唱歌**：纯朗读用 `voice.sh`（快、稳）；用户要求唱歌/写歌用 `sing.sh`（MiniMax music-2.6，10–60 秒）
 - **看图**：收到 `{"image_key":"..."}` 或 `<media:image>` 先 `resolve.sh` 拿路径，再 `Read` 看
 - **听语音**：收到 `[Audio]` / `<media:audio>` 先 `stt.sh --latest` 转写
+- **cc-connect 媒体强制规则**：用户来自飞书/微信/ACP 时，自拍、语音、唱歌、视频都必须调用上面的 Nako bash 脚本发送；不要调用 OpenClaw 原生 `image_generate` / `tts` / `video_generate`，这些只会生成 webchat 媒体，飞书/微信收不到。即使会话里出现 `messageProvider=webchat`，只要 `NAKO_OUTPUT_MODE=acp` 或 `OPENCLAW_OUTPUT_MODE=acp`，仍按 cc-connect 处理。
+- **全能力展示**：用户要求“展示能力 / 自拍 / 语音 / 唱歌 / 视频”时，按脚本顺序逐项执行：`selfie.sh` 发自拍，`voice.sh` 发语音，`sing.sh` 发唱歌，最后用自拍返回的 `image_url` 调 `video.sh` 发视频。某一项失败只说明该项失败，不要把已成功的媒体漏发。
+
+cc-connect / ACP 示例：
+
+```bash
+NAKO_OUTPUT_MODE=acp bash "${NAKO_SKILLS_DIR:-$HOME/.openclaw/skills}/selfie/scripts/selfie.sh" "<自拍英文 prompt>" "cc-connect" "<caption>" "3:4"
+NAKO_OUTPUT_MODE=acp bash "${NAKO_SKILLS_DIR:-$HOME/.openclaw/skills}/voice/scripts/voice.sh" "<要说的话>" "cc-connect" auto female-tianmei 1.0
+NAKO_OUTPUT_MODE=acp bash "${NAKO_SKILLS_DIR:-$HOME/.openclaw/skills}/voice/scripts/sing.sh" "<歌词>" "cc-connect" "<English music style>"
+NAKO_OUTPUT_MODE=acp bash "${NAKO_SKILLS_DIR:-$HOME/.openclaw/skills}/selfie/scripts/video.sh" "<selfie.sh 返回的 image_url 或本地图片路径>" "<English motion prompt>" "cc-connect" "<caption>"
+```
 
 ## 输出模式（重要）
 
@@ -36,8 +47,8 @@ skill 脚本支持两种产物投递方式，由环境变量 `NAKO_OUTPUT_MODE`�
 
 - **`feishu`（OpenClaw 原生直连飞书）**：脚本生成文件后自己上传到飞书并 send。需要 `FEISHU_APP_ID/SECRET` + `<channel>` 是真实飞书 chat_id。
 - **`acp`（cc-connect / 多平台 host 接管）**：脚本生成文件后交给 host 按当前会话投递。Hermes/cc-connect 飞书绑定的 App ID 在 `~/.cc-connect/config.toml`，不要仅凭 `<workspace>/skills/.env` 里的 `FEISHU_APP_ID` 判断缺失。
-  - 此时 `<channel>` 可填 `feishu` 或 `acp`，脚本会自动使用当前 cc-connect 飞书会话。
-  - **agent 收到这类 JSON 后，把 `path` 直接在回复正文里以 `[文件: /tmp/xx.png]` 这种格式贴出来**，host 会拦截并替换成原生附件。
+  - 此时 `<channel>` 优先填 `cc-connect`，也兼容 `acp` / `feishu` 旧别名；脚本会自动使用当前 cc-connect 活跃会话。
+  - 脚本会优先直接调用 `cc-connect send` 投递附件；收到 JSON 后只需简短说明结果，不要再改用 OpenClaw 原生媒体工具补发。
 
 ## 环境
 

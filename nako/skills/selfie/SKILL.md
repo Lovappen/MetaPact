@@ -25,6 +25,8 @@ Trigger on: `"发张照片"` / `"自拍一张"` / `"send a pic"` / `"show me wha
 
 Skip for pure text replies.
 
+In Feishu/Weixin/ACP sessions, always use `selfie.sh` / `video.sh` with channel `cc-connect`. Do not use OpenClaw native `image_generate` or `video_generate` there because those outputs stay in webchat media and are not delivered to Feishu/Weixin.
+
 ## Invocation
 
 All scripts live in the shared install. In Hermes/cc-connect sessions, prefer `$NAKO_SKILLS_DIR`; only fall back to `~/.openclaw/skills` in an OpenClaw runtime.
