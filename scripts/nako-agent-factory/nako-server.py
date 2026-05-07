@@ -46,9 +46,10 @@ LOG_TAIL_BYTES = int(os.environ.get("NAKO_LOG_TAIL_BYTES", "30000"))
 JOB_DIR.mkdir(exist_ok=True)
 QR_PLATFORMS = ("feishu", "weixin")
 RUNTIMES = ("openclaw", "hermes", "qclaw")
+FACTORY_BINDING_RUNTIMES = ("openclaw", "hermes")
 QCLAW_CC_SESSION_SUFFIX = "session-cc-connect"
 DEFAULT_RUNTIME = os.environ.get("NAKO_AGENT_RUNTIME", "openclaw").strip().lower()
-if DEFAULT_RUNTIME not in RUNTIMES:
+if DEFAULT_RUNTIME not in FACTORY_BINDING_RUNTIMES:
     DEFAULT_RUNTIME = "openclaw"
 OPENCLAW_GATEWAY_PORT = int(os.environ.get("OPENCLAW_GATEWAY_PORT", "18789"))
 OPENCLAW_GATEWAY_HEAP_MB = os.environ.get("OPENCLAW_GATEWAY_HEAP_MB", "2048")
@@ -241,6 +242,30 @@ def agent_id_for(n: int) -> str:
 def normalize_runtime(value: str) -> str:
     value = (value or "").strip().lower()
     return value if value in RUNTIMES else DEFAULT_RUNTIME
+
+
+def normalize_factory_runtime(value: str) -> str:
+    value = (value or "").strip().lower()
+    return value if value in FACTORY_BINDING_RUNTIMES else DEFAULT_RUNTIME
+
+
+def qclaw_script_binding_error() -> dict:
+    return {
+        "error": "qclaw_script_binding_only",
+        "message": (
+            "QClaw 不能通过 Nako Agent Factory 网页绑定；"
+            "请在同一 host/user 下运行 scripts/cc-connect-setup.sh --runtime qclaw 做脚本绑定。"
+        ),
+    }
+
+
+def factory_runtime_or_error(value: str, fallback: str = None):
+    requested = (value or "").strip().lower() or normalize_runtime(fallback or DEFAULT_RUNTIME)
+    if requested == "qclaw":
+        return "", qclaw_script_binding_error()
+    if requested in FACTORY_BINDING_RUNTIMES:
+        return requested, None
+    return normalize_factory_runtime(DEFAULT_RUNTIME), None
 
 
 def runtime_label(runtime: str) -> str:
@@ -924,6 +949,60 @@ def reset_openclaw_main_session(aid: str) -> str:
     except Exception:
         return ""
     return old_session
+
+
+def remove_platform_bindings_for_runtime_switch(n: int, aid: str, runtime: str) -> dict:
+    """Prevent existing platform credentials from silently moving runtimes.
+
+    cc-connect has one agent backend per project. If a project is switched from
+    OpenClaw/QClaw to Hermes, every platform block under that project would
+    immediately route to Hermes. Clear the old platform bindings first so each
+    platform must be explicitly scanned for the new runtime.
+    """
+    runtime = normalize_factory_runtime(runtime)
+    old_runtime = cc_project_runtime(aid)
+    if old_runtime not in RUNTIMES or old_runtime == runtime:
+        return {"old_runtime": old_runtime, "removed_platforms": []}
+
+    bound = bound_platforms_for_agent(aid)
+    if not bound:
+        return {"old_runtime": old_runtime, "removed_platforms": []}
+
+    removed = []
+    removed_sessions = {}
+    clear_qr = {}
+    platform_runtimes = job_state(n).get("platform_runtimes")
+    platform_runtimes = platform_runtimes if isinstance(platform_runtimes, dict) else {}
+
+    for plat in QR_PLATFORMS:
+        if plat not in bound:
+            continue
+        if remove_platform_binding_for_agent(aid, plat):
+            removed.append(plat)
+        removed_sessions[plat] = reset_cc_connect_sessions_for_platform(aid, plat)
+        platform_runtimes.pop(plat, None)
+        try:
+            (JOB_DIR / f"{aid}-{plat}.png").unlink()
+        except FileNotFoundError:
+            pass
+        clear_qr[f"{plat}_qr_url"] = None
+        clear_qr[f"{plat}_qr_image"] = None
+        clear_qr[f"{plat}_rc"] = None
+
+    bound_now = bound_platforms_for_agent(aid)
+    write_state(
+        n,
+        bound_platforms=sorted(bound_now),
+        unbound_platforms=[plat for plat in QR_PLATFORMS if plat not in bound_now],
+        cc_reload_platforms=sorted(bound_now),
+        platform_runtimes=platform_runtimes,
+        **clear_qr,
+    )
+    return {
+        "old_runtime": old_runtime,
+        "removed_platforms": sorted(removed),
+        "removed_sessions": removed_sessions,
+    }
 
 
 def should_refresh_qr(n: int) -> bool:
@@ -2162,6 +2241,14 @@ def run_install_and_qr_locked(n: int, force_qr: bool = False, generation: int = 
     target_platforms = [p for p in (target_platforms or []) if p in QR_PLATFORMS]
     ensure_cc_connect_config()
 
+    switch_cleanup = remove_platform_bindings_for_runtime_switch(n, aid, runtime)
+    if switch_cleanup.get("removed_platforms"):
+        with log.open("a") as f:
+            f.write(
+                f"\n=== runtime switch cleanup old_runtime={switch_cleanup.get('old_runtime') or '-'} "
+                f"new_runtime={runtime} removed_platforms={','.join(switch_cleanup['removed_platforms'])} ===\n"
+            )
+
     state = job_state(n)
     install_needed = agent_install_needed(aid, state, runtime)
     if install_needed:
@@ -2379,9 +2466,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.wfile.write("""<!doctype html><html lang="zh-CN"><head><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>Nako Factory</title>
 <style>
 :root{color-scheme:light;--bg:#f6f7f9;--panel:#fff;--text:#17202a;--muted:#687385;--line:#dde3ea;--accent:#2563eb;--accent-dark:#1d4ed8;--ok:#0f8a5f;--warn:#a16207;--bad:#b42318;--shadow:0 14px 36px rgba(20,30,45,.08)}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,"PingFang SC","Microsoft YaHei",sans-serif}.page{width:min(1120px,100%);margin:0 auto;padding:28px 18px 36px}.topbar{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:18px}.brand h1{margin:0;font-size:26px;line-height:1.2;letter-spacing:0}.brand p{margin:6px 0 0;color:var(--muted)}.actions{display:grid;gap:10px;min-width:360px}.runtime-switch{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;border:1px solid var(--line);border-radius:8px;background:#fff;padding:4px}.runtime-switch input{position:absolute;opacity:0;pointer-events:none}.runtime-switch span{display:block;border-radius:6px;padding:8px 10px;text-align:center;font-weight:800;color:var(--muted);cursor:pointer}.runtime-switch input:checked+span{background:#e8f0ff;color:#1d4ed8}button{border:0;border-radius:8px;background:var(--accent);color:#fff;padding:11px 16px;font-weight:700;font-size:15px;cursor:pointer;white-space:nowrap;box-shadow:0 8px 18px rgba(37,99,235,.18)}button:hover{background:var(--accent-dark)}button:disabled{cursor:wait;opacity:.72}.small-btn{width:100%;margin-top:12px;background:#fff;color:var(--accent);border:1px solid #bfd0ff;box-shadow:none;padding:9px 12px;font-size:14px}.small-btn:hover{background:#eef4ff}.summary{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 18px}.pill{display:inline-flex;align-items:center;min-height:30px;border:1px solid var(--line);border-radius:999px;background:#fff;padding:4px 10px;color:var(--muted);font-size:13px}.pill strong{color:var(--text);font-weight:700}.status-ready{color:var(--ok)}.status-working{color:var(--accent)}.status-warn{color:var(--warn)}.status-bad{color:var(--bad)}.qr-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-bottom:18px}.qr-card{background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow);padding:18px}.qr-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}.qr-title{font-size:18px;font-weight:800}.qr-state{font-size:13px;color:var(--muted);white-space:nowrap}.qr-wrap{display:grid;place-items:center;min-height:286px;border:1px dashed #cbd5e1;border-radius:8px;background:#f8fafc}.qr{width:min(260px,78vw);height:min(260px,78vw);image-rendering:pixelated}.qr-placeholder{display:flex;min-height:260px;align-items:center;justify-content:center;flex-direction:column;text-align:center;color:var(--muted);padding:22px}.qr-placeholder strong{display:block;color:var(--text);font-size:18px;margin-top:12px}.qr-placeholder span{display:block;margin-top:4px}.spinner{width:34px;height:34px;border-radius:999px;border:3px solid #dbe4ef;border-top-color:var(--accent);animation:spin 1s linear infinite}.check{display:grid;place-items:center;width:42px;height:42px;border-radius:999px;background:#e7f7ef;color:var(--ok);font-size:26px;font-weight:900}.qr-link{margin:12px 0 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.qr-link a{color:var(--accent);text-decoration:none}.qr-link a:hover{text-decoration:underline}.hint{margin:0 0 18px;color:var(--muted)}.details{display:grid;gap:10px;margin-top:10px}details{background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow)}summary{cursor:pointer;padding:13px 16px;font-weight:800}pre{margin:0;border-top:1px solid var(--line);background:#0f172a;color:#dbeafe;padding:14px 16px;max-height:340px;overflow:auto;white-space:pre-wrap;font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.empty{background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow);padding:26px;color:var(--muted)}@keyframes spin{to{transform:rotate(360deg)}}@media(max-width:760px){.page{padding:20px 12px 28px}.topbar{display:block}.actions{min-width:0}.topbar button{width:100%}.qr-grid{grid-template-columns:1fr}.qr-wrap{min-height:240px}.qr-placeholder{min-height:220px}.brand h1{font-size:23px}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,"PingFang SC","Microsoft YaHei",sans-serif}.page{width:min(1120px,100%);margin:0 auto;padding:28px 18px 36px}.topbar{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:18px}.brand h1{margin:0;font-size:26px;line-height:1.2;letter-spacing:0}.brand p{margin:6px 0 0;color:var(--muted)}.actions{display:grid;gap:10px;min-width:360px}.runtime-switch{display:grid;grid-template-columns:repeat(2,1fr);gap:4px;border:1px solid var(--line);border-radius:8px;background:#fff;padding:4px}.runtime-switch input{position:absolute;opacity:0;pointer-events:none}.runtime-switch span{display:block;border-radius:6px;padding:8px 10px;text-align:center;font-weight:800;color:var(--muted);cursor:pointer}.runtime-switch input:checked+span{background:#e8f0ff;color:#1d4ed8}button{border:0;border-radius:8px;background:var(--accent);color:#fff;padding:11px 16px;font-weight:700;font-size:15px;cursor:pointer;white-space:nowrap;box-shadow:0 8px 18px rgba(37,99,235,.18)}button:hover{background:var(--accent-dark)}button:disabled{cursor:wait;opacity:.72}.small-btn{width:100%;margin-top:12px;background:#fff;color:var(--accent);border:1px solid #bfd0ff;box-shadow:none;padding:9px 12px;font-size:14px}.small-btn:hover{background:#eef4ff}.summary{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 18px}.pill{display:inline-flex;align-items:center;min-height:30px;border:1px solid var(--line);border-radius:999px;background:#fff;padding:4px 10px;color:var(--muted);font-size:13px}.pill strong{color:var(--text);font-weight:700}.status-ready{color:var(--ok)}.status-working{color:var(--accent)}.status-warn{color:var(--warn)}.status-bad{color:var(--bad)}.qr-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-bottom:18px}.qr-card{background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow);padding:18px}.qr-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}.qr-title{font-size:18px;font-weight:800}.qr-state{font-size:13px;color:var(--muted);white-space:nowrap}.qr-wrap{display:grid;place-items:center;min-height:286px;border:1px dashed #cbd5e1;border-radius:8px;background:#f8fafc}.qr{width:min(260px,78vw);height:min(260px,78vw);image-rendering:pixelated}.qr-placeholder{display:flex;min-height:260px;align-items:center;justify-content:center;flex-direction:column;text-align:center;color:var(--muted);padding:22px}.qr-placeholder strong{display:block;color:var(--text);font-size:18px;margin-top:12px}.qr-placeholder span{display:block;margin-top:4px}.spinner{width:34px;height:34px;border-radius:999px;border:3px solid #dbe4ef;border-top-color:var(--accent);animation:spin 1s linear infinite}.check{display:grid;place-items:center;width:42px;height:42px;border-radius:999px;background:#e7f7ef;color:var(--ok);font-size:26px;font-weight:900}.qr-link{margin:12px 0 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.qr-link a{color:var(--accent);text-decoration:none}.qr-link a:hover{text-decoration:underline}.hint{margin:0 0 18px;color:var(--muted)}.details{display:grid;gap:10px;margin-top:10px}details{background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow)}summary{cursor:pointer;padding:13px 16px;font-weight:800}pre{margin:0;border-top:1px solid var(--line);background:#0f172a;color:#dbeafe;padding:14px 16px;max-height:340px;overflow:auto;white-space:pre-wrap;font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.empty{background:var(--panel);border:1px solid var(--line);border-radius:8px;box-shadow:var(--shadow);padding:26px;color:var(--muted)}@keyframes spin{to{transform:rotate(360deg)}}@media(max-width:760px){.page{padding:20px 12px 28px}.topbar{display:block}.actions{min-width:0}.topbar button{width:100%}.qr-grid{grid-template-columns:1fr}.qr-wrap{min-height:240px}.qr-placeholder{min-height:220px}.brand h1{font-size:23px}}
 </style></head>
-<body><main class=page><div class=topbar><div class=brand><h1>Nako Agent Factory</h1><p>同一个客户端 IP 只会分配一个 agent；可选择 OpenClaw、Hermes 或 QClaw 作为消息后端，已绑定平台可在卡片里解绑重扫。</p></div><div class=actions><div class=runtime-switch aria-label="Agent runtime"><label><input type=radio name=runtime value=openclaw checked><span>OpenClaw</span></label><label><input type=radio name=runtime value=hermes><span>Hermes</span></label><label><input type=radio name=runtime value=qclaw><span>QClaw</span></label></div><button id=createBtn onclick="create()" disabled>载入中...</button></div></div><div id=out><div class=empty>正在载入当前 agent...</div></div></main>
+<body><main class=page><div class=topbar><div class=brand><h1>Nako Agent Factory</h1><p>同一个客户端 IP 只会分配一个 agent；可选择 OpenClaw 或 Hermes 作为消息后端，已绑定平台可在卡片里解绑重扫。</p></div><div class=actions><div class=runtime-switch aria-label="Agent runtime"><label><input type=radio name=runtime value=openclaw checked><span>OpenClaw</span></label><label><input type=radio name=runtime value=hermes><span>Hermes</span></label></div><button id=createBtn onclick="create()" disabled>载入中...</button></div></div><div id=out><div class=empty>正在载入当前 agent...</div></div></main>
 <script>
 let timer=null;
 let lastState=null;
@@ -2393,7 +2480,7 @@ const platforms=[
 ];
 const finalStatuses=['ready','qr_expired','install_failed','unknown','corrupt'];
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
-function validRuntime(s){return s==='hermes'||s==='qclaw'?s:'openclaw';}
+function validRuntime(s){return s==='hermes'?'hermes':'openclaw';}
 function selectedRuntime(){return validRuntime(desiredRuntime||document.querySelector('input[name=runtime]:checked')?.value||'openclaw');}
 function runtimeName(s){return s==='hermes'?'Hermes':(s==='qclaw'?'QClaw':'OpenClaw');}
 function currentRuntime(j){return j.runtime||'openclaw';}
@@ -2575,7 +2662,9 @@ loadCurrent();
         q = urllib.parse.parse_qs(u.query)
         if u.path == "/create":
             client_ip = client_ip_from_request(self)
-            runtime = normalize_runtime(q.get("runtime", [DEFAULT_RUNTIME])[0])
+            runtime, runtime_error = factory_runtime_or_error(q.get("runtime", [DEFAULT_RUNTIME])[0])
+            if runtime_error:
+                return self._json(400, runtime_error)
             n, existing, client_ip = create_or_get_job_for_ip(client_ip, runtime)
             refresh_started = False
             aid = agent_id_for(n)
@@ -2609,7 +2698,12 @@ loadCurrent();
                 return self._json(404, {"error": "job not found"})
 
             aid = state.get("agent_id") or agent_id_for(n)
-            runtime = normalize_runtime(q.get("runtime", [state.get("runtime") or DEFAULT_RUNTIME])[0])
+            runtime, runtime_error = factory_runtime_or_error(
+                q.get("runtime", [""])[0],
+                state.get("runtime") or DEFAULT_RUNTIME,
+            )
+            if runtime_error:
+                return self._json(400, runtime_error)
             current_runtime = cc_project_runtime(aid)
             old_platform_runtime = normalized_platform_runtimes(
                 state,

@@ -28,6 +28,9 @@ with tempfile.TemporaryDirectory() as tmp:
     assert "let runtimeTouched=false;" in server_source
     assert "let desiredRuntime=null;" in server_source
     assert "const runtime=selectedRuntime();" in server_source
+    assert 'value=qclaw' not in server_source
+    assert "FACTORY_BINDING_RUNTIMES" in server_source
+    assert "def factory_runtime_or_error" in server_source
     assert "扫码绑定到 " in server_source
     assert "当前消息后端：" in server_source
     assert "QClaw" in server_source
@@ -44,6 +47,16 @@ with tempfile.TemporaryDirectory() as tmp:
     assert "force=True" in server_source
     assert "def runtime_model_state_fields" in server_source
     assert "<strong>模型：</strong>" in server_source
+    runtime, error = module.factory_runtime_or_error("qclaw")
+    assert runtime == ""
+    assert error["error"] == "qclaw_script_binding_only"
+    assert "scripts/cc-connect-setup.sh" in error["message"]
+    runtime, error = module.factory_runtime_or_error("hermes")
+    assert runtime == "hermes"
+    assert error is None
+    runtime, error = module.factory_runtime_or_error("bad")
+    assert runtime == module.DEFAULT_RUNTIME
+    assert error is None
 
     hermes_config = Path(tmp) / ".hermes" / "config.yaml"
     hermes_config.parent.mkdir(parents=True, exist_ok=True)
@@ -358,6 +371,52 @@ token = "keep-other"
     assert 'type = "weixin"' in agent_1
     assert 'keep-other' in text
     assert not module.remove_platform_binding_for_agent("agent-nako-1", "feishu")
+
+    cfg.write_text(
+        openclaw_text
+        + """
+
+[[projects.platforms]]
+type = "weixin"
+
+[projects.platforms.options]
+token = "old-weixin"
+base_url = "https://ilinkai.weixin.qq.com"
+""",
+        encoding="utf-8",
+    )
+    module.write_state(
+        1,
+        runtime="openclaw",
+        agent_id="agent-nako-1",
+        platform_runtimes={"feishu": "openclaw", "weixin": "openclaw"},
+        bound_platforms=["feishu", "weixin"],
+        unbound_platforms=[],
+        feishu_qr_url="old-feishu",
+        weixin_qr_url="old-weixin",
+        feishu_rc=0,
+        weixin_rc=0,
+    )
+    (module.JOB_DIR / "agent-nako-1-feishu.png").write_text("qr", encoding="utf-8")
+    (module.JOB_DIR / "agent-nako-1-weixin.png").write_text("qr", encoding="utf-8")
+    removed_for_switch = module.remove_platform_bindings_for_runtime_switch(
+        1,
+        "agent-nako-1",
+        "hermes",
+    )
+    assert removed_for_switch["old_runtime"] == "openclaw"
+    assert removed_for_switch["removed_platforms"] == ["feishu", "weixin"]
+    switched_text = cfg.read_text(encoding="utf-8")
+    assert 'type = "feishu"' not in switched_text
+    assert 'type = "weixin"' not in switched_text
+    switched_state = module.job_state(1)
+    assert switched_state["platform_runtimes"] == {}
+    assert switched_state["bound_platforms"] == []
+    assert switched_state["unbound_platforms"] == ["feishu", "weixin"]
+    assert switched_state["feishu_qr_url"] is None
+    assert switched_state["weixin_qr_url"] is None
+    assert not (module.JOB_DIR / "agent-nako-1-feishu.png").exists()
+    assert not (module.JOB_DIR / "agent-nako-1-weixin.png").exists()
 
     cc_sessions = cfg.parent / "sessions" / "agent-nako-1_abc.json"
     cc_sessions.parent.mkdir(parents=True, exist_ok=True)

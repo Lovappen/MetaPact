@@ -3,7 +3,7 @@
 This package deploys the current Nako web manager on a Linux host.
 
 It starts a LAN HTTP service on port `8088`. The page creates one `agent-nako-N`
-per client IP, lets the user choose OpenClaw, Hermes, or QClaw as the messaging runtime,
+per client IP, lets the user choose OpenClaw or Hermes as the messaging runtime,
 generates Feishu and Weixin QR codes, and streams install / QR logs in the page.
 
 ## Install
@@ -30,16 +30,9 @@ The first click on the page runs:
 curl -fsSL https://cdn.jsdelivr.net/gh/Lovappen/MetaPact@main/install.sh | bash -s -- --agent-id agent-nako-N --runtime openclaw --non-interactive --force --with-cc-connect
 ```
 
-Selecting Hermes uses `--runtime hermes`. Selecting QClaw uses `--runtime qclaw`.
-Hermes installs directly into `~/.hermes/workspace/<agent-id>` and
-`~/.hermes/skills/nako`; it does not require `~/.openclaw`. QClaw installs into
-`~/.qclaw/workspace-<agent-id>` and uses QClaw's bundled OpenClaw ACP for the
-cc-connect bridge.
-
-QClaw mode must run on the same host/user that has QClaw installed, because it
-uses `~/.qclaw/qclaw.json` to find QClaw's bundled Node and `openclaw.mjs`.
-If the factory is running inside a Linux VM, the macOS `QClaw.app` bundle on the
-host cannot be executed from inside that VM.
+Selecting Hermes uses `--runtime hermes`. QClaw binding is intentionally not
+available from the web page; run `scripts/cc-connect-setup.sh --runtime qclaw`
+from the same host/user that has QClaw installed.
 
 If you want to preinstall OpenClaw and cc-connect while installing the web
 manager, run:
@@ -56,7 +49,7 @@ sudo NAKO_PREINSTALL_OPENCLAW=1 bash install.sh
 - cc-connect config and logs: `/root/.cc-connect`
 - OpenClaw data: `/root/.openclaw`
 - Hermes data: `/root/.hermes`
-- QClaw data: `/root/.qclaw` (or `QCLAW_HOME`)
+- QClaw data: `/root/.qclaw` (or `QCLAW_HOME`), only for script-created QClaw projects
 - OpenClaw gateway log: `/tmp/openclaw/openclaw-gateway.log`
 
 ## Operations
@@ -89,11 +82,11 @@ service:
 - `OPENCLAW_GATEWAY_PORT`, default `18789`
 - `OPENCLAW_GATEWAY_HEAP_MB`, default `2048`
 - `NAKO_GATEWAY_WATCHDOG_INTERVAL`, default `10`
-- `NAKO_AGENT_RUNTIME`, default `openclaw`; set `hermes` or `qclaw` to make the
-  page and preinstall flow default to that runtime
+- `NAKO_AGENT_RUNTIME`, default `openclaw`; set `hermes` to make the page and
+  preinstall flow default to Hermes
 - `QCLAW_HOME`, default `/root/.qclaw`
-- `QCLAW_NODE_BIN` / `QCLAW_OPENCLAW_MJS`, optional overrides when QClaw's
-  `qclaw.json` cannot be discovered
+- `QCLAW_NODE_BIN` / `QCLAW_OPENCLAW_MJS`, optional overrides for existing
+  script-created QClaw projects
 - `NAKO_TRUSTED_PROXY_CIDRS`, default trusts loopback, RFC1918 LAN ranges,
   link-local ranges, and ULA IPv6 ranges for forwarded client IP headers
 - `NAKO_FACTORY_HOST_IP`, optional override for the URL printed by `install.sh`
@@ -108,9 +101,8 @@ service:
 - Install logs and runtime info are collapsed at the bottom.
 - OpenClaw gateway is started with a larger Node heap and watched.
 - Hermes projects are not rewritten back to OpenClaw by the repair watchdog.
-- QClaw projects use QClaw's bundled OpenClaw ACP with `~/.qclaw/openclaw.json`;
-  cc-connect conversations use `agent:<id>:session-cc-connect` so they appear as
-  the `cc-connect 飞书/微信` ACP session in QClaw.
+- QClaw projects are kept script-only; the Factory page does not create or
+  rebind QClaw QR onboarding.
 - cc-connect restarts are deduplicated per bound platform set.
 - Stale OpenClaw ACP client processes are cleaned before cc-connect restart.
 

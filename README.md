@@ -90,7 +90,7 @@ QClaw 后端需要和 `cc-connect` 跑在同一个 host/user 下；如果 `cc-co
 
 ### `scripts/nako-agent-factory/` — 局域网自助创建 Nako agent
 
-给一台 host 部署 8088 管理页：每个客户端 IP 只分配一个 `agent-nako-N`，页面可选择 OpenClaw、Hermes 或 QClaw 作为消息后端，生成 / 刷新飞书和微信二维码，并直接展示安装与 QR 日志。
+给一台 host 部署 8088 管理页：每个客户端 IP 只分配一个 `agent-nako-N`，页面可选择 OpenClaw 或 Hermes 作为消息后端，生成 / 刷新飞书和微信二维码，并直接展示安装与 QR 日志。QClaw 只能通过上面的 `scripts/cc-connect-setup.sh --runtime qclaw` 脚本绑定。
 
 ```bash
 curl -fsSL https://cdn.jsdelivr.net/gh/Lovappen/MetaPact@main/scripts/nako-agent-factory/install.sh | sudo bash

@@ -20,8 +20,8 @@ PREINSTALL="${NAKO_PREINSTALL_OPENCLAW:-0}"
 BOOTSTRAP_AGENT_ID="${NAKO_BOOTSTRAP_AGENT_ID:-agent-nako-bootstrap}"
 
 case "${DEFAULT_RUNTIME}" in
-  openclaw|hermes|qclaw) ;;
-  *) echo "NAKO_AGENT_RUNTIME must be openclaw, hermes, or qclaw" >&2; exit 1 ;;
+  openclaw|hermes) ;;
+  *) echo "NAKO_AGENT_RUNTIME for Nako Agent Factory must be openclaw or hermes; use scripts/cc-connect-setup.sh --runtime qclaw for QClaw script binding" >&2; exit 1 ;;
 esac
 
 if [ "$(id -u)" -ne 0 ]; then
