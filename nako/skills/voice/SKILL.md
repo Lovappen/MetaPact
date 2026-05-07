@@ -21,6 +21,8 @@ allowed-tools: Bash(curl:*) Bash(jq:*) Bash(xxd:*) Bash(base64:*) Bash(uuidgen:*
 
 在飞书/微信/ACP 会话里，语音和唱歌必须用 `voice.sh` / `sing.sh` 且 channel 填 `cc-connect`。不要调用 OpenClaw 原生 `tts`，那只会生成 webchat 媒体，飞书/微信收不到。
 
+cc-connect/ACP 会话里即使看到 `messageProvider=webchat`，也不要设置 `NAKO_OUTPUT_MODE=webchat`，不要把 channel 填 `webchat`。语音和唱歌统一用 `NAKO_OUTPUT_MODE=acp` 与 channel `cc-connect`，这样脚本才能投递到当前飞书/微信 session。
+
 ## 说话 vs 唱歌：选对脚本
 
 | 场景 | 用 | 说明 |

@@ -1409,6 +1409,15 @@ def normalize_global_options(text):
     prefix = ensure_section_value(prefix, "display", "tool_messages", "false")
     return prefix + rest
 
+cc_data_dir = str(Path(home) / ".cc-connect")
+cc_api_data_dir = str(Path(cc_data_dir) / ".cc-connect")
+cc_env = {
+    "CC_CONNECT_DATA_DIR": cc_data_dir,
+    "CC_CONNECT_API_DATA_DIR": cc_api_data_dir,
+    "CC_CONNECT_SESSION_DIR": str(Path(cc_api_data_dir) / "sessions"),
+    "CC_CONNECT_CONFIG": str(Path(cc_data_dir) / "config.toml"),
+}
+
 if runtime == "hermes":
     command = hermes_bin or "hermes"
     work_dir = hermes_workspace
@@ -1419,6 +1428,7 @@ if runtime == "hermes":
         "HOME": home,
         "HERMES_HOME": hermes_home,
         "PATH": path_value,
+        **cc_env,
         "NAKO_OUTPUT_MODE": "acp",
         "NAKO_CCCONNECT_PROJECT": agent_id,
         "NAKO_AGENT_WORKSPACE": hermes_workspace,
@@ -1437,6 +1447,7 @@ elif runtime == "qclaw":
         "OPENCLAW_CONFIG": qclaw_config_path,
         "OPENCLAW_CONFIG_PATH": qclaw_config_path,
         "PATH": path_value,
+        **cc_env,
         "OPENCLAW_OUTPUT_MODE": "acp",
         "OPENCLAW_CCCONNECT_PROJECT": agent_id,
         "NAKO_OUTPUT_MODE": "acp",
@@ -1458,6 +1469,7 @@ else:
         "HOME": home,
         "OPENCLAW_HOME": openclaw_home,
         "PATH": path_value,
+        **cc_env,
         "OPENCLAW_OUTPUT_MODE": "acp",
         "OPENCLAW_CCCONNECT_PROJECT": agent_id,
         "NAKO_OUTPUT_MODE": "acp",

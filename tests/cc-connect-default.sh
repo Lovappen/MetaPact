@@ -37,11 +37,15 @@ grep -Fq 'send --data-dir "$data_dir" --file' "$ROOT/nako/skills/voice/scripts/s
 grep -Fq 'cc-connect media rule' "$ROOT/nako/agent/AGENTS.md"
 grep -Fq '不要调用 OpenClaw 原生 `image_generate` / `tts` / `video_generate`' "$ROOT/nako/agent/TOOLS.md"
 grep -Fq 'never call OpenClaw native `video_generate` under any circumstance' "$ROOT/nako/agent/AGENTS.md"
+grep -Fq 'Never set `NAKO_OUTPUT_MODE=webchat`' "$ROOT/nako/agent/AGENTS.md"
 grep -Fq '即使工具列表里出现 `video_generate`，也绝对不要调用' "$ROOT/nako/agent/TOOLS.md"
+grep -Fq '不要写 `NAKO_OUTPUT_MODE=webchat`' "$ROOT/nako/agent/TOOLS.md"
 grep -Fq '全能力展示' "$ROOT/nako/agent/TOOLS.md"
 grep -Fq 'Do not use OpenClaw native `image_generate`' "$ROOT/nako/skills/selfie/SKILL.md"
 grep -Fq 'never call OpenClaw native `video_generate` in Feishu/Weixin/ACP sessions' "$ROOT/nako/skills/selfie/SKILL.md"
+grep -Fq 'Do not set `NAKO_OUTPUT_MODE=webchat`' "$ROOT/nako/skills/selfie/SKILL.md"
 grep -Fq '不要调用 OpenClaw 原生 `tts`' "$ROOT/nako/skills/voice/SKILL.md"
+grep -Fq '不要设置 `NAKO_OUTPUT_MODE=webchat`' "$ROOT/nako/skills/voice/SKILL.md"
 grep -Fq 'CC_CONNECT_SOURCE="${CC_CONNECT_SOURCE:-lazycat}"' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'elif [ "$CC_CONNECT_SOURCE" = "lazycat" ] || [ "$CC_CONNECT_SOURCE" = "auto" ]; then' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'CC_CONNECT_GO_DOWNLOAD_VERSION="${CC_CONNECT_GO_DOWNLOAD_VERSION:-1.25.0}"' "$ROOT/scripts/cc-connect-setup.sh"
@@ -555,6 +559,10 @@ assert f'work_dir = "{root / ".hermes" / "workspace" / "agent-test"}"' in projec
 assert 'command = "' in project and "/hermes" in project
 assert 'args = ["acp"]' in project
 assert 'HERMES_HOME = "' in project
+assert f'CC_CONNECT_DATA_DIR = "{root / ".cc-connect"}"' in project
+assert f'CC_CONNECT_API_DATA_DIR = "{root / ".cc-connect" / ".cc-connect"}"' in project
+assert f'CC_CONNECT_SESSION_DIR = "{root / ".cc-connect" / ".cc-connect" / "sessions"}"' in project
+assert f'CC_CONNECT_CONFIG = "{root / ".cc-connect" / "config.toml"}"' in project
 assert 'NAKO_OUTPUT_MODE = "acp"' in project
 assert 'NAKO_CCCONNECT_PROJECT = "agent-test"' in project
 assert 'NAKO_AGENT_WORKSPACE = "' in project

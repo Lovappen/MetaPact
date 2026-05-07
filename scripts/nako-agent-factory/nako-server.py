@@ -1693,12 +1693,21 @@ def project_runtime_from_text(part: str) -> str:
 def cc_agent_options_for_runtime(name: str, runtime: str, env: dict = None) -> dict:
     runtime = normalize_runtime(runtime)
     env = env or tool_env()
+    cc_data_dir = HOME / ".cc-connect"
+    cc_api_data_dir = cc_data_dir / ".cc-connect"
+    cc_env = {
+        "CC_CONNECT_DATA_DIR": str(cc_data_dir),
+        "CC_CONNECT_API_DATA_DIR": str(cc_api_data_dir),
+        "CC_CONNECT_SESSION_DIR": str(cc_api_data_dir / "sessions"),
+        "CC_CONNECT_CONFIG": str(cc_data_dir / "config.toml"),
+    }
     if runtime == "hermes":
         hhome = hermes_home()
         hermes_env = {
             "HOME": str(HOME),
             "HERMES_HOME": str(hhome),
             "PATH": env.get("PATH", ""),
+            **cc_env,
             "NAKO_OUTPUT_MODE": "acp",
             "NAKO_CCCONNECT_PROJECT": name,
             "NAKO_AGENT_WORKSPACE": str(hermes_workspace(name)),
@@ -1722,6 +1731,7 @@ def cc_agent_options_for_runtime(name: str, runtime: str, env: dict = None) -> d
             "OPENCLAW_STATE_DIR": str(qhome),
             "OPENCLAW_CONFIG_PATH": str(qclaw_config_path()),
             "PATH": env.get("PATH", ""),
+            **cc_env,
             "OPENCLAW_OUTPUT_MODE": "acp",
             "OPENCLAW_CCCONNECT_PROJECT": name,
             "NAKO_OUTPUT_MODE": "acp",
@@ -1752,6 +1762,7 @@ def cc_agent_options_for_runtime(name: str, runtime: str, env: dict = None) -> d
             "HOME": str(HOME),
             "OPENCLAW_HOME": str(ohome),
             "PATH": env.get("PATH", ""),
+            **cc_env,
             "OPENCLAW_OUTPUT_MODE": "acp",
             "OPENCLAW_CCCONNECT_PROJECT": name,
             "NAKO_OUTPUT_MODE": "acp",
