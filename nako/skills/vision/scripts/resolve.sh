@@ -1,7 +1,7 @@
 #!/bin/bash
 # resolve.sh — map a Feishu image_key (or file_key) to the local inbound file path.
 #
-# openclaw auto-downloads inbound media to ~/.openclaw/media/inbound/<uuid>.<ext>
+# The runtime auto-downloads inbound media to <runtime>/media/inbound/<uuid>.<ext>
 # and logs "downloaded <type> media, saved to <path>" in gateway.log right after
 # the message line that contains the key. We grep the key in gateway.log, then
 # grab the first "saved to <path>" that follows.
@@ -11,9 +11,10 @@
 
 set -euo pipefail
 
-OPENCLAW_HOME="${OPENCLAW_HOME:-$HOME/.openclaw}"
-GATEWAY_LOG="$OPENCLAW_HOME/logs/gateway.log"
-INBOUND_DIR="$OPENCLAW_HOME/media/inbound"
+RUNTIME_HOME="${NAKO_RUNTIME_HOME:-${HERMES_HOME:-${OPENCLAW_HOME:-$HOME/.openclaw}}}"
+MEDIA_HOME="${NAKO_MEDIA_HOME:-$RUNTIME_HOME/media}"
+GATEWAY_LOG="${NAKO_GATEWAY_LOG:-${OPENCLAW_GATEWAY_LOG:-$RUNTIME_HOME/logs/gateway.log}}"
+INBOUND_DIR="$MEDIA_HOME/inbound"
 
 ARG="${1:-}"
 [ -z "$ARG" ] && { echo "Usage: $0 <image_key|file_key|--latest [ext]>" >&2; exit 1; }

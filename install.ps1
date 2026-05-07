@@ -158,6 +158,7 @@ function Get-QClawAppValue($path, $key) {
 
 $DefaultOpenclawHome = Join-Path $env:USERPROFILE ".openclaw"
 $HermesHome = if ($env:HERMES_HOME) { $env:HERMES_HOME } else { Join-Path $env:USERPROFILE ".hermes" }
+$HermesHome = Resolve-InstallPath $HermesHome
 $QclawHomeInput = if ($env:QCLAW_HOME) { $env:QCLAW_HOME } else { Join-Path $env:USERPROFILE ".qclaw" }
 $QclawHome = Resolve-InstallPath $QclawHomeInput
 
@@ -176,6 +177,11 @@ if ($Runtime -eq "qclaw") {
   $OpenclawConfig = $qclawConfigPath
   $OpenclawSkills = Join-Path $QclawHome "skills"
   $AgentWorkspace = Join-Path $QclawHome "workspace-$AgentId"
+} elseif ($Runtime -eq "hermes") {
+  $OpenclawHome = $HermesHome
+  $OpenclawConfig = Join-Path $HermesHome "openclaw-compat.json"
+  $OpenclawSkills = Join-Path $HermesHome "skills\nako"
+  $AgentWorkspace = Join-Path $HermesHome "workspace\$AgentId"
 } else {
   $OpenclawHome = $DefaultOpenclawHome
   $OpenclawConfig = Join-Path $OpenclawHome "openclaw.json"
@@ -213,6 +219,13 @@ if ($Runtime -eq "qclaw") {
   Info "QClaw 目录 $QclawHome"
   if (-not (Test-Path $OpenclawConfig)) { ErrL "QClaw openclaw.json 不存在: $OpenclawConfig"; exit 1 }
   Info "QClaw openclaw.json"
+} elseif ($Runtime -eq "hermes") {
+  if (-not (Get-Command hermes -ErrorAction SilentlyContinue)) {
+    ErrL "选择 Hermes runtime，但找不到 hermes 命令。请先安装 Hermes 或把 hermes 加到 PATH。"
+    exit 1
+  }
+  New-Item -ItemType Directory -Path $HermesHome, $OpenclawSkills, (Join-Path $HermesHome "media") -Force | Out-Null
+  Info "Hermes 目录 $HermesHome"
 } else {
   if (-not (Test-Path $OpenclawHome)) {
     ErrL "$OpenclawHome 不存在 — 请先 npm i -g openclaw"; exit 1
@@ -241,6 +254,18 @@ if ($MissingSoft.Count -gt 0) {
   Dim "  whisper / ffmpeg → hearing (转写语音)   pip install openai-whisper; choco install ffmpeg"
   Dim "  doki             → dokidoki              npm i -g @tryjoy/dokidoki"
   Write-Host ""
+
+  if (($MissingSoft -contains "ffmpeg" -or $MissingSoft -contains "ffprobe") -and (-not $NonInteractive)) {
+    if (Confirm "需要语音/视频转码（ffmpeg）吗？现在安装" "y") {
+      if (Get-Command choco -ErrorAction SilentlyContinue) {
+        choco install ffmpeg -y
+      } elseif (Get-Command winget -ErrorAction SilentlyContinue) {
+        winget install Gyan.FFmpeg -e --silent
+      } else {
+        Warn "无法自动安装 ffmpeg；请手动安装 choco 或 winget 后重跑。"
+      }
+    }
+  }
 }
 
 # ─── Existing agent check ───────────────────────────────────────────────────
@@ -303,9 +328,18 @@ function Get-ModelMap {
 
 $Primary = ""
 if ($SkipModels) {
-  $cfg = Get-Content $OpenclawConfig -Raw | ConvertFrom-Json
-  $Primary = $cfg.agents.defaults.model.primary
+  if ($Runtime -eq "hermes") {
+    $Primary = $env:HERMES_MODEL
+    if (-not $Primary) { $Primary = "sensenova/SenseChat-Character-Agt" }
+  } else {
+    $cfg = Get-Content $OpenclawConfig -Raw | ConvertFrom-Json
+    $Primary = $cfg.agents.defaults.model.primary
+  }
   Info "跳过模型映射，继承 primary: $Primary"
+} elseif ($Runtime -eq "hermes") {
+  $Primary = $env:HERMES_MODEL
+  if (-not $Primary) { $Primary = "sensenova/SenseChat-Character-Agt" }
+  Info "Hermes 主模型: $Primary"
 } elseif ($Runtime -eq "qclaw") {
   try {
     $cfg = Get-Content $OpenclawConfig -Raw | ConvertFrom-Json
@@ -343,7 +377,11 @@ if ($SkipModels) {
 # ─── Collect secrets ────────────────────────────────────────────────────────
 Step "4. 收集凭据"
 Dim "留空回车即跳过，对应能力会被标记 '未启用'。"
-Dim "全跳过也行：装完后随时通过 openclaw.json 的 skills.entries.*.env 补；旧版 .env 仍兼容。"
+if ($Runtime -eq "hermes") {
+  Dim "全跳过也行：装完后随时通过 $OpenclawSkills\.env 或 $HermesHome\.env 补。"
+} else {
+  Dim "全跳过也行：装完后随时通过 openclaw.json 的 skills.entries.*.env 补；旧版 .env 仍兼容。"
+}
 Write-Host ""
 
 function Set-EnvDefault($key, $value = "") {
@@ -384,7 +422,7 @@ function Import-OpenclawSkillEnvIfUnset($path) {
       "VOICE_DEFAULT_VOLCENGINE", "VOICE_DEFAULT_SPEED",
       "OPENCLAW_GATEWAY_TOKEN"
     )
-    selfie = @("FAL_KEY", "KIE_API_KEY", "OPENCLAW_GATEWAY_TOKEN")
+    selfie = @("FAL_KEY", "KIE_API_KEY", "SELFIE_REFERENCE_IMAGE", "SELFIE_CHARACTER_DESC", "OPENCLAW_GATEWAY_TOKEN")
   }
   foreach ($skill in $skillKeys.Keys) {
     $entry = $cfg.skills.entries.$skill
@@ -405,23 +443,29 @@ $SharedEnv = Join-Path $OpenclawSkills ".env"
 $AgentEnv = Join-Path $AgentWorkspace "skills\.env"
 if (-not $ResetSecrets) {
   $reused = @()
-  $reused += Import-OpenclawSkillEnvIfUnset $OpenclawConfig
+  if ($Runtime -eq "hermes") {
+    $reused += Import-EnvFileIfUnset (Join-Path $HermesHome ".env")
+  } else {
+    $reused += Import-OpenclawSkillEnvIfUnset $OpenclawConfig
+  }
   $reused += Import-EnvFileIfUnset $SharedEnv
   $reused += Import-EnvFileIfUnset $AgentEnv
   if ($reused.Count -gt 0) {
-    Info "复用旧凭据/openclaw.json 配置 ($($reused.Count) 项): $($reused -join ' ')"
+    Info "复用旧凭据/运行时配置 ($($reused.Count) 项): $($reused -join ' ')"
     Dim "  想重新输入跑 -ResetSecrets。"
     Write-Host ""
   }
 }
 
-try {
-  $cfgForGatewayToken = Get-Content $OpenclawConfig -Raw | ConvertFrom-Json
-  $cfgGatewayToken = $cfgForGatewayToken.gateway.auth.token
-  if ($cfgGatewayToken) {
-    [Environment]::SetEnvironmentVariable("OPENCLAW_GATEWAY_TOKEN", $cfgGatewayToken, "Process")
-  }
-} catch {}
+if ($Runtime -ne "hermes") {
+  try {
+    $cfgForGatewayToken = Get-Content $OpenclawConfig -Raw | ConvertFrom-Json
+    $cfgGatewayToken = $cfgForGatewayToken.gateway.auth.token
+    if ($cfgGatewayToken) {
+      [Environment]::SetEnvironmentVariable("OPENCLAW_GATEWAY_TOKEN", $cfgGatewayToken, "Process")
+    }
+  } catch {}
+}
 
 Set-EnvDefault "FEISHU_APP_ID"
 Set-EnvDefault "FEISHU_APP_SECRET"
@@ -628,6 +672,18 @@ if (Test-Path $agentAssets) {
 }
 Remove-Item Env:\NAKO_OVERWRITE_DEFAULT_WORKSPACE_TEMPLATES -ErrorAction SilentlyContinue
 Complete-PreseededWorkspace $AgentWorkspace
+$identityPath = Join-Path $AgentWorkspace "IDENTITY.md"
+if (Test-Path $identityPath) {
+  $identityText = Get-Content $identityPath -Raw
+  $identityUpdated = $identityText
+  foreach ($legacyAvatar in @("assets/nako-avatar.svg", "https://pulseact.lovappen.cn/test/act_ci_build/dlc-promotion/act-gengen/images/e.png")) {
+    $pattern = "(?m)^-\s*Avatar:\s*$([regex]::Escape($legacyAvatar))\s*$"
+    $identityUpdated = [regex]::Replace($identityUpdated, $pattern, "- Avatar: assets/nako-avatar-head.png")
+  }
+  if ($identityUpdated -ne $identityText) {
+    Set-Content -Path $identityPath -Value $identityUpdated -NoNewline -Encoding UTF8
+  }
+}
 
 $memoryPath = Join-Path $AgentWorkspace "MEMORY.md"
 if (-not (Test-Path $memoryPath)) {
@@ -653,6 +709,37 @@ try {
     Set-Content -Path $memoryPath -Value $updated -NoNewline -Encoding UTF8
   }
 } catch {}
+
+if ($Runtime -eq "hermes") {
+  $hermesSkillsDisplay = "~/.hermes/skills/nako"
+  foreach ($docPath in @((Join-Path $AgentWorkspace "TOOLS.md"), $memoryPath, (Join-Path $AgentWorkspace "SOUL.md"))) {
+    if (-not (Test-Path $docPath)) { continue }
+    try {
+      $doc = Get-Content $docPath -Raw
+      $next = $doc
+      $next = [regex]::Replace($next, "(?m)^- voice / sing 的 API key 和默认音色优先从运行时配置读取：.*$", "- voice / sing 的 API key 和默认音色优先从 Hermes skill env 读取：``$hermesSkillsDisplay/.env``、``~/.hermes/.env`` 或本 agent 的 ``skills/.env``。")
+      $next = [regex]::Replace($next, "(?m)^- selfie / video 的共享生成 key 同样从运行时配置读取：.*$", "- selfie / video 的共享生成 key 同样从 ``$hermesSkillsDisplay/.env``、``~/.hermes/.env`` 或本 agent 的 ``skills/.env`` 读取。")
+      $next = [regex]::Replace($next, "(?m)^- 如果用户问语音/唱歌 key 在哪，.*$", "- 如果用户问语音/唱歌 key 在哪，先回答 ``$hermesSkillsDisplay/.env``，不要只提示去 ``.env``。")
+      $next = [regex]::Replace($next, "(?m)^- \*\*provider\*\*：``MINIMAX_API_KEY`` 优先，``VOLCENGINE_API_KEY`` 备选.*$", "- **provider**：``MINIMAX_API_KEY`` 优先，``VOLCENGINE_API_KEY`` 备选；key 从 ``$hermesSkillsDisplay/.env`` 读取，兼容本 agent ``skills/.env``")
+      $next = [regex]::Replace($next, "(?m)^- \*\*provider\*\*：``FAL_KEY`` 优先，``KIE_API_KEY`` 备选.*$", "- **provider**：``FAL_KEY`` 优先，``KIE_API_KEY`` 备选；key 从 ``$hermesSkillsDisplay/.env`` 读取，兼容本 agent ``skills/.env``")
+      $next = $next.Replace("~/.openclaw/skills", $hermesSkillsDisplay)
+      $next = $next.Replace("OPENCLAW_OUTPUT_MODE", "NAKO_OUTPUT_MODE")
+      $next = $next.Replace("OPENCLAW_CCCONNECT_PROJECT", "NAKO_CCCONNECT_PROJECT")
+      $next = $next.Replace("OPENCLAW_CONFIG_PATH", "NAKO_CONFIG")
+      $next = $next.Replace("OPENCLAW_CONFIG", "NAKO_CONFIG")
+      $next = $next.Replace("cc-connect / openclaw 多渠道层", "cc-connect / Hermes 多渠道层")
+      $next = $next.Replace("openclaw cron", "Hermes/外部调度")
+      $next = $next.Replace("openclaw 原生 feishu channel", "Feishu 直连模式")
+      $next = $next.Replace("openclaw.json -> skills.entries.voice.env", "$hermesSkillsDisplay/.env")
+      $next = $next.Replace("openclaw.json -> skills.entries.selfie.env", "$hermesSkillsDisplay/.env")
+      $next = $next.Replace("QClaw 默认是 ``~/.qclaw/openclaw.json``。", "Hermes 默认读取 ``~/.hermes/.env`` 与本目录 ``skills/.env``。")
+      $next = $next.Replace("Supports all OpenClaw messaging channels", "Supports Hermes and cc-connect messaging channels")
+      if ($next -ne $doc) {
+        Set-Content -Path $docPath -Value $next -NoNewline -Encoding UTF8
+      }
+    } catch {}
+  }
+}
 
 $customPath = Join-Path $AgentWorkspace "custom.md"
 if (-not (Test-Path $customPath)) {
@@ -684,10 +771,14 @@ if (Test-Path (Join-Path $PackRoot "agent\scripts")) {
 
 Dim "保护不动：memory\, sessions\, auth-*.json"
 
-# ─── Merge openclaw.json ────────────────────────────────────────────────────
-Step "7. 合并 openclaw.json"
-$tsBak = Get-Date -Format "yyyyMMdd-HHmmss"
-Copy-Item $OpenclawConfig "$OpenclawConfig.bak-$tsBak"
+if ($Runtime -eq "hermes") {
+  Step "7. 合并 Hermes config.yaml"
+  Info "Hermes runtime 使用 $HermesHome\config.yaml 与 $OpenclawSkills\.env，跳过 openclaw.json 合并"
+} else {
+  # ─── Merge openclaw.json ────────────────────────────────────────────────────
+  Step "7. 合并 openclaw.json"
+  $tsBak = Get-Date -Format "yyyyMMdd-HHmmss"
+  Copy-Item $OpenclawConfig "$OpenclawConfig.bak-$tsBak"
 
 python -c @"
 import json, sys, os
@@ -727,7 +818,7 @@ def set_env(name, keys):
         if v: env[k] = v
 set_env('voice', ['MINIMAX_API_KEY','MINIMAX_GROUP_ID','VOLCENGINE_API_KEY','VOLCENGINE_RESOURCE_ID',
                   'VOICE_DEFAULT_MINIMAX','VOICE_DEFAULT_VOLCENGINE','VOICE_DEFAULT_SPEED','OPENCLAW_GATEWAY_TOKEN'])
-set_env('selfie', ['FAL_KEY','KIE_API_KEY','OPENCLAW_GATEWAY_TOKEN'])
+set_env('selfie', ['FAL_KEY','KIE_API_KEY','SELFIE_REFERENCE_IMAGE','SELFIE_CHARACTER_DESC','OPENCLAW_GATEWAY_TOKEN'])
 
 load = skills.setdefault('load', {})
 extras = load.setdefault('extraDirs', [])
@@ -737,7 +828,8 @@ if gs not in extras: extras.append(gs)
 open(path, 'w', encoding='utf-8').write(json.dumps(cfg, indent=2, ensure_ascii=False) + '\n')
 print(f'merged: agent={agent_id}, primary={primary}')
 "@
-Info "openclaw.json 已合并"
+  Info "openclaw.json 已合并"
+}
 
 function Copy-DirectoryContents($src, $dst) {
   if (-not (Test-Path $src)) { return }
@@ -749,10 +841,10 @@ function Copy-DirectoryContents($src, $dst) {
 
 function Sync-HermesRuntime {
   $hermesWorkspace = Join-Path $HermesHome "workspace\$AgentId"
-  $hermesSkills = Join-Path $HermesHome "skills\openclaw-imports"
+  $hermesSkills = Join-Path $HermesHome "skills\nako"
   New-Item -ItemType Directory -Path $hermesWorkspace, $hermesSkills -Force | Out-Null
-  Copy-DirectoryContents $AgentWorkspace $hermesWorkspace
-  Copy-DirectoryContents $OpenclawSkills $hermesSkills
+  if ($AgentWorkspace -ne $hermesWorkspace) { Copy-DirectoryContents $AgentWorkspace $hermesWorkspace }
+  if ($OpenclawSkills -ne $hermesSkills) { Copy-DirectoryContents $OpenclawSkills $hermesSkills }
   Info "Hermes runtime 已同步: $hermesWorkspace"
 }
 
@@ -831,14 +923,33 @@ def primary_model(value):
 default_identity = {
     "name": "野木奈子",
     "emoji": "🎀",
-    "vibe": "核战后赛博世界专属战斗女仆",
     "theme": "核战后赛博世界专属战斗女仆",
-    "avatar": "assets/nako-avatar.svg",
+    "avatar": "assets/nako-avatar-head.png",
+}
+legacy_default_avatars = {
+    "assets/nako-avatar.svg",
+    "https://pulseact.lovappen.cn/test/act_ci_build/dlc-promotion/act-gengen/images/e.png",
 }
 
+def normalize_identity(identity):
+    if not isinstance(identity, dict):
+        return {}
+    result = {}
+    for key in ("name", "emoji", "theme", "avatar"):
+        value = identity.get(key)
+        if isinstance(value, str) and value:
+            result[key] = value
+    if "theme" not in result:
+        vibe = identity.get("vibe")
+        if isinstance(vibe, str) and vibe:
+            result["theme"] = vibe
+    return result
+
 def apply_default_identity(identity):
-    result = dict(identity) if isinstance(identity, dict) else {}
+    result = normalize_identity(identity)
     if agent_id.startswith("agent-nako"):
+        if result.get("avatar") in legacy_default_avatars:
+            result["avatar"] = default_identity["avatar"]
         for key, value in default_identity.items():
             if not result.get(key):
                 result[key] = value
@@ -847,7 +958,7 @@ def apply_default_identity(identity):
 identity = (
     existing_item.get("identity") if isinstance(existing_item.get("identity"), dict)
     else source_item.get("identity") if isinstance(source_item.get("identity"), dict)
-    else default_identity
+    else {}
 )
 identity = apply_default_identity(identity)
 name = existing_item.get("name") or source_item.get("name") or ""

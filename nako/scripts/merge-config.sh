@@ -78,7 +78,7 @@ set_env("voice", [
     "VOICE_DEFAULT_MINIMAX", "VOICE_DEFAULT_VOLCENGINE", "VOICE_DEFAULT_SPEED",
     "OPENCLAW_GATEWAY_TOKEN",
 ])
-set_env("selfie", ["FAL_KEY", "KIE_API_KEY", "OPENCLAW_GATEWAY_TOKEN"])
+set_env("selfie", ["FAL_KEY", "KIE_API_KEY", "SELFIE_REFERENCE_IMAGE", "SELFIE_CHARACTER_DESC", "OPENCLAW_GATEWAY_TOKEN"])
 
 # ── skills.load.extraDirs: ensure the runtime skills dir is present
 load = skills.setdefault("load", {})

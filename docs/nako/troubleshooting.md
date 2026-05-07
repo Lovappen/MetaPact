@@ -67,7 +67,7 @@
 ## selfie
 
 **`No reference image found`**
-→ `<workspace>/skills/.env` 里 `SELFIE_REFERENCE_IMAGE` 没填。填一张角色参考图的公网 URL。
+→ 优先检查 `openclaw.json -> skills.entries.selfie.env.SELFIE_REFERENCE_IMAGE`，旧安装也兼容 `<workspace>/skills/.env`。重跑最新版安装/同步脚本会在已有 fal/kie key 时补默认角色参考图。
 
 **fal.ai 超时**
 → fal 某些时段不稳。降级到 `KIE_API_KEY` + `provider=kie`。
@@ -129,7 +129,7 @@ upstream cc-connect v1.3.2 把 mp4 当文件发。fork [`CodeEagle/cc-connect@la
 bash scripts/cc-connect-setup.sh --agent-id agent-nako --with-weixin --cc-connect-source lazycat
 ```
 
-安装脚本会优先下载 `CodeEagle/cc-connect` release 制品；没有对应平台制品时才尝试本机 Go 构建。需要 `ffmpeg` + `libavcodec-extra`（AMR 编码器）在 PATH，否则语音转码时报 `ffmpeg not found` 或 `Unknown encoder 'libopencore_amrnb'`。
+安装脚本会优先下载 `CodeEagle/cc-connect` release 制品；没有对应平台制品时才尝试本机 Go 构建。需要 `ffmpeg` + AMR 编码器在 PATH，否则微信语音转码会报 `ffmpeg not found` 或 `Unknown encoder 'amr_nb'`。最新版 voice/sing 在转码失败时会明确提示缺少 ffmpeg/AMR 转码能力，并保留生成好的 MP3 文件路径；不会把音频改打成 zip。
 
 ### context_token TTL
 

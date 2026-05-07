@@ -31,9 +31,10 @@ curl -fsSL https://cdn.jsdelivr.net/gh/Lovappen/MetaPact@main/install.sh | bash 
 ```
 
 Selecting Hermes uses `--runtime hermes`. Selecting QClaw uses `--runtime qclaw`.
-The installer still uses OpenClaw as the compatibility source for the Nako
-workspace, then syncs the agent into `~/.hermes/workspace/<agent-id>` for
-Hermes or `~/.qclaw/workspace-<agent-id>` for QClaw.
+Hermes installs directly into `~/.hermes/workspace/<agent-id>` and
+`~/.hermes/skills/nako`; it does not require `~/.openclaw`. QClaw installs into
+`~/.qclaw/workspace-<agent-id>` and uses QClaw's bundled OpenClaw ACP for the
+cc-connect bridge.
 
 QClaw mode must run on the same host/user that has QClaw installed, because it
 uses `~/.qclaw/qclaw.json` to find QClaw's bundled Node and `openclaw.mjs`.

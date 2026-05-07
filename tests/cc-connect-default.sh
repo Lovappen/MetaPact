@@ -7,7 +7,8 @@ grep -Fq 'CC_CONNECT_SOURCE="${CC_CONNECT_SOURCE:-lazycat}"' "$ROOT/install.sh"
 grep -Fq 'QClaw runtime 使用 QClaw 自带模型路由，跳过 OpenClaw provider preset' "$ROOT/install.sh"
 grep -Fq 'AGENT_WORKSPACE="$QCLAW_HOME/workspace-$AGENT_ID"' "$ROOT/install.sh"
 grep -Fq 'name = identity.get("name") or agent_id' "$ROOT/install.sh"
-grep -Fq '"avatar": "assets/nako-avatar.svg"' "$ROOT/install.sh"
+grep -Fq '"avatar": "assets/nako-avatar-head.png"' "$ROOT/install.sh"
+grep -Fq 'legacy_default_avatars = {' "$ROOT/install.sh"
 grep -Fq 'NAKO_OVERWRITE_DEFAULT_WORKSPACE_TEMPLATES=1' "$ROOT/install.sh"
 grep -Fq 'BOOTSTRAP.md.bak-qclaw-template-' "$ROOT/install.sh"
 grep -Fq '[string]$CcConnectSource = "lazycat"' "$ROOT/install.ps1"
@@ -20,9 +21,19 @@ grep -Fq 'Test-DefaultWorkspaceTemplate' "$ROOT/install.ps1"
 grep -Fq '@("--agent-id", $AgentId, "--runtime", $Runtime)' "$ROOT/install.ps1"
 grep -Fq 'QClaw 主模型继承' "$ROOT/install.ps1"
 grep -Fq 'name = identity.get("name") or agent_id' "$ROOT/install.ps1"
-grep -Fq '"avatar": "assets/nako-avatar.svg"' "$ROOT/install.ps1"
-grep -Fq 'OPENCLAW_CONFIG="${OPENCLAW_CONFIG:-$OPENCLAW_HOME/openclaw.json}"' "$ROOT/nako/scripts/lib.sh"
-grep -Fq 'CONFIG="${OPENCLAW_CONFIG:-$OPENCLAW_HOME/openclaw.json}"' "$ROOT/nako/scripts/detect-models.sh"
+grep -Fq '"avatar": "assets/nako-avatar-head.png"' "$ROOT/install.ps1"
+grep -Fq 'legacy_default_avatars = {' "$ROOT/install.ps1"
+grep -Fq 'OPENCLAW_CONFIG="${OPENCLAW_CONFIG:-${OPENCLAW_CONFIG_PATH:-$OPENCLAW_HOME/openclaw.json}}"' "$ROOT/nako/scripts/lib.sh"
+grep -Fq 'CONFIG="${OPENCLAW_CONFIG:-${OPENCLAW_CONFIG_PATH:-$OPENCLAW_HOME/openclaw.json}}"' "$ROOT/nako/scripts/detect-models.sh"
+grep -Fq 'local _cfg="${NAKO_CONFIG:-${OPENCLAW_CONFIG:-${OPENCLAW_CONFIG_PATH:-$HOME/.openclaw/openclaw.json}}}"' "$ROOT/nako/skills/voice/scripts/voice.sh"
+grep -Fq 'local _cfg="${NAKO_CONFIG:-${OPENCLAW_CONFIG:-${OPENCLAW_CONFIG_PATH:-$HOME/.openclaw/openclaw.json}}}"' "$ROOT/nako/skills/selfie/scripts/selfie.sh"
+grep -Fq 'SELFIE_REFERENCE_IMAGE' "$ROOT/scripts/internal/sync-provider-keys-to-openclaw-json.sh"
+grep -Fq 'send --data-dir "$data_dir" --image' "$ROOT/nako/skills/selfie/scripts/selfie.sh"
+grep -Fq '_feishu_send_image_file "$temp_file"' "$ROOT/nako/skills/selfie/scripts/selfie.sh"
+grep -Fq 'send --data-dir "$data_dir" --file' "$ROOT/nako/skills/selfie/scripts/video.sh"
+grep -Fq '_feishu_send_video_file "$VIDEO_FILE"' "$ROOT/nako/skills/selfie/scripts/video.sh"
+grep -Fq 'send --data-dir "$data_dir" --file' "$ROOT/nako/skills/voice/scripts/voice.sh"
+grep -Fq 'send --data-dir "$data_dir" --file' "$ROOT/nako/skills/voice/scripts/sing.sh"
 grep -Fq 'CC_CONNECT_SOURCE="${CC_CONNECT_SOURCE:-lazycat}"' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'elif [ "$CC_CONNECT_SOURCE" = "lazycat" ] || [ "$CC_CONNECT_SOURCE" = "auto" ]; then' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'CC_CONNECT_GO_DOWNLOAD_VERSION="${CC_CONNECT_GO_DOWNLOAD_VERSION:-1.25.0}"' "$ROOT/scripts/cc-connect-setup.sh"
@@ -42,6 +53,13 @@ grep -Fq 'looks_like_cc_connect_main(args)' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'kill -9 $old_pids' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'cc-connect daemon install --work-dir "$HOME/.cc-connect" --force' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'cc-connect daemon start --work-dir "$HOME/.cc-connect"' "$ROOT/scripts/cc-connect-setup.sh"
+grep -Fq 'ensure_cc_connect_api_socket_compat()' "$ROOT/scripts/cc-connect-setup.sh"
+grep -Fq 'ensure_cc_connect_api_socket_compat(work_dir)' "$ROOT/scripts/nako-agent-factory/nako-server.py"
+grep -Fq 'sync_hermes_feishu_env_from_cc_config()' "$ROOT/scripts/cc-connect-setup.sh"
+grep -Fq 'sync_hermes_feishu_env_for_project(aid)' "$ROOT/scripts/nako-agent-factory/nako-server.py"
+grep -Fq 'stream_preview' "$ROOT/scripts/cc-connect-setup.sh"
+grep -Fq 'tool_messages = false' "$ROOT/scripts/cc-connect-setup.sh"
+grep -Fq 'display.tool_messages=false' "$ROOT/scripts/nako-agent-factory/nako-server.py"
 grep -Fq 'nohup cc-connect </dev/null >"$HOME/.cc-connect/cc-connect.log" 2>&1 &' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'warn "${reason}，重启旧 cc-connect 进程: $old_pids"' "$ROOT/scripts/cc-connect-setup.sh"
 ! grep -Fq 'warn "$reason，重启旧 cc-connect 进程: $old_pids"' "$ROOT/scripts/cc-connect-setup.sh"
@@ -51,18 +69,25 @@ grep -Fq 'info "$desc 已配，跳过"' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'openclaw|hermes|qclaw)' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'QCLAW_OPENCLAW_MJS' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'resolve_qclaw_layout' "$ROOT/scripts/cc-connect-setup.sh"
+grep -Fq 'NAKO_OUTPUT_MODE' "$ROOT/scripts/cc-connect-setup.sh"
+grep -Fq 'NAKO_CCCONNECT_PROJECT' "$ROOT/scripts/cc-connect-setup.sh"
+grep -Fq '"OPENCLAW_CONFIG": qclaw_config_path' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq '"OPENCLAW_CONFIG_PATH": qclaw_config_path' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'QCLAW_CC_SESSION_SUFFIX="${QCLAW_CC_SESSION_SUFFIX:-session-cc-connect}"' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'ensure_qclaw_cc_session' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'ensure_qclaw_nako_persona' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'ensure_qclaw_agent_registration' "$ROOT/scripts/cc-connect-setup.sh"
-grep -Fq '"avatar": "assets/nako-avatar.svg"' "$ROOT/scripts/cc-connect-setup.sh"
+grep -Fq '"avatar": "assets/nako-avatar-head.png"' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'f"agent:{agent_id}:{qclaw_session_suffix}"' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'sync_qclaw_runtime' "$ROOT/install.sh"
+grep -Fq '"selfie": ["FAL_KEY", "KIE_API_KEY", "SELFIE_REFERENCE_IMAGE", "SELFIE_CHARACTER_DESC", "OPENCLAW_GATEWAY_TOKEN"]' "$ROOT/install.sh"
+grep -Fq "set_env('selfie', ['FAL_KEY','KIE_API_KEY','SELFIE_REFERENCE_IMAGE','SELFIE_CHARACTER_DESC','OPENCLAW_GATEWAY_TOKEN'])" "$ROOT/install.ps1"
+grep -Fq 'set_env("selfie", ["FAL_KEY", "KIE_API_KEY", "SELFIE_REFERENCE_IMAGE", "SELFIE_CHARACTER_DESC", "OPENCLAW_GATEWAY_TOKEN"])' "$ROOT/nako/scripts/merge-config.sh"
 grep -Fq 'f"  - name: {yaml_quote(name)}"' "$ROOT/install.sh"
 ! grep -Fq 'f"  {name}:"' "$ROOT/install.sh"
-grep -Fq -- '- Avatar: assets/nako-avatar.svg' "$ROOT/nako/agent/IDENTITY.md"
+grep -Fq -- '- Avatar: assets/nako-avatar-head.png' "$ROOT/nako/agent/IDENTITY.md"
 test -f "$ROOT/nako/agent/assets/nako-avatar.svg"
+test -f "$ROOT/nako/agent/assets/nako-avatar-head.png"
 grep -Fq 'https://cdn.jsdelivr.net/gh/Lovappen/MetaPact@${AGENTS_REF}/install.sh' "$ROOT/scripts/nako-agent-factory/install.sh"
 grep -Fq 'https://cdn.jsdelivr.net/gh/Lovappen/MetaPact@{AGENTS_REF}/install.sh' "$ROOT/scripts/nako-agent-factory/nako-server.py"
 
@@ -216,6 +241,7 @@ assert 'command = "/bin/echo"' in cfg
 assert 'args = ["/tmp/fake-openclaw.mjs", "acp", "--session", "agent:agent-test:session-cc-connect"]' in cfg
 assert f'QCLAW_HOME = "{state}"' in cfg
 assert f'OPENCLAW_STATE_DIR = "{state}"' in cfg
+assert f'OPENCLAW_CONFIG = "{state / "custom-openclaw.json"}"' in cfg
 assert f'OPENCLAW_CONFIG_PATH = "{state / "custom-openclaw.json"}"' in cfg
 project = re.search(r'\[\[projects\]\].*', cfg, re.S).group(0)
 assert ".openclaw" not in project, project
@@ -334,15 +360,18 @@ source = repo / "nako" / "agent"
 for name in ["AGENTS.md", "IDENTITY.md", "SOUL.md", "USER.md", "HEARTBEAT.md", "TOOLS.md"]:
     assert (workspace / name).read_text(encoding="utf-8") == (source / name).read_text(encoding="utf-8"), name
 identity_text = (workspace / "IDENTITY.md").read_text(encoding="utf-8")
-assert "- Avatar: assets/nako-avatar.svg" in identity_text
+assert "- Avatar: assets/nako-avatar-head.png" in identity_text
 assert (workspace / "assets" / "nako-avatar.svg").exists()
+assert (workspace / "assets" / "nako-avatar-head.png").exists()
 qclaw_config = json.loads((state / "openclaw.json").read_text(encoding="utf-8"))
 registered = [
     item for item in qclaw_config["agents"]["list"]
     if isinstance(item, dict) and item.get("id") == "agent-nako"
 ]
 assert len(registered) == 1
-assert registered[0]["identity"]["avatar"] == "assets/nako-avatar.svg"
+assert registered[0]["identity"]["avatar"] == "assets/nako-avatar-head.png"
+assert "vibe" not in registered[0]["identity"]
+assert registered[0]["identity"]["theme"] == "核战后赛博世界专属战斗女仆"
 assert not (workspace / "BOOTSTRAP.md").exists()
 state_file = workspace / ".openclaw" / "workspace-state.json"
 setup_state = json.loads(state_file.read_text(encoding="utf-8"))
@@ -400,7 +429,7 @@ workspace.mkdir(parents=True)
     encoding="utf-8",
 )
 (workspace / "IDENTITY.md").write_text(
-    "# IDENTITY - custom\n\n**姓名**：野木奈子\n\ncustom line\n",
+    "# IDENTITY - custom\n\n**姓名**：野木奈子\n- Avatar: https://pulseact.lovappen.cn/test/act_ci_build/dlc-promotion/act-gengen/images/e.png\n\ncustom line\n",
     encoding="utf-8",
 )
 PY
@@ -422,15 +451,109 @@ workspace = state / "workspace-agent-nako"
 identity_text = (workspace / "IDENTITY.md").read_text(encoding="utf-8")
 assert "# IDENTITY - custom" in identity_text
 assert "custom line" in identity_text
-assert "- Avatar: assets/nako-avatar.svg" in identity_text
+assert "- Avatar: assets/nako-avatar-head.png" in identity_text
 assert (workspace / "assets" / "nako-avatar.svg").exists()
+assert (workspace / "assets" / "nako-avatar-head.png").exists()
 qclaw_config = json.loads((state / "openclaw.json").read_text(encoding="utf-8"))
 registered = [
     item for item in qclaw_config["agents"]["list"]
     if isinstance(item, dict) and item.get("id") == "agent-nako"
 ]
 assert len(registered) == 1
-assert registered[0]["identity"]["avatar"] == "assets/nako-avatar.svg"
+assert registered[0]["identity"]["avatar"] == "assets/nako-avatar-head.png"
+assert "vibe" not in registered[0]["identity"]
+assert registered[0]["identity"]["theme"] == "核战后赛博世界专属战斗女仆"
+PY
+
+tmp5="$(mktemp -d)"
+trap 'rm -rf "$tmp" "$tmp2" "$tmp3" "$tmp4" "$tmp5"' EXIT
+envfile5="$tmp5/bash_env"
+cat > "$envfile5" <<'EOF'
+cc-connect() {
+  case "$1" in
+    --version) echo "cc-connect lazycat/v1.3.3"; return 0 ;;
+    daemon) return 0 ;;
+    *) return 0 ;;
+  esac
+}
+ps() { return 0; }
+kill() { return 0; }
+sudo() { return 1; }
+EOF
+mkdir -p "$tmp5/bin"
+cat > "$tmp5/bin/hermes" <<'EOF'
+#!/usr/bin/env bash
+case "$*" in
+  status) exit 0 ;;
+  "acp") exit 0 ;;
+  *) exit 1 ;;
+esac
+EOF
+chmod +x "$tmp5/bin/hermes"
+mkdir -p "$tmp5/.cc-connect"
+cat > "$tmp5/.cc-connect/config.toml" <<EOF
+language = "en"
+
+[[projects]]
+name = "agent-test"
+
+[projects.agent]
+type = "acp"
+
+[projects.agent.options]
+work_dir = "/old"
+command = "old"
+args = ["old"]
+env = { NAKO_AGENT_RUNTIME = "hermes" }
+
+[[projects.platforms]]
+type = "feishu"
+
+[projects.platforms.options]
+app_id = "cli_x"
+app_secret = "secret_x"
+enable_feishu_card = true
+reply_to_trigger = true
+EOF
+(
+  cd "$tmp5"
+  HOME="$tmp5" HERMES_HOME="$tmp5/.hermes" PATH="$tmp5/bin:$PATH" BASH_ENV="$envfile5" \
+    bash "$ROOT/scripts/cc-connect-setup.sh" \
+      --agent-id agent-test --runtime hermes \
+      --cc-connect-source skip --non-interactive >/dev/null
+)
+python3 - "$tmp5" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+cfg = (root / ".cc-connect" / "config.toml").read_text(encoding="utf-8")
+assert '[stream_preview]' in cfg
+assert 'enabled = false' in cfg
+assert '[display]' in cfg
+assert 'tool_messages = false' in cfg
+project = re.search(r'\[\[projects\]\].*', cfg, re.S).group(0)
+assert f'work_dir = "{root / ".hermes" / "workspace" / "agent-test"}"' in project
+assert 'command = "' in project and "/hermes" in project
+assert 'args = ["acp"]' in project
+assert 'HERMES_HOME = "' in project
+assert 'NAKO_OUTPUT_MODE = "acp"' in project
+assert 'NAKO_CCCONNECT_PROJECT = "agent-test"' in project
+assert 'NAKO_AGENT_WORKSPACE = "' in project
+assert 'NAKO_SKILLS_DIR = "' in project
+assert 'NAKO_MEDIA_HOME = "' in project
+assert 'NAKO_AGENT_RUNTIME = "hermes"' in project
+assert 'enable_feishu_card = false' in project
+assert 'reply_to_trigger = false' in project
+assert 'enable_feishu_card = true' not in project
+assert 'reply_to_trigger = true' not in project
+assert "OPENCLAW_OUTPUT_MODE" not in project
+assert "OPENCLAW_CCCONNECT_PROJECT" not in project
+assert ".openclaw" not in project
+env = (root / ".hermes" / "workspace" / "agent-test" / "skills" / ".env").read_text(encoding="utf-8")
+assert "FEISHU_APP_ID=cli_x" in env
+assert "FEISHU_APP_SECRET=secret_x" in env
 PY
 
 echo "cc-connect default source checks passed"

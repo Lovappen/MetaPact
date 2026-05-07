@@ -8,14 +8,14 @@ bash install.sh
 
 安装器 8 步：
 
-1. **前置检查** — 验证 `python3 jq curl`。默认 OpenClaw 模式要求 `~/.openclaw/openclaw.json` 存在；`--runtime qclaw` 会直接使用 `~/.qclaw/openclaw.json`，不要求 `~/.openclaw`。软依赖 (`whisper ffmpeg ffprobe xxd uuidgen doki`) 缺失只警告不退出。
+1. **前置检查** — 验证 `python3 jq curl`。默认 OpenClaw 模式要求 `~/.openclaw/openclaw.json` 存在；`--runtime hermes` 只要求 `hermes` 命令可用，并使用 `~/.hermes`；`--runtime qclaw` 会直接使用 `~/.qclaw/openclaw.json`，不要求 `~/.openclaw`。软依赖 (`whisper ffmpeg ffprobe xxd uuidgen doki`) 缺失只警告不退出。
 2. **Agent 冲突** — 若 `agent-nako` workspace 已存在，问你升级、重命名、还是中止。
-3. **模型映射** — 读 `~/.openclaw/openclaw.json` 的 `agents.defaults.models`，按 `config/model-map.yaml` 的 `roleplay` 偏好挑一个。找不到 → 退化到 `general`；还找不到 → 报错退出，让你先加模型。
+3. **模型映射** — OpenClaw 会读 `~/.openclaw/openclaw.json` 的 `agents.defaults.models`，按 `config/model-map.yaml` 的 `roleplay` 偏好挑一个；Hermes 会沿用现有 `~/.hermes/config.yaml` 或 `HERMES_MODEL=provider/model`，其中 `sensenova/SenseChat-Character-Agt` 会被写成 Hermes `custom_providers` 的 OpenAI-compatible endpoint；没有可沿用模型时默认 `zai/glm-4.5-flash`；QClaw 继承 QClaw 模型路由。
 4. **收集凭据** — 交互问：飞书 App ID/Secret、MiniMax、Volcengine、FAL、参考图。留空即跳过该能力。
-5. **安装 skills** — 拷贝 `skills/{vision,hearing,voice,selfie,dokidoki,skill-log.sh}` 到 `~/.openclaw/skills/`。共享 `.env` 作为旧版 fallback 只填入新 key，已有值保留。
-6. **安装 agent 人设** — 拷贝 `agent/*.md` 到 `~/.openclaw/workspace/<id>/`。`custom.md` 首次创建空壳，之后永远不动。
-7. **合并 openclaw.json** — 备份旧配置 (`.bak-<ts>`)，把 agent 加到 `agents.list`，把 voice/selfie 的 provider key 写到 `skills.entries.*.env`。
-8. **runtime 接入** — 默认使用 OpenClaw；如果传 `--runtime hermes`，会把 workspace 同步到 `~/.hermes/workspace/<id>` 并让 cc-connect 调 `hermes acp`；如果传 `--runtime qclaw`，会把 agent 写入 `~/.qclaw/workspace-<id>` 和 `~/.qclaw/openclaw.json`，并让 cc-connect 调 QClaw 自带的 OpenClaw ACP。QClaw 的飞书/微信消息固定进入 `agent:<id>:session-cc-connect`，在 QClaw 里显示为 `cc-connect 飞书/微信` 会话。
+5. **安装 skills** — OpenClaw/QClaw 拷贝到对应 runtime 的 `skills/`；Hermes 拷贝到 `~/.hermes/skills/nako/`。共享 `.env` 只填入新 key，已有值保留。
+6. **安装 agent 人设** — OpenClaw 使用 `~/.openclaw/workspace/<id>/`；Hermes 使用 `~/.hermes/workspace/<id>/`；QClaw 使用 `~/.qclaw/workspace-<id>/`。`custom.md` 首次创建空壳，之后永远不动。
+7. **合并 runtime 配置** — OpenClaw/QClaw 会备份并合并 `openclaw.json`；Hermes 不依赖 `~/.openclaw`，会重写 `~/.hermes/config.yaml` 中的顶层 `model` / `custom_providers` / `skills` Nako managed block。OpenAI-compatible 模型会按 Hermes schema 写入 `custom_providers` 列表，避免旧 OpenClaw skills 路径或错误 provider 格式在重装后继续生效，并读取 `~/.hermes/skills/nako/.env` / `~/.hermes/.env`。
+8. **runtime 接入** — 默认使用 OpenClaw；`--runtime hermes` 会让 cc-connect 调 `hermes acp`，并注入 `NAKO_*` 环境变量；`--runtime qclaw` 会把 agent 写入 `~/.qclaw/workspace-<id>` 和 QClaw 的 `openclaw.json`，并让 cc-connect 调 QClaw 自带的 OpenClaw ACP。QClaw 的飞书/微信消息固定进入 `agent:<id>:session-cc-connect`，在 QClaw 里显示为 `cc-connect 飞书/微信` 会话。
 9. **冒烟测试** — 检查每个 skill 的脚本、依赖、env 是否齐。
 
 ## Flags
@@ -24,10 +24,10 @@ bash install.sh
 |---|---|
 | `--force` | 覆盖已存在的人设文件（仍会备份） |
 | `--agent-id <id>` | 改 agent id（默认 `agent-nako`） |
-| `--runtime openclaw\|hermes\|qclaw` | 选择运行时和 cc-connect 消息后端；默认 `openclaw`，Hermes 模式要求已安装 `hermes`，QClaw 模式要求在同一 host/user 下已安装并启动过 QClaw 以生成 `~/.qclaw/qclaw.json`，但不要求 `~/.openclaw/openclaw.json` |
+| `--runtime openclaw\|hermes\|qclaw` | 选择运行时和 cc-connect 消息后端；默认 `openclaw`。Hermes 模式要求已安装 `hermes`，直接使用 `~/.hermes`，不要求 `~/.openclaw`；QClaw 模式要求在同一 host/user 下已安装并启动过 QClaw 以生成 `~/.qclaw/qclaw.json`，但不要求 `~/.openclaw/openclaw.json` |
 | `--non-interactive` | 不交互；从环境变量读所有凭据 |
 | `--skip-skills` | 只装 agent 人设，跳过 skills |
-| `--skip-models` | 不做模型映射，沿用 `openclaw.json` 现有 primary |
+| `--skip-models` | 不做 OpenClaw 模型映射；OpenClaw/QClaw 沿用现有 primary，Hermes 沿用 `HERMES_MODEL`、现有 `~/.hermes/config.yaml` 或默认 Hermes 主模型 |
 | `--reset-secrets` | 不复用已有 `.env` 凭据，重新按环境变量 / 交互输入写入 |
 | `--with-cc-connect` | 安装并配置 cc-connect project |
 | `--with-feishu` | 配置 cc-connect 并引导飞书 QR |
@@ -97,14 +97,14 @@ $env:MINIMAX_GROUP_ID = "123"
 pwsh install.ps1 -NonInteractive
 ```
 
-安装器会优先复用已有 `openclaw.json -> skills.entries.*.env`，再兼容复用 `~/.openclaw/skills/.env` 与 `<workspace>/skills/.env` 中的凭据；需要重新输入时加 `--reset-secrets` / `-ResetSecrets`。
+OpenClaw/QClaw 会优先复用已有 `openclaw.json -> skills.entries.*.env`，再兼容复用 runtime `skills/.env` 与 `<workspace>/skills/.env` 中的凭据。Hermes 会复用 `~/.hermes/skills/nako/.env`、`~/.hermes/.env` 与 `<workspace>/skills/.env`。需要重新输入时加 `--reset-secrets` / `-ResetSecrets`。
 
 ## 重装 / 升级
 
 直接重跑 `install.sh`。安装器会：
 
 - ✅ 拉最新 skill 脚本（每个文件单独问是否覆盖）
-- ✅ 合并 `openclaw.json` 的 `skills.entries.*.env`，并保留旧版 `.env` fallback
+- ✅ OpenClaw/QClaw 合并 `openclaw.json` 的 `skills.entries.*.env`；Hermes 更新 `~/.hermes/config.yaml` 的 Nako managed block，并保留 `.env` fallback
 - ✅ 保留 `custom.md` / `memory/` / `sessions/`
 - ❌ 不会动 `openclaw.json` 中其他 agent 的配置
 

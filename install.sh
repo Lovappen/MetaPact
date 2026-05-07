@@ -65,6 +65,9 @@ CC_CONNECT_SOURCE="${CC_CONNECT_SOURCE:-lazycat}"
 NAKO_AGENT_RUNTIME="${NAKO_AGENT_RUNTIME:-openclaw}"
 HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
 HERMES_BIN="${HERMES_BIN:-}"
+HERMES_DEFAULT_MODEL="${HERMES_DEFAULT_MODEL:-zai/glm-4.5-flash}"
+HERMES_SKILLS_DIR="${HERMES_SKILLS_DIR:-$HERMES_HOME/skills/nako}"
+HERMES_MEDIA_HOME="${HERMES_MEDIA_HOME:-$HERMES_HOME/media}"
 QCLAW_HOME="${QCLAW_HOME:-$HOME/.qclaw}"
 QCLAW_NODE_BIN="${QCLAW_NODE_BIN:-}"
 QCLAW_OPENCLAW_MJS="${QCLAW_OPENCLAW_MJS:-}"
@@ -138,7 +141,15 @@ print(cur if isinstance(cur, str) else "")
 PY
 }
 
-if [ "$NAKO_AGENT_RUNTIME" = "qclaw" ]; then
+if [ "$NAKO_AGENT_RUNTIME" = "hermes" ]; then
+  HERMES_HOME="$(expand_path "$HERMES_HOME")"
+  HERMES_SKILLS_DIR="$(expand_path "$HERMES_SKILLS_DIR")"
+  HERMES_MEDIA_HOME="$(expand_path "$HERMES_MEDIA_HOME")"
+  OPENCLAW_HOME="$HERMES_HOME"
+  OPENCLAW_SKILLS_DIR="$HERMES_SKILLS_DIR"
+  OPENCLAW_WORKSPACES="$HERMES_HOME/workspace"
+  OPENCLAW_CONFIG="$HERMES_HOME/openclaw-compat.json"
+elif [ "$NAKO_AGENT_RUNTIME" = "qclaw" ]; then
   QCLAW_HOME="$(expand_path "$QCLAW_HOME")"
   QCLAW_APP_CONFIG="$QCLAW_HOME/qclaw.json"
   _qclaw_state_dir="$(qclaw_app_value_early "$QCLAW_APP_CONFIG" stateDir)"
@@ -160,7 +171,7 @@ if [ "$NAKO_AGENT_RUNTIME" = "qclaw" ]; then
 fi
 
 export OPENCLAW_HOME OPENCLAW_CONFIG OPENCLAW_SKILLS_DIR OPENCLAW_WORKSPACES
-export QCLAW_HOME
+export HERMES_HOME HERMES_SKILLS_DIR HERMES_MEDIA_HOME QCLAW_HOME
 [ -n "${QCLAW_OPENCLAW_CONFIG:-}" ] && export QCLAW_OPENCLAW_CONFIG
 
 if [ "$LIST" = "1" ]; then
@@ -192,7 +203,21 @@ for b in python3 jq curl; do
   if has_bin "$b"; then info "$b"; else err "$b"; MISSING_HARD+=("$b"); fi
 done
 
-if [ "$NAKO_AGENT_RUNTIME" = "qclaw" ]; then
+if [ "$NAKO_AGENT_RUNTIME" = "hermes" ]; then
+  if [ -z "${HERMES_BIN:-}" ]; then
+    if [ -x "$HOME/.local/bin/hermes" ]; then
+      HERMES_BIN="$HOME/.local/bin/hermes"
+    elif command -v hermes >/dev/null 2>&1; then
+      HERMES_BIN="$(command -v hermes)"
+    fi
+  fi
+  if [ -z "${HERMES_BIN:-}" ]; then
+    err "选择 Hermes runtime，但找不到 hermes 命令。请先安装 Hermes，或设置 HERMES_BIN=/path/to/hermes"
+    exit 1
+  fi
+  mkdir -p "$HERMES_HOME" "$HERMES_SKILLS_DIR" "$HERMES_MEDIA_HOME"
+  info "Hermes 目录 $HERMES_HOME"
+elif [ "$NAKO_AGENT_RUNTIME" = "qclaw" ]; then
   if [ ! -f "$QCLAW_HOME/qclaw.json" ]; then
     err "选择 QClaw runtime，但找不到 $QCLAW_HOME/qclaw.json。请先下载安装并启动一次 QClaw。"
     exit 1
@@ -219,6 +244,12 @@ if [ "${#MISSING_HARD[@]}" -gt 0 ]; then
 fi
 
 # Optional bins (not fatal)
+ffmpeg_has_amr_encoder() {
+  has_bin ffmpeg || return 1
+  ffmpeg -hide_banner -encoders 2>/dev/null \
+    | grep -Eq '(^|[[:space:]])(amr_nb|libopencore_amrnb)([[:space:]]|$)'
+}
+
 MISSING_SOFT=()
 for b in whisper ffmpeg ffprobe xxd uuidgen doki; do
   has_bin "$b" && info "$b (可选)" || { warn "$b 缺失 (可选)"; MISSING_SOFT+=("$b"); }
@@ -233,6 +264,27 @@ if [ "${#MISSING_SOFT[@]}" -gt 0 ]; then
   dim "macOS 建议：brew install openai-whisper ffmpeg ; npm i -g @tryjoy/dokidoki"
   dim "Linux：sudo apt install ffmpeg libavcodec-extra（cc-connect 微信视频转码需要 AMR）"
   echo
+
+  # 询问是否安装 ffmpeg。voice/hearing/video 都依赖它，微信语音还需要 AMR 编码支持。
+  if echo " ${MISSING_SOFT[*]} " | grep -Eq ' (ffmpeg|ffprobe) '; then
+    if [ "$NON_INTERACTIVE" = "1" ]; then
+      _do_ffmpeg=0
+    elif confirm "需要语音/视频转码（ffmpeg）吗？现在安装" y; then
+      _do_ffmpeg=1
+    else
+      _do_ffmpeg=0
+    fi
+    if [ "$_do_ffmpeg" = "1" ]; then
+      OS=$(uname -s)
+      if [ "$OS" = "Darwin" ] && command -v brew >/dev/null; then
+        brew install ffmpeg
+      elif [ "$OS" = "Linux" ] && command -v apt-get >/dev/null; then
+        sudo apt-get install -y ffmpeg libavcodec-extra
+      else
+        warn "无法自动安装 ffmpeg；请手动安装后重跑。"
+      fi
+    fi
+  fi
 
   # 询问是否后台装 whisper
   if echo "${MISSING_SOFT[@]}" | grep -q whisper; then
@@ -251,9 +303,9 @@ if [ "${#MISSING_SOFT[@]}" -gt 0 ]; then
       OS=$(uname -s)
       (
         if [ "$OS" = "Darwin" ] && command -v brew >/dev/null; then
-          brew install openai-whisper ffmpeg
+          brew install openai-whisper
         elif [ "$OS" = "Linux" ]; then
-          if command -v apt-get >/dev/null; then sudo apt-get install -y ffmpeg libavcodec-extra python3-pip; fi
+          if command -v apt-get >/dev/null; then sudo apt-get install -y python3-pip; fi
           pip install --user -U openai-whisper
         fi
         rm -f "$MARKER"
@@ -306,6 +358,11 @@ if [ "${#MISSING_SOFT[@]}" -gt 0 ]; then
       warn "无 npm，跳过 doki 安装"
     fi
   fi
+fi
+
+if has_bin ffmpeg && ! ffmpeg_has_amr_encoder; then
+  warn "当前 ffmpeg 缺少 AMR 编码器（amr_nb/libopencore_amrnb）。微信原生语音气泡可能发送失败；失败时 voice/sing 会保留 MP3 文件路径并提示缺少的转码能力。"
+  dim "  macOS 可尝试安装带 AMR 支持的 ffmpeg；Linux 通常需要：sudo apt install ffmpeg libavcodec-extra"
 fi
 
 # ─── Gateway preflight: ensure it's up early so cron / acp 后面都顺 ─────────
@@ -479,14 +536,33 @@ def primary_model(value):
 default_identity = {
     "name": "野木奈子",
     "emoji": "🎀",
-    "vibe": "核战后赛博世界专属战斗女仆",
     "theme": "核战后赛博世界专属战斗女仆",
-    "avatar": "assets/nako-avatar.svg",
+    "avatar": "assets/nako-avatar-head.png",
+}
+legacy_default_avatars = {
+    "assets/nako-avatar.svg",
+    "https://pulseact.lovappen.cn/test/act_ci_build/dlc-promotion/act-gengen/images/e.png",
 }
 
+def normalize_identity(identity):
+    if not isinstance(identity, dict):
+        return {}
+    result = {}
+    for key in ("name", "emoji", "theme", "avatar"):
+        value = identity.get(key)
+        if isinstance(value, str) and value:
+            result[key] = value
+    if "theme" not in result:
+        vibe = identity.get("vibe")
+        if isinstance(vibe, str) and vibe:
+            result["theme"] = vibe
+    return result
+
 def apply_default_identity(identity):
-    result = dict(identity) if isinstance(identity, dict) else {}
+    result = normalize_identity(identity)
     if agent_id.startswith("agent-nako"):
+        if result.get("avatar") in legacy_default_avatars:
+            result["avatar"] = default_identity["avatar"]
         for key, value in default_identity.items():
             if not result.get(key):
                 result[key] = value
@@ -495,7 +571,7 @@ def apply_default_identity(identity):
 identity = (
     existing_item.get("identity") if isinstance(existing_item.get("identity"), dict)
     else source_item.get("identity") if isinstance(source_item.get("identity"), dict)
-    else default_identity
+    else {}
 )
 identity = apply_default_identity(identity)
 name = existing_item.get("name") or source_item.get("name") or ""
@@ -550,40 +626,34 @@ sync_hermes_runtime() {
   }
 
   local hermes_workspace="$HERMES_HOME/workspace/$AGENT_ID"
-  local hermes_skills="$HERMES_HOME/skills/openclaw-imports"
+  local hermes_skills="$HERMES_SKILLS_DIR"
   mkdir -p "$hermes_workspace" "$hermes_skills" "$HERMES_HOME/memories"
 
-  if "$HERMES_BIN" claw migrate --help >/dev/null 2>&1; then
-    "$HERMES_BIN" claw migrate \
-      --source "$OPENCLAW_HOME" \
-      --preset full \
-      --yes \
-      --workspace-target "$hermes_workspace" >/tmp/nako-hermes-migrate.log 2>&1 \
-      || warn "Hermes claw migrate 未完全成功，继续使用文件同步兜底；日志 /tmp/nako-hermes-migrate.log"
-  fi
-
-  cp -R "$AGENT_WORKSPACE/." "$hermes_workspace/"
-  if [ -d "$OPENCLAW_SKILLS_DIR" ]; then
-    cp -R "$OPENCLAW_SKILLS_DIR/." "$hermes_skills/"
+  if [ "$AGENT_WORKSPACE" != "$hermes_workspace" ]; then
+    cp -R "$AGENT_WORKSPACE/." "$hermes_workspace/"
   fi
   [ -f "$AGENT_WORKSPACE/SOUL.md" ] && cp "$AGENT_WORKSPACE/SOUL.md" "$HERMES_HOME/SOUL.md"
   [ -f "$AGENT_WORKSPACE/USER.md" ] && cp "$AGENT_WORKSPACE/USER.md" "$HERMES_HOME/memories/USER.md"
   [ -f "$AGENT_WORKSPACE/MEMORY.md" ] && cp "$AGENT_WORKSPACE/MEMORY.md" "$HERMES_HOME/memories/MEMORY.md"
   [ -f "$AGENT_WORKSPACE/skills/.env" ] && cp "$AGENT_WORKSPACE/skills/.env" "$hermes_skills/.env.$AGENT_ID"
 
-  python3 - "$HERMES_HOME" "$OPENCLAW_HOME" "$AGENT_ID" "${PRIMARY:-}" "$PRESET_FILE" "$hermes_skills" "$OPENCLAW_SKILLS_DIR" <<'PY'
+  python3 - "$HERMES_HOME" "$AGENT_ID" "${PRIMARY:-}" "$PRESET_FILE" "$hermes_skills" <<'PY'
 import json
 import os
 import re
 import sys
 from pathlib import Path
 
-hermes_home, openclaw_home, agent_id, primary, preset_path, hermes_skills, openclaw_skills = sys.argv[1:]
+hermes_home, agent_id, primary, preset_path, hermes_skills = sys.argv[1:]
 home = Path(hermes_home)
 home.mkdir(parents=True, exist_ok=True)
 provider, _, model = primary.partition("/")
 if not model:
     model = primary
+if not provider:
+    provider = "zai"
+if not model:
+    model = "glm-4.5-flash"
 
 def load_json(path):
     try:
@@ -592,10 +662,17 @@ def load_json(path):
         return {}
 
 preset = load_json(preset_path)
-openclaw_cfg = load_json(Path(openclaw_home) / "openclaw.json")
 providers = {}
 providers.update(preset if isinstance(preset, dict) else {})
-providers.update(((openclaw_cfg.get("models") or {}).get("providers") or {}))
+providers.setdefault("zai", {})
+providers["zai"].update({
+    "baseUrl": "https://api.z.ai/api/coding/paas/v4",
+    "models": [
+        {"id": "glm-4.5-flash"},
+        {"id": "glm-4.7"},
+        {"id": "glm-4.7-flash"},
+    ],
+})
 
 def env_key_for(name):
     table = {"zai": "ZAI_API_KEY", "glm": "GLM_API_KEY", "sensenova": "SENSENOVA_API_KEY"}
@@ -606,8 +683,8 @@ def valid_secret(value):
 
 def find_key_for_provider(name):
     candidates = [
-        Path(openclaw_home) / "agents" / agent_id / "agent" / "auth-profiles.json",
-        Path(openclaw_home) / "agents" / "main" / "agent" / "auth-profiles.json",
+        home / "agents" / agent_id / "agent" / "auth-profiles.json",
+        home / "agents" / "main" / "agent" / "auth-profiles.json",
     ]
     key_names = {"apiKey", "api_key", "apikey", "key", "token", "accessToken", "access_token"}
 
@@ -653,6 +730,9 @@ for name in sorted(providers):
     env_key = env_key_for(name)
     if existing.get(env_key):
         continue
+    if name == "zai" and existing.get("GLM_API_KEY"):
+        additions.append(f"{env_key}={existing['GLM_API_KEY']}")
+        continue
     secret = os.environ.get(env_key) or find_key_for_provider(name)
     if secret:
         additions.append(f"{env_key}={secret}")
@@ -671,6 +751,8 @@ elif not env_path.exists():
 
 provider_cfg = providers.get(provider, {}) if provider else {}
 base_url = provider_cfg.get("baseUrl") or provider_cfg.get("base_url") or ""
+if provider == "zai":
+    base_url = base_url or "https://api.z.ai/api/coding/paas/v4"
 api_mode = "chat_completions"
 selected_key = env_key_for(provider) if provider else ""
 
@@ -678,8 +760,15 @@ def yaml_quote(value):
     return json.dumps(value, ensure_ascii=False)
 
 provider_lines = []
-for name, cfg in sorted(providers.items()):
+managed_provider_names = [provider] if provider and provider not in {"zai"} else []
+for name in managed_provider_names:
+    cfg = providers.get(name, {})
     models = [m.get("id") for m in (cfg.get("models") or []) if isinstance(m, dict) and m.get("id")]
+    context_lengths = {
+        m.get("id"): m.get("contextWindow")
+        for m in (cfg.get("models") or [])
+        if isinstance(m, dict) and m.get("id") and m.get("contextWindow")
+    }
     if not models and name == provider and model:
         models = [model]
     provider_lines.extend([
@@ -690,8 +779,17 @@ for name, cfg in sorted(providers.items()):
         f"    model: {yaml_quote(models[0] if models else '')}",
         "    models:",
     ])
-    provider_lines.extend([f"      - {yaml_quote(m)}" for m in models] or ["      - \"\""])
+    if models:
+        for m in models:
+            provider_lines.append(f"      {yaml_quote(m)}:")
+            if context_lengths.get(m):
+                provider_lines.append(f"        context_length: {int(context_lengths[m])}")
+            else:
+                provider_lines.append("        context_length: null")
+    else:
+        provider_lines.append("      {}")
 
+custom_provider_block = (["custom_providers:"] + provider_lines) if provider_lines else []
 managed = "\n".join([
     "# BEGIN NAKO HERMES RUNTIME",
     "model:",
@@ -699,12 +797,10 @@ managed = "\n".join([
     f"  provider: {yaml_quote(provider)}",
     f"  base_url: {yaml_quote(base_url)}",
     f"  api_mode: {yaml_quote(api_mode)}",
-    "custom_providers:",
-    *provider_lines,
+    *custom_provider_block,
     "skills:",
     "  external_dirs:",
     f"    - {yaml_quote(hermes_skills)}",
-    f"    - {yaml_quote(openclaw_skills)}",
     "# END NAKO HERMES RUNTIME",
     "",
 ])
@@ -716,6 +812,7 @@ new = re.sub(
     "",
     old,
 ).rstrip()
+new = re.sub(r"(?ms)^(?:model|custom_providers|skills):\n(?:^[ \t].*\n?)*", "", new).rstrip()
 new = (new + "\n\n" if new else "") + managed
 if old != new:
     if config_path.exists():
@@ -797,12 +894,18 @@ fi
 # ─── Existing agent check ───────────────────────────────────────────────────
 step "2. 检查 agent 冲突"
 
-if [ "$NAKO_AGENT_RUNTIME" = "qclaw" ]; then
+if [ "$NAKO_AGENT_RUNTIME" = "hermes" ]; then
+  AGENT_WORKSPACE="$HERMES_HOME/workspace/$AGENT_ID"
+elif [ "$NAKO_AGENT_RUNTIME" = "qclaw" ]; then
   AGENT_WORKSPACE="$QCLAW_HOME/workspace-$AGENT_ID"
 else
   AGENT_WORKSPACE="$OPENCLAW_WORKSPACES/$AGENT_ID"
 fi
-AGENT_DIR="$OPENCLAW_HOME/agents/$AGENT_ID"
+if [ "$NAKO_AGENT_RUNTIME" = "hermes" ]; then
+  AGENT_DIR="$HERMES_HOME/agents/$AGENT_ID"
+else
+  AGENT_DIR="$OPENCLAW_HOME/agents/$AGENT_ID"
+fi
 NAKO_AGENT_CONFIG_DIR="$AGENT_DIR/agent"
 export AGENT_WORKSPACE NAKO_AGENT_CONFIG_DIR
 
@@ -822,12 +925,18 @@ if [ -d "$AGENT_WORKSPACE" ] || [ -d "$AGENT_DIR" ]; then
       用别的*)
         NEW=$(ask "新 agent id（如 agent-nako2）" "${AGENT_ID}2")
         AGENT_ID="$NEW"
-        if [ "$NAKO_AGENT_RUNTIME" = "qclaw" ]; then
+        if [ "$NAKO_AGENT_RUNTIME" = "hermes" ]; then
+          AGENT_WORKSPACE="$HERMES_HOME/workspace/$AGENT_ID"
+        elif [ "$NAKO_AGENT_RUNTIME" = "qclaw" ]; then
           AGENT_WORKSPACE="$QCLAW_HOME/workspace-$AGENT_ID"
         else
           AGENT_WORKSPACE="$OPENCLAW_WORKSPACES/$AGENT_ID"
         fi
-        AGENT_DIR="$OPENCLAW_HOME/agents/$AGENT_ID"
+        if [ "$NAKO_AGENT_RUNTIME" = "hermes" ]; then
+          AGENT_DIR="$HERMES_HOME/agents/$AGENT_ID"
+        else
+          AGENT_DIR="$OPENCLAW_HOME/agents/$AGENT_ID"
+        fi
         NAKO_AGENT_CONFIG_DIR="$AGENT_DIR/agent"
         export AGENT_WORKSPACE NAKO_AGENT_CONFIG_DIR
         ;;
@@ -837,12 +946,14 @@ if [ -d "$AGENT_WORKSPACE" ] || [ -d "$AGENT_DIR" ]; then
 fi
 
 # ─── Provider preset (zai + sensenova) ─────────────────────────────────────
-# nako 的角色扮演首选 sensenova/SenseChat-Character-Agt，fallback zai/glm-4.7。
-# 这俩都不是 openclaw 内置 provider，得通过 openclaw.json 顶层 .models.providers
-# 注册成 openai-compatible provider。
+# OpenClaw 的角色扮演首选 sensenova/SenseChat-Character-Agt，fallback zai/glm-4.7。
+# Hermes 不直接复用这套 OpenClaw provider preset；它默认使用 Hermes 原生支持的
+# zai/glm-4.5-flash，避免把 OpenClaw provider 名同步成 Hermes unknown provider。
 step "3a. Provider 预设 (zai + sensenova)"
 PRESET_FILE="$PACK_ROOT/config/providers-preset.json"
-if [ "$NAKO_AGENT_RUNTIME" = "qclaw" ]; then
+if [ "$NAKO_AGENT_RUNTIME" = "hermes" ]; then
+  info "Hermes runtime 使用 Hermes 自身模型配置，跳过 OpenClaw provider preset"
+elif [ "$NAKO_AGENT_RUNTIME" = "qclaw" ]; then
   info "QClaw runtime 使用 QClaw 自带模型路由，跳过 OpenClaw provider preset"
 elif [ -f "$PRESET_FILE" ]; then
   python3 - "$OPENCLAW_CONFIG" "$PRESET_FILE" <<'PY'
@@ -880,7 +991,54 @@ fi
 # ─── Model selection ────────────────────────────────────────────────────────
 step "3. 模型匹配"
 
-if [ "$SKIP_MODELS" = "1" ]; then
+if [ "$NAKO_AGENT_RUNTIME" = "hermes" ]; then
+  PRIMARY="${HERMES_MODEL:-}"
+  if [ -z "$PRIMARY" ] && [ -f "$HERMES_HOME/config.yaml" ]; then
+    PRIMARY="$(python3 - "$HERMES_HOME/config.yaml" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8", errors="ignore")
+block = re.search(r'(?ms)^model:\n(?P<body>(?:^[ \t].*\n?)*)', text)
+body = block.group("body") if block else ""
+default = re.search(r'(?m)^\s*default:\s*["\']?([^"\'\n#]+)', body)
+provider = re.search(r'(?m)^\s*provider:\s*["\']?([^"\'\n#]+)', body)
+model = (default.group(1).strip() if default else "")
+prov = (provider.group(1).strip() if provider else "")
+if model and "/" not in model and prov:
+    model = f"{prov}/{model}"
+print(model)
+PY
+)"
+  fi
+  if [ -z "${HERMES_MODEL:-}" ]; then
+    PRIMARY="$(python3 - "${PRIMARY:-}" "$HERMES_DEFAULT_MODEL" <<'PY'
+import sys
+
+primary, default = sys.argv[1], sys.argv[2]
+primary = (primary or "").strip().strip('"').strip("'")
+supported_providers = {
+    "zai", "openrouter", "nous", "openai-codex", "qwen", "copilot",
+    "gemini", "kimi-coding", "minimax", "minimax-cn", "anthropic",
+    "dashscope", "deepseek", "xai", "ai-gateway",
+    # Hermes resolves non-built-in OpenAI-compatible endpoints from
+    # custom_providers. Nako writes that block for providers in the preset.
+    "sensenova",
+}
+if not primary:
+    print(default)
+elif "/" not in primary:
+    print(default)
+else:
+    provider = primary.split("/", 1)[0].lower()
+    print(primary if provider in supported_providers else default)
+PY
+)"
+  fi
+  PRIMARY="${PRIMARY:-$HERMES_DEFAULT_MODEL}"
+  info "Hermes 主模型: $PRIMARY"
+elif [ "$SKIP_MODELS" = "1" ]; then
   PRIMARY=$(python3 - "$OPENCLAW_CONFIG" <<'PY'
 import json
 import sys
@@ -946,7 +1104,11 @@ step "4. 收集凭据 (可选)"
 dim "下面会逐项问 5 类凭据：飞书 App、MiniMax、Volcengine、fal.ai、kie.ai。"
 dim "  - 任意项**直接回车**跳过，对应能力会被标记 '未启用'，不影响其他能力。"
 dim "  - API key 类输入是**隐藏**的（屏幕看不见但你确实在输入），不要以为卡住"
-dim "  - 全跳过也行：装完后随时通过 openclaw.json 的 skills.entries.*.env 补；旧版 .env 仍兼容"
+if [ "$NAKO_AGENT_RUNTIME" = "hermes" ]; then
+  dim "  - 全跳过也行：装完后随时通过 $HERMES_SKILLS_DIR/.env 或 $HERMES_HOME/.env 补。"
+else
+  dim "  - 全跳过也行：装完后随时通过 openclaw.json 的 skills.entries.*.env 补；旧版 .env 仍兼容"
+fi
 dim "详见仓库根目录 docs/nako/feishu-setup.md / docs/nako/models.md。"
 echo
 
@@ -956,7 +1118,10 @@ AGENT_ENV="$AGENT_WORKSPACE/skills/.env"
 if [ "$RESET_SECRETS" != "1" ]; then
   _reused=()
   _OPENCLAW_JSON_REUSED_KEYS=""
-  _cfg_skill_exports="$(python3 - "$OPENCLAW_CONFIG" <<'PY'
+  if [ "$NAKO_AGENT_RUNTIME" = "hermes" ]; then
+    _cfg_skill_exports=""
+  else
+    _cfg_skill_exports="$(python3 - "$OPENCLAW_CONFIG" <<'PY'
 import json
 import os
 import shlex
@@ -970,7 +1135,7 @@ keys = {
         "VOICE_DEFAULT_VOLCENGINE", "VOICE_DEFAULT_SPEED",
         "OPENCLAW_GATEWAY_TOKEN",
     ],
-    "selfie": ["FAL_KEY", "KIE_API_KEY", "OPENCLAW_GATEWAY_TOKEN"],
+    "selfie": ["FAL_KEY", "KIE_API_KEY", "SELFIE_REFERENCE_IMAGE", "SELFIE_CHARACTER_DESC", "OPENCLAW_GATEWAY_TOKEN"],
 }
 try:
     data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
@@ -990,6 +1155,7 @@ if reused:
     print("_OPENCLAW_JSON_REUSED_KEYS=" + shlex.quote(" ".join(reused)))
 PY
 )"
+  fi
   if [ -n "$_cfg_skill_exports" ]; then
     eval "$_cfg_skill_exports"
     if [ -n "${_OPENCLAW_JSON_REUSED_KEYS:-}" ]; then
@@ -997,7 +1163,9 @@ PY
       _reused+=("${_json_reused[@]}")
     fi
   fi
-  for envfile in "$SHARED_ENV" "$AGENT_ENV"; do
+  _envfiles=("$SHARED_ENV" "$AGENT_ENV")
+  [ "$NAKO_AGENT_RUNTIME" = "hermes" ] && _envfiles+=("$HERMES_HOME/.env")
+  for envfile in "${_envfiles[@]}"; do
     if [ -f "$envfile" ]; then
       # Source existing values into shell only if NOT already set by caller env
       while IFS='=' read -r key val; do
@@ -1013,7 +1181,7 @@ PY
     fi
   done
   if [ "${#_reused[@]}" -gt 0 ]; then
-    info "复用旧凭据/openclaw.json 配置 (${#_reused[@]} 项): $(printf '%s ' "${_reused[@]}")"
+    info "复用旧凭据/运行时配置 (${#_reused[@]} 项): $(printf '%s ' "${_reused[@]}")"
     dim "  想重新输入跑 --reset-secrets。"
     echo
   fi
@@ -1153,6 +1321,7 @@ unset NAKO_OVERWRITE_DEFAULT_WORKSPACE_TEMPLATES
 
 python3 - "$AGENT_WORKSPACE" <<'PY'
 import json
+import re
 import shutil
 import sys
 import time
@@ -1172,6 +1341,21 @@ text = read(bootstrap)
 if "# BOOTSTRAP.md - Hello, World" in text and "_You just woke up." in text:
     backup = bootstrap.with_name(f"BOOTSTRAP.md.bak-qclaw-template-{time.strftime('%Y%m%d-%H%M%S')}")
     shutil.move(str(bootstrap), str(backup))
+
+identity_path = workspace / "IDENTITY.md"
+identity_text = read(identity_path)
+legacy_avatars = {
+    "assets/nako-avatar.svg",
+    "https://pulseact.lovappen.cn/test/act_ci_build/dlc-promotion/act-gengen/images/e.png",
+}
+for legacy_avatar in legacy_avatars:
+    identity_text = re.sub(
+        rf"(?m)^-\s*Avatar:\s*{re.escape(legacy_avatar)}\s*$",
+        "- Avatar: assets/nako-avatar-head.png",
+        identity_text,
+    )
+if identity_path.exists() and identity_text != read(identity_path):
+    identity_path.write_text(identity_text, encoding="utf-8")
 
 state_path = workspace / ".openclaw" / "workspace-state.json"
 try:
@@ -1223,6 +1407,65 @@ for old, new in replacements.items():
 if new_text != text:
     path.write_text(new_text)
 PY
+
+if [ "$NAKO_AGENT_RUNTIME" = "hermes" ]; then
+  python3 - "$AGENT_WORKSPACE" "$HERMES_SKILLS_DIR" <<'PY' || true
+import re
+import sys
+from pathlib import Path
+
+workspace = Path(sys.argv[1])
+skills_dir_display = "~/.hermes/skills/nako"
+
+def replace(path, replacements):
+    if not path.exists():
+        return
+    text = path.read_text(encoding="utf-8", errors="ignore")
+    new = text
+    for old, value in replacements:
+        if hasattr(old, "sub"):
+            new = old.sub(value, new)
+        else:
+            new = new.replace(old, value)
+    if new != text:
+        path.write_text(new, encoding="utf-8")
+
+replace(workspace / "TOOLS.md", [
+    (re.compile(r"(?m)^- voice / sing 的 API key 和默认音色优先从运行时配置读取：.*$"),
+        f"- voice / sing 的 API key 和默认音色优先从 Hermes skill env 读取：`{skills_dir_display}/.env`、`~/.hermes/.env` 或本 agent 的 `skills/.env`。"),
+    (re.compile(r"(?m)^- selfie / video 的共享生成 key 同样从运行时配置读取：.*$"),
+        f"- selfie / video 的共享生成 key 同样从 `{skills_dir_display}/.env`、`~/.hermes/.env` 或本 agent 的 `skills/.env` 读取。"),
+    (re.compile(r"(?m)^- 如果用户问语音/唱歌 key 在哪，.*$"),
+        f"- 如果用户问语音/唱歌 key 在哪，先回答 `{skills_dir_display}/.env`，不要只提示去 `.env`。"),
+    ("~/.openclaw/skills", "~/.hermes/skills/nako"),
+    ("OPENCLAW_OUTPUT_MODE", "NAKO_OUTPUT_MODE"),
+    ("OPENCLAW_CCCONNECT_PROJECT", "NAKO_CCCONNECT_PROJECT"),
+    ("OPENCLAW_CONFIG_PATH", "NAKO_CONFIG"),
+    ("OPENCLAW_CONFIG", "NAKO_CONFIG"),
+    ("cc-connect / openclaw 多渠道层", "cc-connect / Hermes 多渠道层"),
+    ("openclaw cron", "Hermes/外部调度"),
+    ("openclaw 原生 feishu channel", "Feishu 直连模式"),
+    ("openclaw.json -> skills.entries.voice.env", f"{skills_dir_display}/.env"),
+    ("openclaw.json -> skills.entries.selfie.env", f"{skills_dir_display}/.env"),
+    ("QClaw 默认是 `~/.qclaw/openclaw.json`。", "Hermes 默认读取 `~/.hermes/.env` 与本目录 `skills/.env`。"),
+    (re.compile(r"OpenClaw 默认是 `~/.openclaw/openclaw\.json`；"), "Hermes 默认读取 `~/.hermes/.env`；"),
+])
+
+replace(workspace / "MEMORY.md", [
+    (re.compile(r"(?m)^- \*\*provider\*\*：`MINIMAX_API_KEY` 优先，`VOLCENGINE_API_KEY` 备选.*$"),
+        f"- **provider**：`MINIMAX_API_KEY` 优先，`VOLCENGINE_API_KEY` 备选；key 从 `{skills_dir_display}/.env` 读取，兼容本 agent `skills/.env`"),
+    (re.compile(r"(?m)^- \*\*provider\*\*：`FAL_KEY` 优先，`KIE_API_KEY` 备选.*$"),
+        f"- **provider**：`FAL_KEY` 优先，`KIE_API_KEY` 备选；key 从 `{skills_dir_display}/.env` 读取，兼容本 agent `skills/.env`"),
+    ("~/.openclaw/skills", "~/.hermes/skills/nako"),
+    ("openclaw.json -> skills.entries.voice.env", f"{skills_dir_display}/.env"),
+    ("openclaw.json -> skills.entries.selfie.env", f"{skills_dir_display}/.env"),
+])
+
+replace(workspace / "SOUL.md", [
+    ("Supports all OpenClaw messaging channels", "Supports Hermes and cc-connect messaging channels"),
+])
+PY
+fi
 
 # custom.md: ONLY create if missing, NEVER overwrite
 if [ ! -f "$AGENT_WORKSPACE/custom.md" ]; then
@@ -1278,7 +1521,9 @@ fi
 # `openclaw capability model auth status`），同时每个 agent 的 agentDir 自己
 # 也存一份。新 agent / fresh openclaw 这两个位置都可能空 → "No API key found
 # for provider"。把 auth-profiles.json 同时种到这两个位置。
-if [ "$NAKO_AGENT_RUNTIME" = "qclaw" ]; then
+if [ "$NAKO_AGENT_RUNTIME" = "hermes" ]; then
+  info "Hermes runtime 使用 Hermes .env/config.yaml，跳过 OpenClaw auth-profiles 复制"
+elif [ "$NAKO_AGENT_RUNTIME" = "qclaw" ]; then
   mkdir -p "$NAKO_AGENT_CONFIG_DIR"
   info "QClaw runtime 使用 QClaw 模型路由，跳过 OpenClaw auth-profiles 复制"
 else
@@ -1305,9 +1550,13 @@ else
   fi
 fi
 
-# ─── Merge openclaw.json ────────────────────────────────────────────────────
-step "7. 合并 openclaw.json"
-"$SCRIPT_DIR/merge-config.sh" "$AGENT_ID" "${PRIMARY:-}"
+# ─── Merge runtime config ───────────────────────────────────────────────────
+if [ "$NAKO_AGENT_RUNTIME" = "hermes" ]; then
+  step "7. 合并 Hermes config.yaml"
+else
+  step "7. 合并 openclaw.json"
+  "$SCRIPT_DIR/merge-config.sh" "$AGENT_ID" "${PRIMARY:-}"
+fi
 
 if [ "$NAKO_AGENT_RUNTIME" = "hermes" ]; then
   step "7a. 同步 Hermes runtime"

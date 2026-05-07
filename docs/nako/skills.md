@@ -95,7 +95,7 @@ env:
 ~/.openclaw/skills/selfie/scripts/video.sh "<image_url>" "<prompt>" "<channel>" ...
 ```
 
-依赖 `FAL_KEY`（推荐）或 `KIE_API_KEY`。脚本会先读 `~/.openclaw/skills/.env`，再从 `openclaw.json -> skills.entries.selfie.env` 补齐未设置的 key，最后叠加当前 agent 的 `skills/.env`。参考图由 `SELFIE_REFERENCE_IMAGE` 给出，用来保持角色相貌一致。
+依赖 `FAL_KEY`（推荐）或 `KIE_API_KEY`。脚本会先读 `~/.openclaw/skills/.env`，再从 `openclaw.json -> skills.entries.selfie.env` 补齐未设置的 key，最后叠加当前 agent 的 `skills/.env`。参考图由同一 env 里的 `SELFIE_REFERENCE_IMAGE` 给出，用来保持角色相貌一致。
 
 ## 🎮 dokidoki — 互动设备
 

@@ -467,8 +467,19 @@ def ensure_qclaw_identity_sync_fields(path):
     if not path.exists():
         return False
     text = read(path)
+    updated = text
+    legacy_avatars = {
+        "assets/nako-avatar.svg",
+        "https://pulseact.lovappen.cn/test/act_ci_build/dlc-promotion/act-gengen/images/e.png",
+    }
+    for legacy_avatar in legacy_avatars:
+        updated = re.sub(
+            rf"(?m)^-\s*Avatar:\s*{re.escape(legacy_avatar)}\s*$",
+            "- Avatar: assets/nako-avatar-head.png",
+            updated,
+        )
     seen = set()
-    for line in text.splitlines():
+    for line in updated.splitlines():
         match = re.match(r"^-?\s*(\w+)\s*:\s*(.+)$", line.strip())
         if match:
             seen.add(match.group(1).lower())
@@ -476,14 +487,17 @@ def ensure_qclaw_identity_sync_fields(path):
         ("Name", "野木奈子"),
         ("Emoji", "🎀"),
         ("Vibe", "核战后赛博世界专属战斗女仆"),
-        ("Avatar", "assets/nako-avatar.svg"),
+        ("Avatar", "assets/nako-avatar-head.png"),
     ]
     missing = [(key, value) for key, value in fields if key.lower() not in seen]
     if not missing:
+        if updated != text:
+            path.write_text(updated, encoding="utf-8")
+            return True
         return False
     block = ["", "<!-- QClaw sync fields: keep these plain English keys parseable. -->"]
     block.extend(f"- {key}: {value}" for key, value in missing)
-    path.write_text(text.rstrip() + "\n" + "\n".join(block) + "\n", encoding="utf-8")
+    path.write_text(updated.rstrip() + "\n" + "\n".join(block) + "\n", encoding="utf-8")
     return True
 
 workspace.mkdir(parents=True, exist_ok=True)
@@ -587,7 +601,6 @@ def identity_from_workspace():
         elif label == "emoji":
             identity["emoji"] = value
         elif label == "vibe":
-            identity["vibe"] = value
             identity.setdefault("theme", value)
         elif label == "avatar":
             identity["avatar"] = value
@@ -620,16 +633,35 @@ for idx, item in enumerate(items):
         existing_index = idx
         break
 
-identity = existing.get("identity") if isinstance(existing.get("identity"), dict) else identity_from_workspace()
+def normalize_identity(value):
+    if not isinstance(value, dict):
+        return {}
+    result = {}
+    for key in ("name", "emoji", "theme", "avatar"):
+        item = value.get(key)
+        if isinstance(item, str) and item:
+            result[key] = item
+    if "theme" not in result:
+        vibe = value.get("vibe")
+        if isinstance(vibe, str) and vibe:
+            result["theme"] = vibe
+    return result
+
+identity = normalize_identity(existing.get("identity")) or identity_from_workspace()
 default_identity = {
     "name": "野木奈子",
     "emoji": "🎀",
-    "vibe": "核战后赛博世界专属战斗女仆",
     "theme": "核战后赛博世界专属战斗女仆",
-    "avatar": "assets/nako-avatar.svg",
+    "avatar": "assets/nako-avatar-head.png",
+}
+legacy_default_avatars = {
+    "assets/nako-avatar.svg",
+    "https://pulseact.lovappen.cn/test/act_ci_build/dlc-promotion/act-gengen/images/e.png",
 }
 if agent_id.startswith("agent-nako"):
-    base = dict(identity) if isinstance(identity, dict) else {}
+    base = normalize_identity(identity)
+    if base.get("avatar") in legacy_default_avatars:
+        base["avatar"] = default_identity["avatar"]
     for key, value in default_identity.items():
         if not base.get(key):
             base[key] = value
@@ -976,7 +1008,28 @@ cc_connect_running_pids() {
       args = $0
       sub(/^[[:space:]]*[0-9]+[[:space:]]+/, "", args)
       if (looks_like_cc_connect_main(args)) print pid
-    }'
+	    }'
+}
+
+ensure_cc_connect_api_socket_compat() {
+  local base="$HOME/.cc-connect"
+  local public_run="$base/run"
+  local nested_run="$base/.cc-connect/run"
+
+  [ -S "$public_run/api.sock" ] && return 0
+  [ -S "$nested_run/api.sock" ] || return 0
+
+  if [ -L "$public_run" ]; then
+    rm -f "$public_run"
+  elif [ -e "$public_run" ]; then
+    if [ -d "$public_run" ] && [ -z "$(find "$public_run" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]; then
+      rmdir "$public_run" 2>/dev/null || return 0
+    else
+      return 0
+    fi
+  fi
+
+  ln -s ".cc-connect/run" "$public_run" 2>/dev/null || true
 }
 
 cc_connect_project_count() {
@@ -1139,6 +1192,7 @@ uninstall_agent_runtime_data() {
   backup_path_to_dir "$HOME/.openclaw/agents/$AGENT_ID" "$backup_root" "openclaw-agent-$AGENT_ID"
 
   backup_path_to_dir "$HERMES_HOME/workspace/$AGENT_ID" "$backup_root" "hermes-workspace-$AGENT_ID"
+  backup_path_to_dir "$HERMES_HOME/skills/nako/.env.$AGENT_ID" "$backup_root" "hermes-env-$AGENT_ID"
   backup_path_to_dir "$HERMES_HOME/skills/openclaw-imports/.env.$AGENT_ID" "$backup_root" "hermes-env-$AGENT_ID"
 
   qclaw_root="$(expand_path "$QCLAW_HOME")"
@@ -1204,6 +1258,8 @@ uninstall_cc_connect_project() {
   if [ "$(cc_connect_project_count)" -gt 0 ]; then
     if command -v cc-connect >/dev/null 2>&1; then
       if cc-connect daemon start --work-dir "$HOME/.cc-connect" >/dev/null 2>&1; then
+        sleep 2
+        ensure_cc_connect_api_socket_compat
         info "仍有其他 project，已重新启动 cc-connect daemon"
       else
         nohup cc-connect </dev/null >>"$HOME/.cc-connect/cc-connect.log" 2>&1 &
@@ -1260,7 +1316,7 @@ if [ "$RUNTIME" = "hermes" ]; then
     err "选择 Hermes runtime，但找不到 hermes 命令。请先安装 Hermes，或设置 HERMES_BIN=/path/to/hermes"
     exit 1
   }
-  mkdir -p "$HERMES_WORKSPACE"
+  mkdir -p "$HERMES_WORKSPACE" "$HERMES_HOME/skills/nako" "$HERMES_HOME/media"
 elif [ "$RUNTIME" = "qclaw" ]; then
   QCLAW_NODE_BIN="$(resolve_qclaw_node_bin)" || {
     err "选择 QClaw runtime，但找不到 QClaw Node。请先安装 QClaw，或设置 QCLAW_NODE_BIN=/path/to/node"
@@ -1299,16 +1355,44 @@ def arr(values):
 def inline_table(items):
     return "{ " + ", ".join(f"{key} = {q(value)}" for key, value in items) + " }"
 
+def normalize_global_options(text):
+    project_match = re.search(r"(?m)^\[\[projects\]\]\s*$", text)
+    prefix_end = project_match.start() if project_match else len(text)
+    prefix = text[:prefix_end]
+    rest = text[prefix_end:]
+
+    def ensure_section_value(src, section, key, value):
+        match = re.search(rf"(?ms)(^\[{re.escape(section)}\]\s*\n)(.*?)(?=^\[|\Z)", src)
+        if match:
+            body = match.group(2)
+            if re.search(rf"(?m)^{re.escape(key)}\s*=", body):
+                body = re.sub(rf"(?m)^{re.escape(key)}\s*=.*$", f"{key} = {value}", body)
+            else:
+                body = f"{key} = {value}\n" + body
+            return src[:match.start(2)] + body + src[match.end(2):]
+        if src and not src.endswith("\n"):
+            src += "\n"
+        return src + f"\n[{section}]\n{key} = {value}\n"
+
+    prefix = ensure_section_value(prefix, "stream_preview", "enabled", "false")
+    prefix = ensure_section_value(prefix, "display", "tool_messages", "false")
+    return prefix + rest
+
 if runtime == "hermes":
     command = hermes_bin or "hermes"
     work_dir = hermes_workspace
     args = ["acp"]
+    hermes_skills = str(Path(hermes_home) / "skills" / "nako")
+    hermes_media = str(Path(hermes_home) / "media")
     env = {
         "HOME": home,
         "HERMES_HOME": hermes_home,
         "PATH": path_value,
-        "OPENCLAW_OUTPUT_MODE": "acp",
-        "OPENCLAW_CCCONNECT_PROJECT": agent_id,
+        "NAKO_OUTPUT_MODE": "acp",
+        "NAKO_CCCONNECT_PROJECT": agent_id,
+        "NAKO_AGENT_WORKSPACE": hermes_workspace,
+        "NAKO_SKILLS_DIR": hermes_skills,
+        "NAKO_MEDIA_HOME": hermes_media,
         "NAKO_AGENT_RUNTIME": "hermes",
     }
 elif runtime == "qclaw":
@@ -1319,6 +1403,7 @@ elif runtime == "qclaw":
         "HOME": home,
         "QCLAW_HOME": qclaw_home,
         "OPENCLAW_STATE_DIR": qclaw_home,
+        "OPENCLAW_CONFIG": qclaw_config_path,
         "OPENCLAW_CONFIG_PATH": qclaw_config_path,
         "PATH": path_value,
         "OPENCLAW_OUTPUT_MODE": "acp",
@@ -1351,12 +1436,16 @@ agent_section = "\n".join([
 if path.exists():
     text = path.read_text(encoding="utf-8")
 else:
-    text = f'[server]\ndata_dir = "{home}/.cc-connect/data"\nlog_level = "info"\n'
+    text = 'language = "en"\n\n[stream_preview]\nenabled = false\n\n[display]\ntool_messages = false\n\n[log]\nlevel = "info"\n'
+
+normalized_text = normalize_global_options(text)
+global_changed = normalized_text != text
+text = normalized_text
 
 parts = re.split(r"(?m)(?=^\[\[projects\]\]\s*$)", text)
 kept = []
 found = False
-changed = False
+changed = global_changed
 
 for part in parts:
     if not part.startswith("[[projects]]"):
@@ -1447,6 +1536,7 @@ ensure_cc_connect_running() {
     info "cc-connect 后台已启 (PID $!)，日志: ~/.cc-connect/cc-connect.log"
   fi
   sleep 2
+  ensure_cc_connect_api_socket_compat
 }
 
 # ── 3. 引导平台 QR onboarding ─────────────────────────────────────────
@@ -1468,10 +1558,136 @@ print("no")
 PY
 }
 
+normalize_platform_options() {
+  python3 - "$CC_CONFIG" "$AGENT_ID" <<'PY'
+import os
+import re
+import sys
+import time
+from pathlib import Path
+
+cfg_path, agent_id = sys.argv[1:]
+path = Path(cfg_path)
+if not path.exists():
+    print("unchanged")
+    raise SystemExit(0)
+
+text = path.read_text(encoding="utf-8")
+parts = re.split(r"(?m)(?=^\[\[projects\]\]\s*$)", text)
+changed = False
+out = []
+
+for part in parts:
+    if not part.startswith("[[projects]]"):
+        out.append(part)
+        continue
+    name_match = re.search(r'(?m)^name\s*=\s*"([^"]+)"\s*$', part)
+    if (name_match.group(1) if name_match else "") != agent_id:
+        out.append(part)
+        continue
+
+    blocks = re.split(r"(?m)(?=^\[\[projects\.platforms\]\]\s*$)", part)
+    fixed = [blocks[0]]
+    for block in blocks[1:]:
+        type_match = re.search(r'(?m)^type\s*=\s*"([^"]+)"\s*$', block)
+        ptype = type_match.group(1) if type_match else ""
+        if ptype in {"feishu", "lark"}:
+            new_block = re.sub(r"(?m)^(enable_feishu_card|reply_to_trigger)\s*=.*\n?", "", block).rstrip()
+            if "[projects.platforms.options]" not in new_block:
+                new_block += "\n\n[projects.platforms.options]"
+            new_block += "\nenable_feishu_card = false\nreply_to_trigger = false\n"
+            if new_block != block:
+                changed = True
+            block = new_block
+        fixed.append(block)
+    out.append("".join(fixed))
+
+new_text = "".join(out)
+if changed:
+    backup = path.with_name(f"config.toml.bak-platform-options-{agent_id}-{time.strftime('%Y%m%d-%H%M%S')}")
+    backup.write_text(text, encoding="utf-8")
+    path.write_text(new_text, encoding="utf-8")
+    os.chmod(path, 0o600)
+print("updated" if changed else "unchanged")
+PY
+}
+
+sync_hermes_feishu_env_from_cc_config() {
+  [ "$RUNTIME" = "hermes" ] || { echo "skipped"; return 0; }
+  python3 - "$CC_CONFIG" "$AGENT_ID" "$HERMES_WORKSPACE/skills/.env" <<'PY'
+import os
+import re
+import sys
+from pathlib import Path
+
+cfg_path, agent_id, env_path = sys.argv[1:]
+cfg = Path(cfg_path)
+if not cfg.exists():
+    print("missing")
+    raise SystemExit(0)
+
+text = cfg.read_text(encoding="utf-8")
+app_id = app_secret = ""
+try:
+    import tomllib
+    data = tomllib.loads(text)
+    for project in data.get("projects", []):
+        if project.get("name") != agent_id:
+            continue
+        for platform in project.get("platforms", []):
+            if platform.get("type") in ("feishu", "lark"):
+                options = platform.get("options", {})
+                app_id = str(options.get("app_id") or "")
+                app_secret = str(options.get("app_secret") or "")
+                break
+except Exception:
+    for part in re.split(r"(?m)(?=^\[\[projects\]\]\s*$)", text):
+        if not part.startswith("[[projects]]") or f'name = "{agent_id}"' not in part:
+            continue
+        blocks = re.split(r"(?m)(?=^\[\[projects\.platforms\]\]\s*$)", part)
+        for block in blocks[1:]:
+            if not re.search(r'(?m)^type\s*=\s*"(feishu|lark)"\s*$', block):
+                continue
+            match_id = re.search(r'(?m)^app_id\s*=\s*"([^"]+)"\s*$', block)
+            match_secret = re.search(r'(?m)^app_secret\s*=\s*"([^"]+)"\s*$', block)
+            app_id = match_id.group(1) if match_id else ""
+            app_secret = match_secret.group(1) if match_secret else ""
+            break
+
+if not app_id or not app_secret:
+    print("missing")
+    raise SystemExit(0)
+
+path = Path(env_path)
+path.parent.mkdir(parents=True, exist_ok=True)
+data = path.read_text(encoding="utf-8") if path.exists() else ""
+
+def set_env(src, key, value):
+    line = f"{key}={value}"
+    pattern = rf"(?m)^#?\s*{re.escape(key)}=.*$"
+    if re.search(pattern, src):
+        return re.sub(pattern, line, src)
+    if src and not src.endswith("\n"):
+        src += "\n"
+    return src + line + "\n"
+
+new_data = set_env(data, "FEISHU_APP_ID", app_id)
+new_data = set_env(new_data, "FEISHU_APP_SECRET", app_secret)
+if new_data != data:
+    path.write_text(new_data, encoding="utf-8")
+    os.chmod(path, 0o600)
+    print("updated")
+else:
+    os.chmod(path, 0o600)
+    print("unchanged")
+PY
+}
+
 setup_platform() {
   local platform="$1" desc="$2"
   if [ "$(has_platform "$platform")" = "yes" ]; then
     info "$desc 已配，跳过"
+    [ "$platform" = "feishu" ] && [ "$(normalize_platform_options)" = "updated" ] && CC_CONNECT_CHANGED=1
     CC_CONNECT_CHANGED=1
     return 0
   fi
@@ -1484,6 +1700,7 @@ setup_platform() {
   dim "扫码完成后 cc-connect 会把凭据写进 config.toml，无需手动复制。"
   if cc-connect "$platform" setup --project "$AGENT_ID" --timeout 600; then
     CC_CONNECT_CHANGED=1
+    [ "$platform" = "feishu" ] && normalize_platform_options >/dev/null
     ensure_cc_connect_running "$desc onboarding 完成"
   else
     warn "$desc onboarding 失败/超时（不影响其他流程）"
@@ -1508,6 +1725,14 @@ if [ "$WITH_FEISHU" = "0" ] && [ "$WITH_WEIXIN" = "0" ]; then
 fi
 
 echo
+if [ "$(normalize_platform_options)" = "updated" ]; then
+  CC_CONNECT_CHANGED=1
+fi
+SYNC_HERMES_FEISHU_ENV="$(sync_hermes_feishu_env_from_cc_config)"
+case "$SYNC_HERMES_FEISHU_ENV" in
+  updated) info "已同步 Hermes workspace 飞书凭据镜像（来自 cc-connect QR 绑定）" ;;
+  missing) dim "Hermes workspace 飞书凭据镜像未更新：cc-connect 中还没有可同步的飞书 App 凭据" ;;
+esac
 # ── 4. 启动 cc-connect (daemon 优先，fallback 后台 nohup) ────────────────
 step "4. 启动 cc-connect"
 ensure_cc_connect_running "cc-connect 配置或二进制已更新"

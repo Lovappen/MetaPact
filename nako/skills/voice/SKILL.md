@@ -35,13 +35,13 @@ allowed-tools: Bash(curl:*) Bash(jq:*) Bash(xxd:*) Bash(base64:*) Bash(uuidgen:*
 ## 快速使用
 
 ```bash
-~/.openclaw/skills/voice/scripts/voice.sh "<文本>" "<频道ID>" [provider] [voice_id] [speed]
+bash "${NAKO_SKILLS_DIR:-$HOME/.openclaw/skills}/voice/scripts/voice.sh" "<文本>" "<频道ID>" [provider] [voice_id] [speed]
 ```
 
 | 参数 | 必须 | 默认值 | 说明 |
 |------|------|--------|------|
 | text | 是 | — | 要合成的文本，建议 500 字以内 |
-| channel | 是 | — | 飞书 chat_id（`oc_xxx`）或 open_id（`ou_xxx`） |
+| channel | 是 | — | 飞书 chat_id（`oc_xxx`）或 open_id（`ou_xxx`）；Hermes/cc-connect 会话可用 `feishu` 自动路由 |
 | provider | 否 | auto | `minimax` / `volcengine` / `auto`（按 key 自动选择） |
 | voice_id | 否 | 按引擎默认 | 音色 ID，见下方音色表 |
 | speed | 否 | 1.0 | 语速倍率 0.5–2.0 |
@@ -50,13 +50,13 @@ allowed-tools: Bash(curl:*) Bash(jq:*) Bash(xxd:*) Bash(base64:*) Bash(uuidgen:*
 
 ```bash
 # MiniMax 甜美女声
-./voice.sh "主人大人早上好呀！" "oc_xxx" minimax female-tianmei 1.0
+bash "${NAKO_SKILLS_DIR:-$HOME/.openclaw/skills}/voice/scripts/voice.sh" "主人大人早上好呀！" "oc_xxx" minimax female-tianmei 1.0
 
 # 火山引擎 爽快女声
-./voice.sh "今天天气真不错呢！" "oc_xxx" volcengine zh_female_shuangkuaisisi_moon_bigtts 1.0
+bash "${NAKO_SKILLS_DIR:-$HOME/.openclaw/skills}/voice/scripts/voice.sh" "今天天气真不错呢！" "oc_xxx" volcengine zh_female_shuangkuaisisi_moon_bigtts 1.0
 
 # 慢速温柔语音（适合晚安）
-./voice.sh "晚安，做个好梦哦……" "oc_xxx" minimax female-tianmei 0.85
+bash "${NAKO_SKILLS_DIR:-$HOME/.openclaw/skills}/voice/scripts/voice.sh" "晚安，做个好梦哦……" "oc_xxx" minimax female-tianmei 0.85
 ```
 
 ## TTS 引擎
@@ -94,7 +94,7 @@ allowed-tools: Bash(curl:*) Bash(jq:*) Bash(xxd:*) Bash(base64:*) Bash(uuidgen:*
 ## 唱歌 — sing.sh
 
 ```bash
-~/.openclaw/skills/voice/scripts/sing.sh "<歌词>" "<频道ID>" ["<风格描述>"] ["<model>"]
+bash "${NAKO_SKILLS_DIR:-$HOME/.openclaw/skills}/voice/scripts/sing.sh" "<歌词>" "<频道ID>" ["<风格描述>"] ["<model>"]
 ```
 
 | 参数 | 必须 | 默认 | 说明 |
@@ -123,13 +123,13 @@ allowed-tools: Bash(curl:*) Bash(jq:*) Bash(xxd:*) Bash(base64:*) Bash(uuidgen:*
 
 ```bash
 # 中文抒情
-./sing.sh "[verse]\n月色洒在窗台\n思念像潮水漫来\n[chorus]\n想你在每个夜晚\n想你在每次梦醒" "oc_xxx" "Chinese ballad, soft piano, female vocal, emotional"
+bash "${NAKO_SKILLS_DIR:-$HOME/.openclaw/skills}/voice/scripts/sing.sh" "[verse]\n月色洒在窗台\n思念像潮水漫来\n[chorus]\n想你在每个夜晚\n想你在每次梦醒" "oc_xxx" "Chinese ballad, soft piano, female vocal, emotional"
 
 # 英文流行
-./sing.sh "[verse]\nStreetlights flicker, the night breeze sighs\n[chorus]\nPushing the wooden door, the aroma spreads" "ou_xxx" "Indie folk, acoustic guitar, melancholic"
+bash "${NAKO_SKILLS_DIR:-$HOME/.openclaw/skills}/voice/scripts/sing.sh" "[verse]\nStreetlights flicker, the night breeze sighs\n[chorus]\nPushing the wooden door, the aroma spreads" "ou_xxx" "Indie folk, acoustic guitar, melancholic"
 
 # 生日歌（即兴写词）
-./sing.sh "[verse]\n亲爱的小夜今天生日\n愿望写在蛋糕上\n[chorus]\n生日快乐生日快乐\n每一天都要笑开花" "oc_xxx" "Upbeat pop, cheerful, warm female voice"
+bash "${NAKO_SKILLS_DIR:-$HOME/.openclaw/skills}/voice/scripts/sing.sh" "[verse]\n亲爱的小夜今天生日\n愿望写在蛋糕上\n[chorus]\n生日快乐生日快乐\n每一天都要笑开花" "oc_xxx" "Upbeat pop, cheerful, warm female voice"
 ```
 
 ### 注意
@@ -142,14 +142,16 @@ allowed-tools: Bash(curl:*) Bash(jq:*) Bash(xxd:*) Bash(base64:*) Bash(uuidgen:*
 
 ## 环境变量
 
-所有变量在 `openclaw.json` → `skills.entries.voice.env` 中配置。
+Hermes/cc-connect 优先读取 `$NAKO_SKILLS_DIR/.env`、`~/.hermes/.env` 和当前 agent 的 `skills/.env`；OpenClaw 仍兼容 `openclaw.json` → `skills.entries.voice.env`。
 
-### 必需
+### 飞书凭据
 
 | 变量 | 来源 | 说明 |
 |------|------|------|
-| `FEISHU_APP_ID` | 飞书开放平台 | 飞书应用 App ID |
-| `FEISHU_APP_SECRET` | 飞书开放平台 | 飞书应用 App Secret |
+| `FEISHU_APP_ID` | 飞书开放平台 | OpenClaw 原生直连飞书时必需；Hermes/cc-connect 下由 QR 绑定写入 `~/.cc-connect/config.toml`，可同步镜像到 `<workspace>/skills/.env` |
+| `FEISHU_APP_SECRET` | 飞书开放平台 | 同上 |
+
+Hermes/cc-connect 场景不要仅凭 `<workspace>/skills/.env` 里的空 `FEISHU_APP_ID` 判断飞书未配置；先确认 cc-connect project 是否已绑定飞书。
 
 ### MiniMax（至少配一组 TTS）
 
@@ -170,14 +172,14 @@ allowed-tools: Bash(curl:*) Bash(jq:*) Bash(xxd:*) Bash(base64:*) Bash(uuidgen:*
 首次安装运行安装脚本，交互式引导配置 API Key：
 
 ```bash
-bash ~/.openclaw/skills/voice/scripts/setup.sh
+bash "${NAKO_SKILLS_DIR:-$HOME/.openclaw/skills}/voice/scripts/setup.sh"
 ```
 
 脚本会：
 1. 检查系统依赖（jq, curl, ffprobe）
 2. 引导输入 TTS API Key
-3. 自动从 openclaw.json 读取飞书凭据
-4. 写入 openclaw.json 配置
+3. 自动从当前 runtime env 读取飞书凭据
+4. 写入当前 runtime skill env
 5. 发送测试语音验证
 
 ## 工作原理
@@ -208,8 +210,8 @@ bash ~/.openclaw/skills/voice/scripts/setup.sh
 
 | 问题 | 原因 | 解决 |
 |------|------|------|
-| MiniMax error | API key 或 Group ID 错误 | 检查 `openclaw.json -> skills.entries.voice.env` 里的 MINIMAX_API_KEY 和 MINIMAX_GROUP_ID |
+| MiniMax error | API key 或 Group ID 错误 | 检查 `$NAKO_SKILLS_DIR/.env` 或当前 runtime env 里的 MINIMAX_API_KEY 和 MINIMAX_GROUP_ID |
 | Volcengine resource mismatch | 音色和模型版本不匹配 | seed-tts-1.0 音色用 seed-tts-1.0，2.0 同理 |
-| Upload failed | 飞书 token 过期或权限不足 | 检查 FEISHU_APP_ID/SECRET，确认 im:resource 权限 |
+| Upload failed | 飞书 token 过期或权限不足 | OpenClaw 原生模式检查 FEISHU_APP_ID/SECRET；Hermes/cc-connect 检查 cc-connect Feishu QR 绑定和 `~/.cc-connect/config.toml` |
 | 语音无法播放 | 未传 duration | 确认上传时 duration 参数正确传入 |
 | Bot can NOT be out of chat | 飞书 App ID 和聊天不匹配 | 使用对应 agent 的飞书 App ID |

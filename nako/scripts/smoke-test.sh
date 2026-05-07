@@ -9,6 +9,15 @@ source "$SCRIPT_DIR/lib.sh"
 step "冒烟测试"
 
 SKILLS="$OPENCLAW_SKILLS_DIR"
+RUNTIME="${NAKO_AGENT_RUNTIME:-openclaw}"
+RUNTIME_HOME="${NAKO_RUNTIME_HOME:-${HERMES_HOME:-$OPENCLAW_HOME}}"
+MEDIA_HOME="${NAKO_MEDIA_HOME:-$RUNTIME_HOME/media}"
+SKILL_ENV_NOTE="$SKILLS/.env"
+if [ "$RUNTIME" = "hermes" ]; then
+  RUNTIME_ENV_NOTE="$SKILL_ENV_NOTE 或 $HERMES_HOME/.env"
+else
+  RUNTIME_ENV_NOTE="$SKILL_ENV_NOTE 或 openclaw.json skills.entries.*.env"
+fi
 PASS=0; FAIL=0; SKIP=0
 
 check() {
@@ -28,8 +37,9 @@ has_env_key() {
 }
 
 has_openclaw_skill_env_key() {
+  [ "$RUNTIME" = "hermes" ] && return 1
   local skill="$1" key="$2"
-  python3 - "$OPENCLAW_HOME/openclaw.json" "$skill" "$key" <<'PY' 2>/dev/null
+  python3 - "$OPENCLAW_CONFIG" "$skill" "$key" <<'PY' 2>/dev/null
 import json
 import sys
 from pathlib import Path
@@ -44,9 +54,18 @@ raise SystemExit(0 if env.get(key) else 1)
 PY
 }
 
+has_runtime_env_key() {
+  local skill="$1" key="$2"
+  has_env_key "$key" "$SKILLS/.env" && return 0
+  if [ "$RUNTIME" = "hermes" ] && [ -n "${HERMES_HOME:-}" ]; then
+    has_env_key "$key" "$HERMES_HOME/.env" && return 0
+  fi
+  has_openclaw_skill_env_key "$skill" "$key"
+}
+
 # Vision
 if [ -x "$SKILLS/vision/scripts/resolve.sh" ]; then
-  if [ -d "$OPENCLAW_HOME/media/inbound" ] && ls "$OPENCLAW_HOME/media/inbound"/*.{jpg,png,webp} >/dev/null 2>&1; then
+  if [ -d "$MEDIA_HOME/inbound" ] && ls "$MEDIA_HOME/inbound"/*.{jpg,png,webp} >/dev/null 2>&1; then
     OUT=$("$SKILLS/vision/scripts/resolve.sh" --latest 2>&1 || true)
     if [ -f "$OUT" ]; then
       info "vision: resolve --latest 成功（$OUT）"
@@ -81,29 +100,36 @@ fi
 
 # Voice / Sing
 if [ -x "$SKILLS/voice/scripts/voice.sh" ]; then
-  if has_env_key MINIMAX_API_KEY || has_env_key VOLCENGINE_API_KEY || has_openclaw_skill_env_key voice MINIMAX_API_KEY || has_openclaw_skill_env_key voice VOLCENGINE_API_KEY; then
+  if has_runtime_env_key voice MINIMAX_API_KEY || has_runtime_env_key voice VOLCENGINE_API_KEY; then
     info "voice: 至少一个 TTS key 已配"
     PASS=$((PASS+1))
   else
-    warn "voice: 未发现 TTS key，说话功能不可用（支持 $SKILLS/.env 或 openclaw.json skills.entries.voice.env）"
+    warn "voice: 未发现 TTS key，说话功能不可用（支持 ${RUNTIME_ENV_NOTE}）"
     FAIL=$((FAIL+1))
   fi
-  if { has_env_key MINIMAX_API_KEY && has_env_key MINIMAX_GROUP_ID; } || { has_openclaw_skill_env_key voice MINIMAX_API_KEY && has_openclaw_skill_env_key voice MINIMAX_GROUP_ID; }; then
+  if has_runtime_env_key voice MINIMAX_API_KEY && has_runtime_env_key voice MINIMAX_GROUP_ID; then
     info "sing: MiniMax key + Group ID 已配"
     PASS=$((PASS+1))
   else
-    warn "sing: 缺 MINIMAX_API_KEY 或 MINIMAX_GROUP_ID，唱歌功能不可用（支持 $SKILLS/.env 或 openclaw.json skills.entries.voice.env）"
+    warn "sing: 缺 MINIMAX_API_KEY 或 MINIMAX_GROUP_ID，唱歌功能不可用（支持 ${RUNTIME_ENV_NOTE}）"
     SKIP=$((SKIP+1))
   fi
 fi
 
 # Selfie
 if [ -x "$SKILLS/selfie/scripts/selfie.sh" ]; then
-  if has_env_key FAL_KEY || has_env_key KIE_API_KEY || has_openclaw_skill_env_key selfie FAL_KEY || has_openclaw_skill_env_key selfie KIE_API_KEY; then
+  if has_runtime_env_key selfie FAL_KEY || has_runtime_env_key selfie KIE_API_KEY; then
     info "selfie: 图像生成 key 已配"
     PASS=$((PASS+1))
+    if has_runtime_env_key selfie SELFIE_REFERENCE_IMAGE; then
+      info "selfie: 参考图已配"
+      PASS=$((PASS+1))
+    else
+      warn "selfie: 缺 SELFIE_REFERENCE_IMAGE，参考图生成不可用（支持 ${RUNTIME_ENV_NOTE} 或 workspace skills/.env）"
+      FAIL=$((FAIL+1))
+    fi
   else
-    dim "selfie: 未配 FAL_KEY / KIE_API_KEY，自拍不可用（可选；支持 $SKILLS/.env 或 openclaw.json skills.entries.selfie.env）"
+    dim "selfie: 未配 FAL_KEY / KIE_API_KEY，自拍不可用（可选；支持 ${RUNTIME_ENV_NOTE}）"
     SKIP=$((SKIP+1))
   fi
 fi

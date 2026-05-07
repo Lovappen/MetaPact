@@ -1,7 +1,7 @@
 #!/bin/bash
 # stt.sh — transcribe inbound Feishu audio using local OpenAI Whisper.
 #
-# openclaw auto-downloads inbound audio to ~/.openclaw/media/inbound/<uuid>.<ext>.
+# The runtime auto-downloads inbound audio to <runtime>/media/inbound/<uuid>.<ext>.
 # This script resolves a file_key (or takes a direct path / --latest) and runs
 # whisper to produce plain-text transcription on stdout.
 #
@@ -18,15 +18,25 @@
 set -euo pipefail
 export PATH="/opt/homebrew/bin:$PATH"
 
-OPENCLAW_HOME="${OPENCLAW_HOME:-$HOME/.openclaw}"
-GATEWAY_LOG="$OPENCLAW_HOME/logs/gateway.log"
-INBOUND_DIR="$OPENCLAW_HOME/media/inbound"
+RUNTIME_HOME="${NAKO_RUNTIME_HOME:-${HERMES_HOME:-${OPENCLAW_HOME:-$HOME/.openclaw}}}"
+MEDIA_HOME="${NAKO_MEDIA_HOME:-$RUNTIME_HOME/media}"
+SKILLS_ROOT="${NAKO_SKILLS_DIR:-$RUNTIME_HOME/skills}"
+GATEWAY_LOG="${NAKO_GATEWAY_LOG:-${OPENCLAW_GATEWAY_LOG:-$RUNTIME_HOME/logs/gateway.log}}"
+INBOUND_DIR="$MEDIA_HOME/inbound"
 
 WHISPER_BIN="${WHISPER_BIN:-/opt/homebrew/bin/whisper}"
 WHISPER_MODEL="${WHISPER_MODEL:-turbo}"
 WHISPER_LANGUAGE="${WHISPER_LANGUAGE:-}"
 
-SKILL_LOG_SH="${SKILL_LOG_SH:-$HOME/.openclaw/skills/skill-log.sh}"
+if [ -z "${SKILL_LOG_SH:-}" ]; then
+  if [ -n "${NAKO_SKILLS_DIR:-}" ]; then
+    SKILL_LOG_SH="$NAKO_SKILLS_DIR/skill-log.sh"
+  elif [ -n "${HERMES_HOME:-}" ] && [ -f "$HERMES_HOME/skills/nako/skill-log.sh" ]; then
+    SKILL_LOG_SH="$HERMES_HOME/skills/nako/skill-log.sh"
+  else
+    SKILL_LOG_SH="$HOME/.openclaw/skills/skill-log.sh"
+  fi
+fi
 source "$SKILL_LOG_SH" 2>/dev/null || true
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; NC='\033[0m'
@@ -34,7 +44,7 @@ log_err()  { echo -e "${RED}[ERROR]${NC} $1" >&2; }
 log_info() { echo -e "${GREEN}[INFO]${NC} $1" >&2; }
 
 # Check installation marker — if installer is still pulling whisper in background, tell agent.
-INSTALL_MARKER="$OPENCLAW_HOME/skills/hearing/.installing"
+INSTALL_MARKER="$SKILLS_ROOT/hearing/.installing"
 if [ ! -x "$WHISPER_BIN" ] && ! command -v whisper >/dev/null 2>&1; then
   if [ -f "$INSTALL_MARKER" ]; then
     log_info "whisper 仍在后台安装中（marker: $INSTALL_MARKER），稍后再来"

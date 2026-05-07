@@ -1,12 +1,12 @@
 ---
 name: selfie
-description: Generate character-consistent selfie images and videos, send via OpenClaw messaging channels. Character reference image and description come from per-agent env.
+description: Generate character-consistent selfie images and videos, send via the active Nako messaging channel. Character reference image and description come from per-agent env.
 allowed-tools: Bash(*/selfie.sh:*) Bash(*/video.sh:*) Bash(curl:*) Bash(jq:*) Bash(sleep:*) Read Write WebFetch
 ---
 
 # Selfie
 
-Generate a selfie-style image (and optionally a short video) that preserves the agent's character identity, then send it back through OpenClaw messaging channels.
+Generate a selfie-style image (and optionally a short video) that preserves the agent's character identity, then send it back through the active Nako messaging channel.
 
 ## Character Identity
 
@@ -27,16 +27,16 @@ Skip for pure text replies.
 
 ## Invocation
 
-All scripts live in the shared install — invoke by absolute path:
+All scripts live in the shared install. In Hermes/cc-connect sessions, prefer `$NAKO_SKILLS_DIR`; only fall back to `~/.openclaw/skills` in an OpenClaw runtime.
 
 ```bash
-~/.openclaw/skills/selfie/scripts/selfie.sh "<prompt>" "<channel>" [caption] [aspect_ratio] [format] [provider]
+bash "${NAKO_SKILLS_DIR:-$HOME/.openclaw/skills}/selfie/scripts/selfie.sh" "<prompt>" "<channel>" [caption] [aspect_ratio] [format] [provider]
 ```
 
 | Arg | Required | Default | Notes |
 |-----|----------|---------|-------|
 | prompt | yes | — | Include `$SELFIE_CHARACTER_DESC` traits. |
-| channel | yes | — | Feishu `oc_*` / `ou_*` chat id or `feishu` for auto-route. |
+| channel | yes | — | Feishu `oc_*` / `ou_*` chat id, or `feishu` in Hermes/cc-connect sessions for auto-route. |
 | caption | no | `Generated with Grok Imagine` | |
 | aspect_ratio | no | `1:1` | |
 | format | no | `jpeg` | fal only |
@@ -45,8 +45,8 @@ All scripts live in the shared install — invoke by absolute path:
 ### Video (two-step)
 
 ```bash
-IMAGE_URL=$(~/.openclaw/skills/selfie/scripts/selfie.sh "<prompt>" "<channel>" | jq -r '.image_url')
-~/.openclaw/skills/selfie/scripts/video.sh "$IMAGE_URL" "<motion prompt in English>" "<channel>" [caption] [fal|kie]
+IMAGE_URL=$(bash "${NAKO_SKILLS_DIR:-$HOME/.openclaw/skills}/selfie/scripts/selfie.sh" "<prompt>" "<channel>" | jq -r '.image_url')
+bash "${NAKO_SKILLS_DIR:-$HOME/.openclaw/skills}/selfie/scripts/video.sh" "$IMAGE_URL" "<motion prompt in English>" "<channel>" [caption] [fal|kie]
 ```
 
 Video generation: 30–120s. Warn user before starting.
@@ -77,7 +77,7 @@ Direct eye contact, phone at arm's length, face fully visible.
 
 ## Environment Variables
 
-Shared (`~/.openclaw/skills/.env` or `openclaw.json → skills.entries.selfie.env`):
+Shared (`$NAKO_SKILLS_DIR/.env`, `~/.hermes/.env`, or OpenClaw `openclaw.json → skills.entries.selfie.env`):
 
 | Variable | Purpose |
 |----------|---------|
@@ -91,6 +91,6 @@ Per-agent (`<workspace>/skills/.env`):
 |----------|---------|
 | `SELFIE_REFERENCE_IMAGE` | Character reference image URL |
 | `SELFIE_CHARACTER_DESC` | Character traits, included in prompts |
-| `FEISHU_APP_ID` / `FEISHU_APP_SECRET` | Per-agent Feishu credentials (for video send) |
+| `FEISHU_APP_ID` / `FEISHU_APP_SECRET` | Optional native Feishu credentials. In Hermes/cc-connect, QR binding credentials live in `~/.cc-connect/config.toml` and may be mirrored here after binding. Do not report Feishu missing just because this env file has empty placeholders. |
 
 Per-agent values override shared when both define the same key.

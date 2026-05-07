@@ -176,10 +176,62 @@ def client_ip_from_request(handler) -> str:
 
 def ensure_cc_connect_config():
     if CC_CONFIG.exists():
+        normalize_cc_global_options()
         return
     CC_CONFIG.parent.mkdir(parents=True, exist_ok=True)
-    CC_CONFIG.write_text('[log]\nlevel = "info"\n')
+    CC_CONFIG.write_text(
+        'language = "en"\n\n'
+        '[stream_preview]\nenabled = false\n\n'
+        '[display]\ntool_messages = false\n\n'
+        '[log]\nlevel = "info"\n'
+    )
     os.chmod(CC_CONFIG, 0o600)
+
+
+def normalize_cc_global_options() -> bool:
+    """Keep noisy cc-connect platform defaults quiet for chat channels."""
+    if not CC_CONFIG.exists():
+        return False
+    try:
+        text = CC_CONFIG.read_text(encoding="utf-8")
+    except Exception:
+        return False
+
+    project_match = re.search(r"(?m)^\[\[projects\]\]\s*$", text)
+    prefix_end = project_match.start() if project_match else len(text)
+    prefix = text[:prefix_end]
+    rest = text[prefix_end:]
+
+    def ensure_section_value(src: str, section: str, key: str, value: str) -> str:
+        match = re.search(
+            rf"(?ms)(^\[{re.escape(section)}\]\s*\n)(.*?)(?=^\[|\Z)",
+            src,
+        )
+        if match:
+            body = match.group(2)
+            if re.search(rf"(?m)^{re.escape(key)}\s*=", body):
+                body = re.sub(rf"(?m)^{re.escape(key)}\s*=.*$", f"{key} = {value}", body)
+            else:
+                body = f"{key} = {value}\n" + body
+            return src[:match.start(2)] + body + src[match.end(2):]
+        if src and not src.endswith("\n"):
+            src += "\n"
+        return src + f"\n[{section}]\n{key} = {value}\n"
+
+    prefix = ensure_section_value(prefix, "stream_preview", "enabled", "false")
+    prefix = ensure_section_value(prefix, "display", "tool_messages", "false")
+
+    new_text = prefix + rest
+    if new_text == text:
+        return False
+    try:
+        backup = CC_CONFIG.parent / f"config.toml.bak-global-options-{time.strftime('%Y%m%d-%H%M%S')}"
+        backup.write_text(text, encoding="utf-8")
+        CC_CONFIG.write_text(new_text, encoding="utf-8")
+        os.chmod(CC_CONFIG, 0o600)
+        return True
+    except Exception:
+        return False
 
 
 def agent_id_for(n: int) -> str:
@@ -200,10 +252,9 @@ def runtime_label(runtime: str) -> str:
 
 
 def normalized_platform_runtimes(state: dict, bound: set, fallback_runtime: str) -> dict:
-    raw = state.get("platform_runtimes") if isinstance(state.get("platform_runtimes"), dict) else {}
     fallback_runtime = normalize_runtime(fallback_runtime)
     return {
-        plat: normalize_runtime(raw.get(plat) or fallback_runtime)
+        plat: fallback_runtime
         for plat in sorted(bound)
         if plat in QR_PLATFORMS
     }
@@ -345,8 +396,103 @@ def read_log_tail(n: int, max_bytes: int = LOG_TAIL_BYTES) -> str:
     return data.decode("utf-8", errors="replace")
 
 
+def yaml_unquote(value: str) -> str:
+    value = (value or "").strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+        return value[1:-1]
+    return value
+
+
+def read_yaml_top_map(path: Path, key: str) -> dict:
+    if not path.exists():
+        return {}
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except Exception:
+        return {}
+
+    block = {}
+    in_block = False
+    for line in lines:
+        if not in_block:
+            if line.strip() == f"{key}:" and not line.startswith((" ", "\t")):
+                in_block = True
+            continue
+        if line and not line.startswith((" ", "\t")):
+            break
+        m = re.match(r"^\s+([A-Za-z0-9_-]+)\s*:\s*(.*?)\s*$", line)
+        if m:
+            block[m.group(1)] = yaml_unquote(m.group(2))
+    return block
+
+
+def env_file_values(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    values = {}
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except Exception:
+        return values
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        values[key.strip()] = yaml_unquote(value.strip())
+    return values
+
+
+def hermes_model_info() -> dict:
+    model = read_yaml_top_map(hermes_home() / "config.yaml", "model")
+    provider = model.get("provider") or ""
+    default = model.get("default") or model.get("model") or ""
+    if not provider and not default:
+        return {}
+
+    provider_key = provider.upper().replace("-", "_") if provider else ""
+    api_key_candidates = []
+    if provider_key:
+        api_key_candidates.append(f"{provider_key}_API_KEY")
+    if provider == "zai":
+        api_key_candidates.append("GLM_API_KEY")
+
+    env_values = env_file_values(hermes_home() / ".env")
+    api_key_env = next((k for k in api_key_candidates if env_values.get(k)), api_key_candidates[0] if api_key_candidates else "")
+    return {
+        "runtime": "hermes",
+        "source": str(hermes_home() / "config.yaml"),
+        "provider": provider,
+        "model": default,
+        "label": f"{provider}/{default}" if provider and default else (default or provider),
+        "base_url": model.get("base_url") or model.get("baseUrl") or "",
+        "api_mode": model.get("api_mode") or "",
+        "api_key_env": api_key_env,
+        "api_key_configured": bool(api_key_env and env_values.get(api_key_env)),
+    }
+
+
+def runtime_model_state_fields(aid: str, runtime: str) -> dict:
+    runtime = normalize_runtime(runtime)
+    info = hermes_model_info() if runtime == "hermes" else {}
+    if not info:
+        return {}
+    return {
+        "model_info": info,
+        "model_provider": info.get("provider") or "",
+        "model_default": info.get("model") or "",
+        "model_base_url": info.get("base_url") or "",
+        "model_api_mode": info.get("api_mode") or "",
+        "model_label": info.get("label") or "",
+        "model_source": info.get("source") or "",
+        "model_api_key_env": info.get("api_key_env") or "",
+        "model_api_key_configured": bool(info.get("api_key_configured")),
+    }
+
+
 def status_payload(n: int) -> dict:
     state = job_state(n)
+    persisted_state = dict(state)
     aid = state.get("agent_id") or agent_id_for(n)
     stored_runtime = normalize_runtime(state.get("runtime"))
     runtime = stored_runtime
@@ -358,7 +504,7 @@ def status_payload(n: int) -> dict:
         state.setdefault("runtime", runtime)
 
     bound = bound_platforms_for_agent(aid)
-    platform_runtimes = normalized_platform_runtimes(state, bound, stored_runtime)
+    platform_runtimes = normalized_platform_runtimes(state, bound, runtime)
     state["bound_platforms"] = sorted(bound)
     state["unbound_platforms"] = [plat for plat in QR_PLATFORMS if plat not in bound]
     state["runtime"] = runtime
@@ -374,6 +520,8 @@ def status_payload(n: int) -> dict:
         "hermes": state["hermes_agent_configured"],
         "qclaw": state["qclaw_agent_configured"],
     }.get(runtime, state["openclaw_agent_configured"])
+    model_fields = runtime_model_state_fields(aid, runtime)
+    state.update(model_fields)
     with LOCK:
         active_qr = any(proc.poll() is None for proc in QR_PROCS.get(n, []))
     if state.get("status") == "awaiting_scan" and not active_qr:
@@ -382,8 +530,16 @@ def status_payload(n: int) -> dict:
         state["qr_refresh_in_progress"] = False
         write_state(n, status=next_status, qr_refresh_in_progress=False)
     requested = set(state.get("cc_reload_platforms") or [])
-    if bound and state.get("platform_runtimes") != platform_runtimes:
-        write_state(n, platform_runtimes=platform_runtimes)
+    state_updates = {}
+    if state.get("status") not in ("unknown", "corrupt") and persisted_state.get("runtime") != runtime:
+        state_updates["runtime"] = runtime
+    if bound and persisted_state.get("platform_runtimes") != platform_runtimes:
+        state_updates["platform_runtimes"] = platform_runtimes
+    for key, value in model_fields.items():
+        if persisted_state.get(key) != value:
+            state_updates[key] = value
+    if state_updates:
+        write_state(n, **state_updates)
     if bound and bound != requested:
         schedule_reload_for_bound_platforms(
             n, bound, tool_env(), reason=f"{aid}:status-bound-{','.join(sorted(bound))}"
@@ -416,6 +572,25 @@ def valid_secret(value) -> bool:
         return bool(value)
     value = value.strip()
     return bool(value) and not value.startswith("your-")
+
+
+def cc_project_names(prefix: str = "agent-nako-") -> list:
+    if not CC_CONFIG.exists():
+        return []
+    try:
+        text = CC_CONFIG.read_text(encoding="utf-8")
+    except Exception:
+        return []
+
+    names = []
+    for part in re.split(r"(?m)(?=^\[\[projects\]\]\s*$)", text):
+        if not part.startswith("[[projects]]"):
+            continue
+        name_match = re.search(r'(?m)^name\s*=\s*"([^"]+)"\s*$', part)
+        name = name_match.group(1) if name_match else ""
+        if name and (not prefix or name.startswith(prefix)):
+            names.append(name)
+    return names
 
 
 def bound_platforms_for_agent(aid: str) -> set:
@@ -511,6 +686,164 @@ def remove_platform_binding_for_agent(aid: str, platform: str) -> bool:
     except Exception:
         return False
     return True
+
+
+def normalize_cc_platform_options(aid: str) -> bool:
+    """Keep cc-connect platform defaults aligned after QR onboarding rewrites.
+
+    `cc-connect feishu new` owns the credential block and can recreate it
+    without Nako's text-reply defaults. Normalize just the Nako project before
+    every managed cc-connect restart so reinstall/rebind does not regress.
+    """
+    if not CC_CONFIG.exists():
+        return False
+    try:
+        text = CC_CONFIG.read_text(encoding="utf-8")
+    except Exception:
+        return False
+
+    parts = re.split(r"(?m)(?=^\[\[projects\]\]\s*$)", text)
+    changed = False
+    kept_projects = []
+
+    for part in parts:
+        if not part.startswith("[[projects]]"):
+            kept_projects.append(part)
+            continue
+
+        name_match = re.search(r'(?m)^name\s*=\s*"([^"]+)"\s*$', part)
+        if (name_match.group(1) if name_match else "") != aid:
+            kept_projects.append(part)
+            continue
+
+        blocks = re.split(r"(?m)(?=^\[\[projects\.platforms\]\]\s*$)", part)
+        if len(blocks) <= 1:
+            kept_projects.append(part)
+            continue
+
+        fixed_blocks = [blocks[0]]
+        for block in blocks[1:]:
+            type_match = re.search(r'(?m)^type\s*=\s*"([^"]+)"\s*$', block)
+            ptype = type_match.group(1) if type_match else ""
+            if ptype in ("feishu", "lark"):
+                new_block = re.sub(
+                    r"(?m)^(enable_feishu_card|reply_to_trigger)\s*=.*\n?",
+                    "",
+                    block,
+                ).rstrip()
+                if "[projects.platforms.options]" not in new_block:
+                    new_block += "\n\n[projects.platforms.options]"
+                new_block += "\nenable_feishu_card = false\nreply_to_trigger = false\n"
+                if new_block != block:
+                    changed = True
+                block = new_block
+            fixed_blocks.append(block)
+        kept_projects.append("".join(fixed_blocks))
+
+    if not changed:
+        return False
+
+    backup = CC_CONFIG.parent / f"config.toml.bak-platform-options-{aid}-{time.strftime('%Y%m%d-%H%M%S')}"
+    try:
+        backup.write_text(text, encoding="utf-8")
+        CC_CONFIG.write_text("".join(kept_projects), encoding="utf-8")
+        os.chmod(CC_CONFIG, 0o600)
+    except Exception:
+        return False
+    return True
+
+
+def cc_project_platform_options(aid: str, platform_types: set) -> dict:
+    if not CC_CONFIG.exists():
+        return {}
+    try:
+        text = CC_CONFIG.read_text(encoding="utf-8")
+    except Exception:
+        return {}
+
+    if tomllib is not None:
+        try:
+            data = tomllib.loads(text)
+            for project in data.get("projects", []):
+                if project.get("name") != aid:
+                    continue
+                for platform in project.get("platforms", []):
+                    if platform.get("type") in platform_types:
+                        options = platform.get("options", {})
+                        return options if isinstance(options, dict) else {}
+        except Exception:
+            pass
+
+    for part in re.split(r"(?m)(?=^\[\[projects\]\]\s*$)", text):
+        if not part.startswith("[[projects]]"):
+            continue
+        name_match = re.search(r'(?m)^name\s*=\s*"([^"]+)"\s*$', part)
+        if (name_match.group(1) if name_match else "") != aid:
+            continue
+        for block in re.split(r"(?m)(?=^\[\[projects\.platforms\]\]\s*$)", part)[1:]:
+            type_match = re.search(r'(?m)^type\s*=\s*"([^"]+)"\s*$', block)
+            if (type_match.group(1) if type_match else "") not in platform_types:
+                continue
+            options = {}
+            for key, value in re.findall(r'(?m)^([A-Za-z0-9_-]+)\s*=\s*"([^"]*)"\s*$', block):
+                options[key] = value
+            return options
+    return {}
+
+
+def write_env_values(path: Path, values: dict) -> bool:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        text = path.read_text(encoding="utf-8") if path.exists() else ""
+    except Exception:
+        text = ""
+
+    new_text = text
+    for key, value in values.items():
+        if not value:
+            continue
+        line = f"{key}={value}"
+        pattern = rf"(?m)^#?\s*{re.escape(key)}=.*$"
+        if re.search(pattern, new_text):
+            new_text = re.sub(pattern, line, new_text)
+        else:
+            if new_text and not new_text.endswith("\n"):
+                new_text += "\n"
+            new_text += line + "\n"
+
+    if new_text == text:
+        try:
+            os.chmod(path, 0o600)
+        except Exception:
+            pass
+        return False
+    try:
+        path.write_text(new_text, encoding="utf-8")
+        os.chmod(path, 0o600)
+        return True
+    except Exception:
+        return False
+
+
+def sync_hermes_feishu_env_for_project(aid: str) -> bool:
+    """Mirror cc-connect QR Feishu credentials into Hermes workspace env.
+
+    Hermes skills can read cc-connect config directly for delivery, but the
+    agent also inspects <workspace>/skills/.env during self-checks. Keeping
+    this mirror non-empty prevents stale template blanks from being reported
+    as a missing Feishu binding.
+    """
+    if cc_project_runtime(aid) != "hermes":
+        return False
+    options = cc_project_platform_options(aid, {"feishu", "lark"})
+    app_id = str(options.get("app_id") or "")
+    app_secret = str(options.get("app_secret") or "")
+    if not app_id or not app_secret:
+        return False
+    return write_env_values(
+        hermes_workspace(aid) / "skills" / ".env",
+        {"FEISHU_APP_ID": app_id, "FEISHU_APP_SECRET": app_secret},
+    )
 
 
 def reset_cc_connect_sessions_for_platform(aid: str, platform: str) -> list:
@@ -1221,12 +1554,16 @@ def cc_agent_options_for_runtime(name: str, runtime: str, env: dict = None) -> d
     runtime = normalize_runtime(runtime)
     env = env or tool_env()
     if runtime == "hermes":
+        hhome = hermes_home()
         hermes_env = {
             "HOME": str(HOME),
-            "HERMES_HOME": str(hermes_home()),
+            "HERMES_HOME": str(hhome),
             "PATH": env.get("PATH", ""),
-            "OPENCLAW_OUTPUT_MODE": "acp",
-            "OPENCLAW_CCCONNECT_PROJECT": name,
+            "NAKO_OUTPUT_MODE": "acp",
+            "NAKO_CCCONNECT_PROJECT": name,
+            "NAKO_AGENT_WORKSPACE": str(hermes_workspace(name)),
+            "NAKO_SKILLS_DIR": str(hhome / "skills" / "nako"),
+            "NAKO_MEDIA_HOME": str(hhome / "media"),
             "NAKO_AGENT_RUNTIME": "hermes",
         }
         return {
@@ -1578,12 +1915,55 @@ def gateway_watchdog():
         time.sleep(OPENCLAW_WATCHDOG_INTERVAL)
 
 
+def ensure_cc_connect_api_socket_compat(work_dir: Path) -> bool:
+    """Expose the daemon socket at the default cc-connect send data-dir path."""
+    public_run = work_dir / "run"
+    nested_run = work_dir / ".cc-connect" / "run"
+    public_sock = public_run / "api.sock"
+    nested_sock = nested_run / "api.sock"
+
+    deadline = time.time() + 3
+    while time.time() < deadline:
+        if public_sock.exists():
+            return False
+        if nested_sock.exists():
+            break
+        time.sleep(0.2)
+
+    if not nested_sock.exists():
+        return False
+
+    try:
+        if public_run.is_symlink():
+            public_run.unlink()
+        elif public_run.exists():
+            if public_sock.exists():
+                return False
+            if public_run.is_dir() and not any(public_run.iterdir()):
+                public_run.rmdir()
+            else:
+                return False
+        public_run.symlink_to(Path(".cc-connect") / "run")
+        return True
+    except OSError:
+        return False
+
+
 def start_cc_connect(env: dict, reason: str = ""):
     with CC_RESTART_LOCK:
         log = HOME / ".cc-connect/cc-connect.log"
+        work_dir = HOME / ".cc-connect"
         log.parent.mkdir(parents=True, exist_ok=True)
         removed = prune_empty_cc_projects()
         repaired = repair_nako_cc_projects()
+        normalized_global = normalize_cc_global_options()
+        normalized = []
+        synced_hermes_feishu = []
+        for aid in sorted(cc_project_names()):
+            if normalize_cc_platform_options(aid):
+                normalized.append(aid)
+            if sync_hermes_feishu_env_for_project(aid):
+                synced_hermes_feishu.append(aid)
         ensured_qclaw_sessions = ensure_qclaw_cc_sessions_for_projects()
         needs_gateway = has_openclaw_cc_projects()
         gateway_ok = ensure_openclaw_gateway(env) if needs_gateway else True
@@ -1600,12 +1980,44 @@ def start_cc_connect(env: dict, reason: str = ""):
                 f.write(("=== pruned empty projects: " + ", ".join(removed) + " ===\n").encode("utf-8"))
             if repaired:
                 f.write(("=== repaired projects: " + ", ".join(repaired) + " ===\n").encode("utf-8"))
+            if normalized_global:
+                f.write(b"=== normalized global options: stream_preview.enabled=false display.tool_messages=false ===\n")
+            if normalized:
+                f.write(("=== normalized platform options: " + ", ".join(normalized) + " ===\n").encode("utf-8"))
+            if synced_hermes_feishu:
+                f.write(("=== synced hermes feishu env: " + ", ".join(synced_hermes_feishu) + " ===\n").encode("utf-8"))
             if ensured_qclaw_sessions:
                 f.write(("=== ensured qclaw sessions: " + ", ".join(ensured_qclaw_sessions) + " ===\n").encode("utf-8"))
             if approved_devices:
                 f.write(("=== approved local openclaw device repairs: " + ", ".join(approved_devices) + " ===\n").encode("utf-8"))
-            subprocess.Popen(["cc-connect"], stdout=f, stderr=subprocess.STDOUT,
-                             stdin=subprocess.DEVNULL, env=env, start_new_session=True)
+            daemon_ok = False
+            cc_bin = shutil.which("cc-connect", path=env.get("PATH")) or "cc-connect"
+            subprocess.run([cc_bin, "daemon", "stop", "--work-dir", str(work_dir)],
+                           stdout=f, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                           env=env, check=False)
+            stop_cc_connect()
+            install_rc = subprocess.run(
+                [cc_bin, "daemon", "install", "--work-dir", str(work_dir), "--force"],
+                stdout=f, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                env=env, check=False,
+            ).returncode
+            if install_rc == 0:
+                start_rc = subprocess.run(
+                    [cc_bin, "daemon", "start", "--work-dir", str(work_dir)],
+                    stdout=f, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                    env=env, check=False,
+                ).returncode
+                daemon_ok = start_rc == 0
+                f.write(f"=== cc-connect daemon start rc={start_rc} ===\n".encode("utf-8"))
+            else:
+                f.write(f"=== cc-connect daemon install rc={install_rc} ===\n".encode("utf-8"))
+            if not daemon_ok:
+                subprocess.Popen([cc_bin], stdout=f, stderr=subprocess.STDOUT,
+                                 stdin=subprocess.DEVNULL, cwd=str(work_dir),
+                                 env=env, start_new_session=True)
+                f.write(b"=== cc-connect fallback process started ===\n")
+            if ensure_cc_connect_api_socket_compat(work_dir):
+                f.write(b"=== cc-connect api socket compat link ready ===\n")
 
 
 def schedule_cc_connect_restart(env: dict, reason: str = "", delay: float = 2.0):
@@ -1688,8 +2100,10 @@ def create_or_get_job_for_ip(client_ip: str, runtime: str):
             state = job_state(n)
             aid = state.get("agent_id") or agent_id_for(n)
             bound = bound_platforms_for_agent(aid)
+            configured_runtime = cc_project_runtime(aid)
+            current_runtime = configured_runtime if configured_runtime in RUNTIMES else normalize_runtime(state.get("runtime"))
             platform_runtimes = normalized_platform_runtimes(
-                state, bound, normalize_runtime(state.get("runtime"))
+                state, bound, current_runtime
             )
             update = {"platform_runtimes": platform_runtimes}
             if not bound:
@@ -1773,7 +2187,8 @@ def run_install_and_qr_locked(n: int, force_qr: bool = False, generation: int = 
                 f"\n=== runtime={runtime} post-install: "
                 f"gateway_ok={gateway_ok} clients={stopped_clients} gateways={stopped_gateways} ===\n"
             )
-        write_state(n, status="installed", runtime=runtime, install_rc=rc)
+        write_state(n, status="installed", runtime=runtime, install_rc=rc,
+                    **runtime_model_state_fields(aid, runtime))
 
     if not generation_current(n, generation):
         return
@@ -1786,7 +2201,8 @@ def run_install_and_qr_locked(n: int, force_qr: bool = False, generation: int = 
         write_state(n, status="ready", runtime=runtime, qr_refresh_in_progress=False,
                     bound_platforms=sorted(bound),
                     unbound_platforms=[],
-                    platform_runtimes=platform_runtimes)
+                    platform_runtimes=platform_runtimes,
+                    **runtime_model_state_fields(aid, runtime))
         schedule_reload_for_bound_platforms(n, bound, env, reason=f"{aid}:already-bound")
         return
 
@@ -1849,7 +2265,8 @@ def run_install_and_qr_locked(n: int, force_qr: bool = False, generation: int = 
     if not generation_current(n, generation):
         return
 
-    write_state(n, status="awaiting_scan", runtime=runtime)
+    write_state(n, status="awaiting_scan", runtime=runtime,
+                **runtime_model_state_fields(aid, runtime))
 
     rc_updates = {}
     remaining = {plat: proc for plat, proc in procs}
@@ -1911,6 +2328,7 @@ def run_install_and_qr_locked(n: int, force_qr: bool = False, generation: int = 
                 bound_platforms=sorted(bound),
                 unbound_platforms=unbound,
                 platform_runtimes=platform_runtimes,
+                **runtime_model_state_fields(aid, runtime),
                 **rc_updates)
     if bound:
         schedule_reload_for_bound_platforms(n, bound, env, reason=f"{aid}:qr-finished", force=True)
@@ -1995,6 +2413,9 @@ function summaryHTML(j){
     '<span class=pill><strong>Agent：</strong>'+esc(j.agent_id||'-')+'</span>',
     '<span class=pill><strong>当前后端：</strong>'+esc(runtimeName(current))+'</span>'
   ];
+  if(j.model_label){
+    pills.push('<span class=pill><strong>模型：</strong>'+esc(j.model_label)+'</span>');
+  }
   if(selected!==current){
     pills.push('<span class=pill><strong>已选择：</strong>'+esc(runtimeName(selected))+'</span>');
   }
@@ -2189,8 +2610,11 @@ loadCurrent();
 
             aid = state.get("agent_id") or agent_id_for(n)
             runtime = normalize_runtime(q.get("runtime", [state.get("runtime") or DEFAULT_RUNTIME])[0])
+            current_runtime = cc_project_runtime(aid)
             old_platform_runtime = normalized_platform_runtimes(
-                state, {plat}, normalize_runtime(state.get("runtime"))
+                state,
+                {plat},
+                current_runtime if current_runtime in RUNTIMES else normalize_runtime(state.get("runtime")),
             ).get(plat)
             removed = remove_platform_binding_for_agent(aid, plat)
             removed_sessions = reset_cc_connect_sessions_for_platform(aid, plat)

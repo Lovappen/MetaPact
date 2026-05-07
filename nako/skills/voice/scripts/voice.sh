@@ -8,9 +8,10 @@ set -euo pipefail
 # Two-layer env load: shared defaults first, per-agent overlay last wins.
 _SHARED_SKILLS_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 [ -f "$_SHARED_SKILLS_DIR/.env" ] && set -a && source "$_SHARED_SKILLS_DIR/.env" && set +a
+[ -n "${HERMES_HOME:-}" ] && [ -f "$HERMES_HOME/.env" ] && set -a && source "$HERMES_HOME/.env" && set +a
 
 _load_openclaw_voice_env() {
-  local _cfg="${OPENCLAW_CONFIG:-$HOME/.openclaw/openclaw.json}"
+  local _cfg="${NAKO_CONFIG:-${OPENCLAW_CONFIG:-${OPENCLAW_CONFIG_PATH:-$HOME/.openclaw/openclaw.json}}}"
   [ -f "$_cfg" ] || return 0
   command -v python3 >/dev/null 2>&1 || return 0
 
@@ -40,6 +41,8 @@ _load_openclaw_voice_env
 _AGENT_ENV=""
 if [ -f "$PWD/skills/.env" ]; then
   _AGENT_ENV="$PWD/skills/.env"
+elif [ -n "${NAKO_AGENT_WORKSPACE:-}" ] && [ -f "$NAKO_AGENT_WORKSPACE/skills/.env" ]; then
+  _AGENT_ENV="$NAKO_AGENT_WORKSPACE/skills/.env"
 elif [ -n "${OPENCLAW_AGENT_WORKSPACE:-}" ] && [ -f "$OPENCLAW_AGENT_WORKSPACE/skills/.env" ]; then
   _AGENT_ENV="$OPENCLAW_AGENT_WORKSPACE/skills/.env"
 fi
@@ -48,8 +51,20 @@ fi
 export PATH="/opt/homebrew/bin:$PATH"
 
 # Structured logging
-SKILL_LOG_SH="${SKILL_LOG_SH:-$HOME/.openclaw/skills/skill-log.sh}"
+if [ -z "${SKILL_LOG_SH:-}" ]; then
+  if [ -n "${NAKO_SKILLS_DIR:-}" ]; then
+    SKILL_LOG_SH="$NAKO_SKILLS_DIR/skill-log.sh"
+  elif [ -n "${HERMES_HOME:-}" ] && [ -f "$HERMES_HOME/skills/nako/skill-log.sh" ]; then
+    SKILL_LOG_SH="$HERMES_HOME/skills/nako/skill-log.sh"
+  else
+    SKILL_LOG_SH="$HOME/.openclaw/skills/skill-log.sh"
+  fi
+fi
 source "$SKILL_LOG_SH" 2>/dev/null || true
+
+if [ -z "${NAKO_MEDIA_HOME:-}" ] && [ -n "${HERMES_HOME:-}" ] && [ "${NAKO_AGENT_RUNTIME:-}" = "hermes" ]; then
+  NAKO_MEDIA_HOME="$HERMES_HOME/media"
+fi
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
 log_info()  { echo -e "${GREEN}[INFO]${NC} $1"; }
@@ -74,14 +89,14 @@ PY
 _infer_ccconnect_project() {
   local value base
 
-  for value in "${OPENCLAW_CCCONNECT_PROJECT:-}" "${OPENCLAW_AGENT_ID:-}" "${AGENT_ID:-}"; do
+  for value in "${NAKO_CCCONNECT_PROJECT:-}" "${OPENCLAW_CCCONNECT_PROJECT:-}" "${NAKO_AGENT_ID:-}" "${OPENCLAW_AGENT_ID:-}" "${AGENT_ID:-}"; do
     if [ -n "$value" ]; then
       printf '%s\n' "$value"
       return 0
     fi
   done
 
-  for value in "${OPENCLAW_AGENT_WORKSPACE:-}" "$PWD"; do
+  for value in "${NAKO_AGENT_WORKSPACE:-}" "${OPENCLAW_AGENT_WORKSPACE:-}" "$PWD"; do
     [ -n "$value" ] || continue
     base="$(basename "$value")"
     case "$base" in
@@ -89,10 +104,11 @@ _infer_ccconnect_project() {
     esac
   done
 
-  if [ -n "${OPENCLAW_SESSION_ID:-}" ]; then
-    case "$OPENCLAW_SESSION_ID" in
+  local session_id="${NAKO_SESSION_ID:-${OPENCLAW_SESSION_ID:-}}"
+  if [ -n "$session_id" ]; then
+    case "$session_id" in
       agent:*)
-        value="${OPENCLAW_SESSION_ID#agent:}"
+        value="${session_id#agent:}"
         printf '%s\n' "${value%%:*}"
         return 0
         ;;
@@ -107,8 +123,8 @@ _infer_ccconnect_session() {
   local data_dir="${CC_CONNECT_DATA_DIR:-$HOME/.cc-connect}"
   local session_file=""
 
-  if [ -n "${OPENCLAW_CCCONNECT_SESSION:-}" ]; then
-    printf '%s\n' "$OPENCLAW_CCCONNECT_SESSION"
+  if [ -n "${NAKO_CCCONNECT_SESSION:-${OPENCLAW_CCCONNECT_SESSION:-}}" ]; then
+    printf '%s\n' "${NAKO_CCCONNECT_SESSION:-${OPENCLAW_CCCONNECT_SESSION:-}}"
     return 0
   fi
 
@@ -128,8 +144,29 @@ _infer_ccconnect_session() {
   ' "$session_file" 2>/dev/null
 }
 
+_ccconnect_api_data_dir() {
+  local candidate
+
+  for candidate in "${CC_CONNECT_API_DATA_DIR:-}" "${CC_CONNECT_DATA_DIR:-}" "$HOME/.cc-connect" "$HOME/.cc-connect/.cc-connect"; do
+    [ -n "$candidate" ] || continue
+    if [ -S "$candidate/run/api.sock" ]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+
+  if [ -n "${CC_CONNECT_API_DATA_DIR:-}" ]; then
+    printf '%s\n' "$CC_CONNECT_API_DATA_DIR"
+  elif [ -n "${CC_CONNECT_DATA_DIR:-}" ]; then
+    printf '%s\n' "$CC_CONNECT_DATA_DIR"
+  else
+    printf '%s\n' "$HOME/.cc-connect"
+  fi
+}
+
 _should_use_ccconnect_delivery() {
-  [ "${OPENCLAW_OUTPUT_MODE:-}" = "acp" ] && return 0
+  [ "${NAKO_OUTPUT_MODE:-${OPENCLAW_OUTPUT_MODE:-}}" = "acp" ] && return 0
+  [ -n "${NAKO_CCCONNECT_PROJECT:-}" ] && return 0
   [ -n "${OPENCLAW_CCCONNECT_PROJECT:-}" ] && return 0
 
   case "$CHANNEL" in
@@ -139,17 +176,34 @@ _should_use_ccconnect_delivery() {
   return 1
 }
 
+_explain_ccconnect_audio_failure() {
+  local file="$1"
+  local cc_output="$2"
+  local compact
+
+  compact="$(printf '%s' "$cc_output" | tr '\n' ' ' | cut -c1-220)"
+  case "$cc_output" in
+    *"ffmpeg not found"*|*"AMR conversion failed"*|*"Unknown encoder"*|*"amr_nb"*|*"libopencore_amrnb"*)
+      log_warn "语音发送失败：缺少 ffmpeg 或 AMR 编码器。微信原生语音需要 AMR 转码；macOS 可安装带 AMR 支持的 ffmpeg，Linux 可安装 ffmpeg libavcodec-extra。MP3 文件已保留: $file"
+      ;;
+    *)
+      log_warn "cc-connect send failed: $compact"
+      ;;
+  esac
+}
+
 _ccconnect_send_file() {
   local file="$1"
   local message="$2"
   local action="$3"
-  local project session cc_output
+  local project session data_dir cc_output
   local send_args
 
   command -v cc-connect >/dev/null 2>&1 || return 1
   project="$(_infer_ccconnect_project || true)"
   session="$(_infer_ccconnect_session "$project" || true)"
-  send_args=(send --file "$file" -m "$message")
+  data_dir="$(_ccconnect_api_data_dir)"
+  send_args=(send --data-dir "$data_dir" --file "$file" -m "$message")
   [ -n "$project" ] && send_args+=(-p "$project")
   [ -n "$session" ] && send_args+=(--session "$session")
 
@@ -158,7 +212,7 @@ _ccconnect_send_file() {
     return 0
   fi
 
-  log_warn "cc-connect send failed: $(printf '%s' "$cc_output" | tr '\n' ' ' | cut -c1-180)"
+  _explain_ccconnect_audio_failure "$file" "$cc_output"
   skill_log_fail voice "$action" "path=$file" "project=${project:-unknown}"
   return 1
 }
@@ -174,12 +228,12 @@ SPEED="${5:-1.0}"
 if [ "$PROVIDER" = "auto" ]; then
   if [ -n "${MINIMAX_API_KEY:-}" ]; then PROVIDER="minimax"
   elif [ -n "${VOLCENGINE_API_KEY:-}" ]; then PROVIDER="volcengine"
-  else log_error "No TTS API key; configure openclaw.json skills.entries.voice.env or ~/.openclaw/skills/.env"; exit 1; fi
+  else log_error "No TTS API key; configure the runtime skill env or $HOME/.openclaw/skills/.env"; exit 1; fi
 fi
 
 skill_log_start voice tts_request "provider=$PROVIDER" "channel=$CHANNEL" "text_len=${#TEXT}" "voice_id=${VOICE_ID:-default}" "speed=$SPEED"
 
-OUTDIR="${OPENCLAW_HOME:-$HOME/.openclaw}/media/outbound"
+OUTDIR="${NAKO_MEDIA_HOME:-${OPENCLAW_HOME:-$HOME/.openclaw}/media}/outbound"
 mkdir -p "$OUTDIR"
 REQUEST_ID="$(new_uuid)"
 MP3_FILE="${OUTDIR}/${REQUEST_ID}.mp3"
@@ -190,7 +244,7 @@ DURATION=""
 # ============================
 
 generate_minimax() {
-  [ -z "${MINIMAX_API_KEY:-}" ] || [ -z "${MINIMAX_GROUP_ID:-}" ] && { log_error "MINIMAX_API_KEY and MINIMAX_GROUP_ID required in openclaw.json skills.entries.voice.env or ~/.openclaw/skills/.env"; exit 1; }
+  [ -z "${MINIMAX_API_KEY:-}" ] || [ -z "${MINIMAX_GROUP_ID:-}" ] && { log_error "MINIMAX_API_KEY and MINIMAX_GROUP_ID required in the runtime skill env"; exit 1; }
   local voice="${VOICE_ID:-${VOICE_DEFAULT_MINIMAX:-female-tianmei}}"
   log_info "MiniMax TTS: voice=$voice, speed=$SPEED"
 
@@ -228,7 +282,7 @@ generate_minimax() {
 }
 
 generate_volcengine() {
-  [ -z "${VOLCENGINE_API_KEY:-}" ] && { log_error "VOLCENGINE_API_KEY required in openclaw.json skills.entries.voice.env or ~/.openclaw/skills/.env"; exit 1; }
+  [ -z "${VOLCENGINE_API_KEY:-}" ] && { log_error "VOLCENGINE_API_KEY required in the runtime skill env"; exit 1; }
   local voice="${VOICE_ID:-${VOICE_DEFAULT_VOLCENGINE:-zh_female_shuangkuaisisi_moon_bigtts}}"
   local resource_id="${VOLCENGINE_RESOURCE_ID:-seed-tts-1.0}"
   log_info "Volcengine TTS: voice=$voice, resource=$resource_id"
@@ -239,7 +293,7 @@ generate_volcengine() {
 
   local payload
   payload=$(jq -n --arg text "$TEXT" --arg voice "$voice" --argjson rate "$speech_rate" '{
-    user: { uid: "openclaw-agent" },
+    user: { uid: "nako-agent" },
     req_params: {
       text: $text,
       speaker: $voice,

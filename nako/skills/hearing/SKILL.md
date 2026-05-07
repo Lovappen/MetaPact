@@ -6,7 +6,7 @@ allowed-tools: Bash(*/stt.sh:*) Bash(ls:*)
 
 # Hearing — 听懂语音
 
-用户发语音时，openclaw 把 opus/m4a 等音频下到 `~/.openclaw/media/inbound/`。本技能用本地 Whisper 把它转写成文字。无需 API key。
+用户发语音时，当前消息 runtime 会把 opus/m4a 等音频下到入站媒体目录。Hermes 默认是 `~/.hermes/media/inbound/`；OpenClaw 默认是 `~/.openclaw/media/inbound/`。本技能用本地 Whisper 把它转写成文字。无需 API key。
 
 ## 何时用
 
@@ -20,13 +20,13 @@ allowed-tools: Bash(*/stt.sh:*) Bash(ls:*)
 
 ```bash
 # A. 根据 file_key 查 gateway.log 找文件并转写
-~/.openclaw/skills/hearing/scripts/stt.sh <file_key>
+bash "${NAKO_SKILLS_DIR:-$HOME/.openclaw/skills}/hearing/scripts/stt.sh" <file_key>
 
 # B. 取最新一条入站音频（最常用）
-~/.openclaw/skills/hearing/scripts/stt.sh --latest
+bash "${NAKO_SKILLS_DIR:-$HOME/.openclaw/skills}/hearing/scripts/stt.sh" --latest
 
 # C. 直接传绝对路径
-~/.openclaw/skills/hearing/scripts/stt.sh /Users/openclaw/.openclaw/media/inbound/xxx.opus
+bash "${NAKO_SKILLS_DIR:-$HOME/.openclaw/skills}/hearing/scripts/stt.sh" /path/to/media/inbound/xxx.opus
 ```
 
 脚本把转写文本输出到 stdout，你把文本作为用户说的话理解即可。

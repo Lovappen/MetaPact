@@ -6,7 +6,7 @@ allowed-tools: Bash(*/resolve.sh:*) Bash(ls:*) Read
 
 # Vision — 看懂图片
 
-用户发图片时，消息体里出现 `{"image_key":"img_v3_..."}`。openclaw 已经自动把图片下到本地 `~/.openclaw/media/inbound/<uuid>.<ext>`。本技能把 image_key 反查到本地路径，之后你用 `Read` 工具直接读图（Claude 原生视觉）。
+用户发图片时，消息体里出现 `{"image_key":"img_v3_..."}`。当前消息 runtime 会自动把图片下到本地入站媒体目录；Hermes 默认是 `~/.hermes/media/inbound/`，OpenClaw 默认是 `~/.openclaw/media/inbound/`。本技能把 image_key 反查到本地路径，之后你用 `Read` 工具直接读图（Claude 原生视觉）。
 
 ## 何时用
 
@@ -19,11 +19,11 @@ allowed-tools: Bash(*/resolve.sh:*) Bash(ls:*) Read
 
 ```bash
 # 1) image_key → 本地路径
-~/.openclaw/skills/vision/scripts/resolve.sh img_v3_0210u_xxx
-# → /Users/openclaw/.openclaw/media/inbound/d526ab00-xxx.jpg
+bash "${NAKO_SKILLS_DIR:-$HOME/.openclaw/skills}/vision/scripts/resolve.sh" img_v3_0210u_xxx
+# → /root/.hermes/media/inbound/d526ab00-xxx.jpg
 
 # 2) 拿不到 key 时的回退：取最近一张图
-~/.openclaw/skills/vision/scripts/resolve.sh --latest
+bash "${NAKO_SKILLS_DIR:-$HOME/.openclaw/skills}/vision/scripts/resolve.sh" --latest
 
 # 3) 之后用 Read 读文件
 # Read tool 直接传上面输出的绝对路径即可

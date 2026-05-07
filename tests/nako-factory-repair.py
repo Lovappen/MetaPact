@@ -42,6 +42,38 @@ with tempfile.TemporaryDirectory() as tmp:
     assert "bound_after_install" not in server_source
     assert "force: bool = False" in server_source
     assert "force=True" in server_source
+    assert "def runtime_model_state_fields" in server_source
+    assert "<strong>模型：</strong>" in server_source
+
+    hermes_config = Path(tmp) / ".hermes" / "config.yaml"
+    hermes_config.parent.mkdir(parents=True, exist_ok=True)
+    hermes_config.write_text(
+        """skills:
+  - /tmp/skills
+
+model:
+  default: "glm-4.5-flash"
+  provider: "zai"
+  base_url: "https://api.z.ai/api/coding/paas/v4"
+  api_mode: "chat_completions"
+""",
+        encoding="utf-8",
+    )
+    (Path(tmp) / ".hermes" / ".env").write_text("ZAI_API_KEY=secret\n", encoding="utf-8")
+    model_fields = module.runtime_model_state_fields("agent-nako-9", "hermes")
+    assert model_fields["model_provider"] == "zai"
+    assert model_fields["model_default"] == "glm-4.5-flash"
+    assert model_fields["model_base_url"] == "https://api.z.ai/api/coding/paas/v4"
+    assert model_fields["model_api_mode"] == "chat_completions"
+    assert model_fields["model_api_key_env"] == "ZAI_API_KEY"
+    assert model_fields["model_api_key_configured"] is True
+    assert model_fields["model_label"] == "zai/glm-4.5-flash"
+    module.write_state(9, status="ready", agent_id="agent-nako-9", runtime="hermes")
+    payload = module.status_payload(9)
+    assert payload["model_label"] == "zai/glm-4.5-flash"
+    persisted = json.loads((Path(tmp) / ".nako-jobs" / "agent-nako-9.json").read_text(encoding="utf-8"))
+    assert persisted["model_info"]["provider"] == "zai"
+    assert persisted["model_default"] == "glm-4.5-flash"
 
     class Headers(dict):
         def get(self, name, default=None):
@@ -114,6 +146,11 @@ app_secret = "y"
     assert 'display_name = "OpenClaw agent-nako-1"' in text
     assert 'OPENCLAW_CCCONNECT_PROJECT = "agent-nako-1"' in text
     assert 'NAKO_AGENT_RUNTIME = "openclaw"' in text
+    assert module.normalize_cc_platform_options("agent-nako-1")
+    text = cfg.read_text(encoding="utf-8")
+    assert 'enable_feishu_card = false' in text
+    assert 'reply_to_trigger = false' in text
+    assert not module.normalize_cc_platform_options("agent-nako-1")
     openclaw_text = text
 
     cfg.write_text(
@@ -273,14 +310,21 @@ app_secret = "y"
     )
     payload = module.status_payload(4)
     assert payload["runtime"] == "hermes"
-    assert payload["platform_runtimes"]["feishu"] == "openclaw"
-    assert payload["platform_runtime_labels"]["feishu"] == "OpenClaw"
+    assert payload["platform_runtimes"]["feishu"] == "hermes"
+    assert payload["platform_runtime_labels"]["feishu"] == "Hermes"
+    assert module.job_state(4)["runtime"] == "hermes"
+    assert module.sync_hermes_feishu_env_for_project("agent-nako-4")
+    hermes_env = Path(tmp) / ".hermes" / "workspace" / "agent-nako-4" / "skills" / ".env"
+    hermes_env_text = hermes_env.read_text(encoding="utf-8")
+    assert "FEISHU_APP_ID=x" in hermes_env_text
+    assert "FEISHU_APP_SECRET=y" in hermes_env_text
+    assert not module.sync_hermes_feishu_env_for_project("agent-nako-4")
     module.save_ip_index({"198.51.100.4": 4})
     n, existing, _ = module.create_or_get_job_for_ip("198.51.100.4", "hermes")
     assert (n, existing) == (4, True)
     preserved = module.job_state(4)
-    assert preserved["runtime"] == "openclaw"
-    assert preserved["platform_runtimes"]["feishu"] == "openclaw"
+    assert preserved["runtime"] == "hermes"
+    assert preserved["platform_runtimes"]["feishu"] == "hermes"
 
     cfg.write_text(
         openclaw_text

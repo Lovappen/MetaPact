@@ -56,10 +56,10 @@ QClaw 会监听 workspace 里的 `IDENTITY.md`，只解析英文 key：
 - Name: 野木奈子
 - Emoji: 🎀
 - Vibe: 核战后赛博世界专属战斗女仆
-- Avatar: assets/nako-avatar.svg
+- Avatar: assets/nako-avatar-head.png
 ```
 
-`Avatar` 可以是 workspace 相对路径、HTTPS URL 或 data URI。默认头像文件随安装器复制到 `assets/nako-avatar.svg`。
+`Avatar` 可以是 workspace 相对路径、HTTPS URL 或 data URI。默认使用随安装器复制的头部放大头像 `assets/nako-avatar-head.png`；自拍生成仍使用 `SELFIE_REFERENCE_IMAGE` 作为全身参考图。
 
 ### 新增私人知识
 
