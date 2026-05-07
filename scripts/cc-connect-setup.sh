@@ -1358,6 +1358,7 @@ fi
 
 CONFIG_CHANGED="$(python3 - "$CC_CONFIG" "$AGENT_ID" "$RUNTIME" "$DISPLAY_NAME" "$HOME" "$WORKSPACE" "$HERMES_HOME" "$HERMES_WORKSPACE" "${HERMES_BIN:-}" "$QCLAW_HOME" "$QCLAW_WORKSPACE" "${QCLAW_NODE_BIN:-}" "${QCLAW_OPENCLAW_MJS:-}" "${QCLAW_OPENCLAW_CONFIG:-$QCLAW_HOME/openclaw.json}" "$QCLAW_CC_SESSION_SUFFIX" "$PATH" <<'PY'
 import os
+import json
 import re
 import sys
 import time
@@ -1374,6 +1375,16 @@ def arr(values):
 
 def inline_table(items):
     return "{ " + ", ".join(f"{key} = {q(value)}" for key, value in items) + " }"
+
+def gateway_auth_token(config_path):
+    try:
+        data = json.loads(Path(config_path).expanduser().read_text(encoding="utf-8"))
+    except Exception:
+        return ""
+    gateway = data.get("gateway") if isinstance(data.get("gateway"), dict) else {}
+    auth = gateway.get("auth") if isinstance(gateway.get("auth"), dict) else {}
+    token = auth.get("token")
+    return token if isinstance(token, str) and token else ""
 
 def normalize_global_options(text):
     project_match = re.search(r"(?m)^\[\[projects\]\]\s*$", text)
@@ -1435,6 +1446,9 @@ elif runtime == "qclaw":
         "NAKO_MEDIA_HOME": str(Path(qclaw_home) / "media"),
         "NAKO_AGENT_RUNTIME": "qclaw",
     }
+    gateway_token = gateway_auth_token(qclaw_config_path)
+    if gateway_token:
+        env["OPENCLAW_GATEWAY_TOKEN"] = gateway_token
 else:
     command = "openclaw"
     work_dir = str(Path(home) / ".openclaw")
@@ -1453,6 +1467,9 @@ else:
         "NAKO_MEDIA_HOME": str(Path(openclaw_home) / "media"),
         "NAKO_AGENT_RUNTIME": "openclaw",
     }
+    gateway_token = gateway_auth_token(Path(openclaw_home) / "openclaw.json")
+    if gateway_token:
+        env["OPENCLAW_GATEWAY_TOKEN"] = gateway_token
 
 agent_section = "\n".join([
     "[projects.agent]",

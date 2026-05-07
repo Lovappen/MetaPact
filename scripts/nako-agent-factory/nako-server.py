@@ -349,6 +349,17 @@ def qclaw_config_path() -> Path:
     return qhome / "openclaw.json"
 
 
+def gateway_auth_token(config_path: Path) -> str:
+    try:
+        data = json.loads(config_path.read_text(encoding="utf-8"))
+    except Exception:
+        return ""
+    gateway = data.get("gateway") if isinstance(data.get("gateway"), dict) else {}
+    auth = gateway.get("auth") if isinstance(gateway.get("auth"), dict) else {}
+    token = auth.get("token")
+    return token if isinstance(token, str) and token else ""
+
+
 def qclaw_app_config_path() -> Path:
     qhome = qclaw_home()
     path = qhome / "qclaw.json"
@@ -1720,6 +1731,9 @@ def cc_agent_options_for_runtime(name: str, runtime: str, env: dict = None) -> d
             "NAKO_MEDIA_HOME": str(qhome / "media"),
             "NAKO_AGENT_RUNTIME": "qclaw",
         }
+        token = gateway_auth_token(qclaw_config_path())
+        if token:
+            qclaw_env["OPENCLAW_GATEWAY_TOKEN"] = token
         return {
             "work_dir": str(qclaw_workspace(name)),
             "command": qclaw_node_binary(env),
@@ -1729,7 +1743,7 @@ def cc_agent_options_for_runtime(name: str, runtime: str, env: dict = None) -> d
         }
 
     ohome = HOME / ".openclaw"
-    return {
+    options = {
         "work_dir": str(ohome),
         "command": "openclaw",
         "args": ["acp", "--session", f"agent:{name}:main"],
@@ -1748,6 +1762,10 @@ def cc_agent_options_for_runtime(name: str, runtime: str, env: dict = None) -> d
             "NAKO_AGENT_RUNTIME": "openclaw",
         },
     }
+    token = gateway_auth_token(ohome / "openclaw.json")
+    if token:
+        options["env"]["OPENCLAW_GATEWAY_TOKEN"] = token
+    return options
 
 
 def ensure_qclaw_cc_session(aid: str) -> bool:

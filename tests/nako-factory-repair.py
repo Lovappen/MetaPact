@@ -92,6 +92,7 @@ model:
     openclaw_config.write_text(
         json.dumps(
             {
+                "gateway": {"auth": {"mode": "token", "token": "openclaw-gateway-token"}},
                 "models": {
                     "providers": {
                         "sensenova": {
@@ -208,6 +209,7 @@ app_secret = "y"
     assert f'NAKO_AGENT_WORKSPACE = "{Path(tmp) / ".openclaw" / "workspace" / "agent-nako-1"}"' in text
     assert f'NAKO_SKILLS_DIR = "{Path(tmp) / ".openclaw" / "skills"}"' in text
     assert f'NAKO_MEDIA_HOME = "{Path(tmp) / ".openclaw" / "media"}"' in text
+    assert 'OPENCLAW_GATEWAY_TOKEN = "openclaw-gateway-token"' in text
     assert 'NAKO_AGENT_RUNTIME = "openclaw"' in text
     assert module.normalize_cc_platform_options("agent-nako-1")
     text = cfg.read_text(encoding="utf-8")
@@ -258,6 +260,10 @@ app_secret = "y"
     try:
         stale_qclaw_sessions = Path(tmp) / ".qclaw" / "agents" / "agent-nako-5" / "sessions" / "sessions.json"
         stale_qclaw_sessions.parent.mkdir(parents=True, exist_ok=True)
+        (Path(tmp) / ".qclaw" / "openclaw.json").write_text(
+            json.dumps({"gateway": {"auth": {"mode": "token", "token": "qclaw-gateway-token"}}}),
+            encoding="utf-8",
+        )
         stale_qclaw_sessions.write_text(
             json.dumps(
                 {
@@ -311,6 +317,7 @@ app_secret = "y"
         assert 'NAKO_OUTPUT_MODE = "acp"' in text
         assert 'NAKO_CCCONNECT_PROJECT = "agent-nako-5"' in text
         assert f'NAKO_SKILLS_DIR = "{(Path(tmp) / ".qclaw" / "skills").resolve()}"' in text
+        assert 'OPENCLAW_GATEWAY_TOKEN = "qclaw-gateway-token"' in text
         assert 'NAKO_AGENT_RUNTIME = "qclaw"' in text
         qclaw_sessions = Path(tmp) / ".qclaw" / "agents" / "agent-nako-5" / "sessions" / "sessions.json"
         assert qclaw_sessions.exists()
