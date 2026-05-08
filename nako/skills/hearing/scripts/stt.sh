@@ -29,15 +29,21 @@ WHISPER_MODEL="${WHISPER_MODEL:-turbo}"
 WHISPER_LANGUAGE="${WHISPER_LANGUAGE:-}"
 
 if [ -z "${SKILL_LOG_SH:-}" ]; then
-  if [ -n "${NAKO_SKILLS_DIR:-}" ]; then
+  if [ -n "${NAKO_SKILLS_DIR:-}" ] && [ -f "$NAKO_SKILLS_DIR/skill-log.sh" ]; then
     SKILL_LOG_SH="$NAKO_SKILLS_DIR/skill-log.sh"
+  elif [ -n "${SKILLS_ROOT:-}" ] && [ -f "$SKILLS_ROOT/skill-log.sh" ]; then
+    SKILL_LOG_SH="$SKILLS_ROOT/skill-log.sh"
+  elif [ -n "${QCLAW_HOME:-}" ] && [ -f "$QCLAW_HOME/skills/skill-log.sh" ]; then
+    SKILL_LOG_SH="$QCLAW_HOME/skills/skill-log.sh"
+  elif [ -f "$HOME/.qclaw/skills/skill-log.sh" ]; then
+    SKILL_LOG_SH="$HOME/.qclaw/skills/skill-log.sh"
   elif [ -n "${HERMES_HOME:-}" ] && [ -f "$HERMES_HOME/skills/nako/skill-log.sh" ]; then
     SKILL_LOG_SH="$HERMES_HOME/skills/nako/skill-log.sh"
   else
     SKILL_LOG_SH="$HOME/.openclaw/skills/skill-log.sh"
   fi
 fi
-source "$SKILL_LOG_SH" 2>/dev/null || true
+[ -n "${SKILL_LOG_SH:-}" ] && source "$SKILL_LOG_SH" 2>/dev/null || true
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; NC='\033[0m'
 log_err()  { echo -e "${RED}[ERROR]${NC} $1" >&2; }

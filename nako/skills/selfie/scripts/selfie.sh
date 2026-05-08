@@ -62,15 +62,21 @@ fi
 
 # Structured logging
 if [ -z "${SKILL_LOG_SH:-}" ]; then
-  if [ -n "${NAKO_SKILLS_DIR:-}" ]; then
+  if [ -n "${NAKO_SKILLS_DIR:-}" ] && [ -f "$NAKO_SKILLS_DIR/skill-log.sh" ]; then
     SKILL_LOG_SH="$NAKO_SKILLS_DIR/skill-log.sh"
+  elif [ -n "${_SHARED_SKILLS_DIR:-}" ] && [ -f "$_SHARED_SKILLS_DIR/skill-log.sh" ]; then
+    SKILL_LOG_SH="$_SHARED_SKILLS_DIR/skill-log.sh"
+  elif [ -n "${QCLAW_HOME:-}" ] && [ -f "$QCLAW_HOME/skills/skill-log.sh" ]; then
+    SKILL_LOG_SH="$QCLAW_HOME/skills/skill-log.sh"
+  elif [ -f "$HOME/.qclaw/skills/skill-log.sh" ]; then
+    SKILL_LOG_SH="$HOME/.qclaw/skills/skill-log.sh"
   elif [ -n "${HERMES_HOME:-}" ] && [ -f "$HERMES_HOME/skills/nako/skill-log.sh" ]; then
     SKILL_LOG_SH="$HERMES_HOME/skills/nako/skill-log.sh"
   else
     SKILL_LOG_SH="$HOME/.openclaw/skills/skill-log.sh"
   fi
 fi
-source "$SKILL_LOG_SH" 2>/dev/null || true
+[ -n "${SKILL_LOG_SH:-}" ] && source "$SKILL_LOG_SH" 2>/dev/null || true
 
 if [ -z "${NAKO_MEDIA_HOME:-}" ] && [ -n "${HERMES_HOME:-}" ] && [ "${NAKO_AGENT_RUNTIME:-}" = "hermes" ]; then
   NAKO_MEDIA_HOME="$HERMES_HOME/media"
