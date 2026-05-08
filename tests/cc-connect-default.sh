@@ -24,6 +24,8 @@ grep -Fq 'name = identity.get("name") or agent_id' "$ROOT/install.ps1"
 grep -Fq '"avatar": "assets/nako-avatar-head.png"' "$ROOT/install.ps1"
 grep -Fq 'legacy_default_avatars = {' "$ROOT/install.ps1"
 grep -Fq 'OPENCLAW_CONFIG="${OPENCLAW_CONFIG:-${OPENCLAW_CONFIG_PATH:-$OPENCLAW_HOME/openclaw.json}}"' "$ROOT/nako/scripts/lib.sh"
+grep -Fq 'safe_install_pack_file()' "$ROOT/nako/scripts/lib.sh"
+grep -Fq 'non-interactive; use --force to overwrite' "$ROOT/nako/scripts/lib.sh"
 grep -Fq 'CONFIG="${OPENCLAW_CONFIG:-${OPENCLAW_CONFIG_PATH:-$OPENCLAW_HOME/openclaw.json}}"' "$ROOT/nako/scripts/detect-models.sh"
 grep -Fq 'local _cfg="${NAKO_CONFIG:-${OPENCLAW_CONFIG:-${OPENCLAW_CONFIG_PATH:-$HOME/.openclaw/openclaw.json}}}"' "$ROOT/nako/skills/voice/scripts/voice.sh"
 grep -Fq 'local _cfg="${NAKO_CONFIG:-${OPENCLAW_CONFIG:-${OPENCLAW_CONFIG_PATH:-$HOME/.openclaw/openclaw.json}}}"' "$ROOT/nako/skills/selfie/scripts/selfie.sh"
@@ -35,6 +37,8 @@ grep -Fq '_feishu_send_video_file "$VIDEO_FILE"' "$ROOT/nako/skills/selfie/scrip
 grep -Fq 'send --data-dir "$data_dir" --file' "$ROOT/nako/skills/voice/scripts/voice.sh"
 grep -Fq 'send --data-dir "$data_dir" --file' "$ROOT/nako/skills/voice/scripts/sing.sh"
 grep -Fq 'cc-connect media rule' "$ROOT/nako/agent/AGENTS.md"
+grep -Fq 'Skill script path rule' "$ROOT/nako/agent/AGENTS.md"
+grep -Fq '$HOME/.qclaw/skills' "$ROOT/nako/agent/TOOLS.md"
 grep -Fq '不要调用 OpenClaw 原生 `image_generate` / `tts` / `video_generate`' "$ROOT/nako/agent/TOOLS.md"
 grep -Fq 'never call OpenClaw native `video_generate` under any circumstance' "$ROOT/nako/agent/AGENTS.md"
 grep -Fq 'Never set `NAKO_OUTPUT_MODE=webchat`' "$ROOT/nako/agent/AGENTS.md"
@@ -73,7 +77,7 @@ grep -Fq 'sync_hermes_feishu_env_from_cc_config()' "$ROOT/scripts/cc-connect-set
 grep -Fq 'sync_hermes_feishu_env_for_project(aid)' "$ROOT/scripts/nako-agent-factory/nako-server.py"
 grep -Fq 'stream_preview' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'tool_messages = false' "$ROOT/scripts/cc-connect-setup.sh"
-grep -Fq 'display.tool_messages=false' "$ROOT/scripts/nako-agent-factory/nako-server.py"
+grep -Fq 'stream_preview.enabled=true display.tool_messages=false' "$ROOT/scripts/nako-agent-factory/nako-server.py"
 grep -Fq 'openclaw|hermes)' "$ROOT/scripts/nako-agent-factory/install.sh"
 grep -Fq 'QClaw 不能通过 Nako Agent Factory 网页绑定' "$ROOT/scripts/nako-agent-factory/nako-server.py"
 ! grep -Fq 'openclaw|hermes|qclaw)' "$ROOT/scripts/nako-agent-factory/install.sh"
@@ -101,6 +105,10 @@ grep -Fq 'ensure_qclaw_agent_registration' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq '"avatar": "assets/nako-avatar-head.png"' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'f"agent:{agent_id}:{qclaw_session_suffix}"' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'sync_qclaw_runtime' "$ROOT/install.sh"
+grep -Fq 'QCLAW_STATUS_TIMEOUT' "$ROOT/install.sh"
+grep -Fq 'QClaw 状态检查超时' "$ROOT/install.sh"
+grep -Fq 'safe_install_pack_file "$PACK_ROOT/skills/skill-log.sh" "$OPENCLAW_SKILLS_DIR/skill-log.sh"' "$ROOT/install.sh"
+grep -Fq 'safe_install_pack_file "$s" "$dst/scripts/$(basename "$s")"' "$ROOT/install.sh"
 grep -Fq '"selfie": ["FAL_KEY", "KIE_API_KEY", "SELFIE_REFERENCE_IMAGE", "SELFIE_CHARACTER_DESC", "OPENCLAW_GATEWAY_TOKEN"]' "$ROOT/install.sh"
 grep -Fq "set_env('selfie', ['FAL_KEY','KIE_API_KEY','SELFIE_REFERENCE_IMAGE','SELFIE_CHARACTER_DESC','OPENCLAW_GATEWAY_TOKEN'])" "$ROOT/install.ps1"
 grep -Fq 'set_env("selfie", ["FAL_KEY", "KIE_API_KEY", "SELFIE_REFERENCE_IMAGE", "SELFIE_CHARACTER_DESC", "OPENCLAW_GATEWAY_TOKEN"])' "$ROOT/nako/scripts/merge-config.sh"
@@ -551,7 +559,7 @@ from pathlib import Path
 root = Path(sys.argv[1])
 cfg = (root / ".cc-connect" / "config.toml").read_text(encoding="utf-8")
 assert '[stream_preview]' in cfg
-assert 'enabled = false' in cfg
+assert 'enabled = true' in cfg
 assert '[display]' in cfg
 assert 'tool_messages = false' in cfg
 project = re.search(r'\[\[projects\]\].*', cfg, re.S).group(0)

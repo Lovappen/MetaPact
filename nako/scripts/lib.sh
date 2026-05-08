@@ -172,6 +172,10 @@ safe_install_file() {
     dim "  ± $dst (overwritten with backup)"
     return 0
   fi
+  if [ "${NON_INTERACTIVE:-0}" = "1" ] || ! [ -r /dev/tty ]; then
+    warn "  跳过 $dst (non-interactive; use --force to overwrite)"
+    return 0
+  fi
   if confirm "  $dst 已存在且不同。覆盖？（原文件会被备份）" n; then
     backup_file "$dst"
     cp "$src" "$dst"
@@ -179,6 +183,13 @@ safe_install_file() {
   else
     warn "  跳过 $dst"
   fi
+}
+
+safe_install_pack_file() {
+  local src="$1"; local dst="$2"; local old_force="${FORCE:-0}"
+  FORCE=1
+  safe_install_file "$src" "$dst"
+  FORCE="$old_force"
 }
 
 # ───── .env merge: only add missing keys, never overwrite user-set ─────

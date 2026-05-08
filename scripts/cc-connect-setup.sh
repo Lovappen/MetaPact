@@ -1405,7 +1405,7 @@ def normalize_global_options(text):
             src += "\n"
         return src + f"\n[{section}]\n{key} = {value}\n"
 
-    prefix = ensure_section_value(prefix, "stream_preview", "enabled", "false")
+    prefix = ensure_section_value(prefix, "stream_preview", "enabled", "true")
     prefix = ensure_section_value(prefix, "display", "tool_messages", "false")
     return prefix + rest
 
@@ -1499,7 +1499,7 @@ agent_section = "\n".join([
 if path.exists():
     text = path.read_text(encoding="utf-8")
 else:
-    text = 'language = "en"\n\n[stream_preview]\nenabled = false\n\n[display]\ntool_messages = false\n\n[log]\nlevel = "info"\n'
+    text = 'language = "en"\n\n[stream_preview]\nenabled = true\n\n[display]\ntool_messages = false\n\n[log]\nlevel = "info"\n'
 
 normalized_text = normalize_global_options(text)
 global_changed = normalized_text != text

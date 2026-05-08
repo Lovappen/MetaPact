@@ -613,10 +613,27 @@ if old != new:
     config_path.write_text(new, encoding="utf-8")
 PY
 
+  local status_pid elapsed=0 status_timeout="${QCLAW_STATUS_TIMEOUT:-20}"
   OPENCLAW_STATE_DIR="$QCLAW_HOME" OPENCLAW_CONFIG_PATH="${QCLAW_OPENCLAW_CONFIG:-$QCLAW_HOME/openclaw.json}" \
-    "$QCLAW_NODE_BIN" "$QCLAW_OPENCLAW_MJS" agents list --json >/tmp/nako-qclaw-status.log 2>&1 \
-    && info "QClaw runtime 已同步: $qclaw_workspace" \
-    || warn "QClaw 状态检查未完全通过；已写入 workspace/config，日志 /tmp/nako-qclaw-status.log"
+    "$QCLAW_NODE_BIN" "$QCLAW_OPENCLAW_MJS" agents list --json >/tmp/nako-qclaw-status.log 2>&1 &
+  status_pid=$!
+  while kill -0 "$status_pid" 2>/dev/null; do
+    if [ "$elapsed" -ge "$status_timeout" ]; then
+      kill "$status_pid" 2>/dev/null || true
+      sleep 1
+      kill -9 "$status_pid" 2>/dev/null || true
+      wait "$status_pid" 2>/dev/null || true
+      warn "QClaw 状态检查超时；已写入 workspace/config，日志 /tmp/nako-qclaw-status.log"
+      return 0
+    fi
+    sleep 1
+    elapsed=$((elapsed+1))
+  done
+  if wait "$status_pid"; then
+    info "QClaw runtime 已同步: $qclaw_workspace"
+  else
+    warn "QClaw 状态检查未完全通过；已写入 workspace/config，日志 /tmp/nako-qclaw-status.log"
+  fi
 }
 
 sync_hermes_runtime() {
@@ -1253,25 +1270,26 @@ if [ "$SKIP_SKILLS" != "1" ]; then
   mkdir -p "$OPENCLAW_SKILLS_DIR"
 
   # skill-log.sh
-  safe_install_file "$PACK_ROOT/skills/skill-log.sh" "$OPENCLAW_SKILLS_DIR/skill-log.sh"
+  safe_install_pack_file "$PACK_ROOT/skills/skill-log.sh" "$OPENCLAW_SKILLS_DIR/skill-log.sh"
 
   # each skill
   for sk in vision hearing voice selfie dokidoki; do
     src="$PACK_ROOT/skills/$sk"
     dst="$OPENCLAW_SKILLS_DIR/$sk"
     mkdir -p "$dst"
-    # SKILL.md always (forced if --force)
-    safe_install_file "$src/SKILL.md" "$dst/SKILL.md"
+    # Skill docs and scripts are pack-owned runtime code. Always refresh them
+    # with backups so QClaw/Hermes/OpenClaw do not keep stale media rules.
+    safe_install_pack_file "$src/SKILL.md" "$dst/SKILL.md"
     # scripts: always replace (they are pack-owned code, no user edits here)
     if [ -d "$src/scripts" ]; then
       mkdir -p "$dst/scripts"
       for s in "$src"/scripts/*; do
         [ -f "$s" ] || continue
-        safe_install_file "$s" "$dst/scripts/$(basename "$s")"
+        safe_install_pack_file "$s" "$dst/scripts/$(basename "$s")"
       done
     fi
     # _meta.json (dokidoki)
-    [ -f "$src/_meta.json" ] && safe_install_file "$src/_meta.json" "$dst/_meta.json"
+    [ -f "$src/_meta.json" ] && safe_install_pack_file "$src/_meta.json" "$dst/_meta.json"
     # ensure logs dir
     mkdir -p "$dst/logs"
   done

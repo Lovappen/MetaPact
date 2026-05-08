@@ -147,4 +147,84 @@ assert entries["selfie"]["env"]["FAL_KEY"] == "stdin-fal"
 assert entries["selfie"]["env"]["SELFIE_REFERENCE_IMAGE"] == "https://pulseact.lovappen.cn/test/act_ci_build/dlc-promotion/act-gengen/images/e.png"
 PY
 
+qclaw_home="$tmp/qclaw-auto"
+mkdir -p "$qclaw_home/.qclaw/skills"
+python3 - "$qclaw_home/.qclaw/openclaw.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+Path(sys.argv[1]).write_text(json.dumps({"skills": {"entries": {}}}), encoding="utf-8")
+PY
+cat > "$qclaw_home/.qclaw/skills/.env" <<'EOF'
+MINIMAX_API_KEY=qclaw-minimax
+MINIMAX_GROUP_ID=qclaw-group
+FAL_KEY=qclaw-fal
+EOF
+output="$(
+  HOME="$qclaw_home" "$ROOT/scripts/internal/sync-provider-keys-to-openclaw-json.sh" --no-backup
+)"
+case "$output" in
+  *qclaw-minimax*|*qclaw-group*|*qclaw-fal*)
+    echo "qclaw auto-detect output leaked secret values" >&2
+    exit 1
+    ;;
+esac
+python3 - "$qclaw_home/.qclaw/openclaw.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+entries = data["skills"]["entries"]
+assert entries["voice"]["env"]["MINIMAX_API_KEY"] == "qclaw-minimax"
+assert entries["voice"]["env"]["MINIMAX_GROUP_ID"] == "qclaw-group"
+assert entries["selfie"]["env"]["FAL_KEY"] == "qclaw-fal"
+PY
+
+remote_sync_home="$tmp/remote-sync-home"
+fake_ssh="$tmp/fake-ssh"
+mkdir -p "$remote_sync_home/.qclaw"
+python3 - "$remote_sync_home/.qclaw/openclaw.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+Path(sys.argv[1]).write_text(json.dumps({"skills": {"entries": {}}}), encoding="utf-8")
+PY
+cat > "$fake_ssh" <<'SH'
+#!/usr/bin/env bash
+cat <<'EOF'
+MINIMAX_API_KEY=remote-minimax
+MINIMAX_GROUP_ID=remote-group
+FAL_KEY=remote-fal
+UNSUPPORTED_SECRET=must-not-copy
+EOF
+SH
+chmod +x "$fake_ssh"
+output="$(
+  HOME="$remote_sync_home" SSH_BIN="$fake_ssh" \
+    "$ROOT/scripts/sync-remote-openclaw-keys-to-qclaw.sh" \
+      --remote fake-host --no-backup
+)"
+case "$output" in
+  *remote-minimax*|*remote-group*|*remote-fal*|*must-not-copy*)
+    echo "remote sync output leaked secret values" >&2
+    exit 1
+    ;;
+esac
+python3 - "$remote_sync_home/.qclaw/openclaw.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+entries = data["skills"]["entries"]
+assert entries["voice"]["env"]["MINIMAX_API_KEY"] == "remote-minimax"
+assert entries["voice"]["env"]["MINIMAX_GROUP_ID"] == "remote-group"
+assert entries["selfie"]["env"]["FAL_KEY"] == "remote-fal"
+assert "UNSUPPORTED_SECRET" not in entries["voice"]["env"]
+assert "UNSUPPORTED_SECRET" not in entries["selfie"]["env"]
+PY
+
 echo "sync provider keys checks passed"

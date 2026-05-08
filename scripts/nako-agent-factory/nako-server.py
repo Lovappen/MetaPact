@@ -182,7 +182,7 @@ def ensure_cc_connect_config():
     CC_CONFIG.parent.mkdir(parents=True, exist_ok=True)
     CC_CONFIG.write_text(
         'language = "en"\n\n'
-        '[stream_preview]\nenabled = false\n\n'
+        '[stream_preview]\nenabled = true\n\n'
         '[display]\ntool_messages = false\n\n'
         '[log]\nlevel = "info"\n'
     )
@@ -190,7 +190,7 @@ def ensure_cc_connect_config():
 
 
 def normalize_cc_global_options() -> bool:
-    """Keep noisy cc-connect platform defaults quiet for chat channels."""
+    """Keep cc-connect global defaults consistent for chat channels."""
     if not CC_CONFIG.exists():
         return False
     try:
@@ -219,7 +219,7 @@ def normalize_cc_global_options() -> bool:
             src += "\n"
         return src + f"\n[{section}]\n{key} = {value}\n"
 
-    prefix = ensure_section_value(prefix, "stream_preview", "enabled", "false")
+    prefix = ensure_section_value(prefix, "stream_preview", "enabled", "true")
     prefix = ensure_section_value(prefix, "display", "tool_messages", "false")
 
     new_text = prefix + rest
@@ -2154,7 +2154,7 @@ def start_cc_connect(env: dict, reason: str = ""):
             if repaired:
                 f.write(("=== repaired projects: " + ", ".join(repaired) + " ===\n").encode("utf-8"))
             if normalized_global:
-                f.write(b"=== normalized global options: stream_preview.enabled=false display.tool_messages=false ===\n")
+                f.write(b"=== normalized global options: stream_preview.enabled=true display.tool_messages=false ===\n")
             if normalized:
                 f.write(("=== normalized platform options: " + ", ".join(normalized) + " ===\n").encode("utf-8"))
             if synced_hermes_feishu:

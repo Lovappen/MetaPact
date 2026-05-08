@@ -5,7 +5,7 @@ set -euo pipefail
 
 CONFIG=""
 ENV_FILE=""
-RUNTIME="${NAKO_AGENT_RUNTIME:-openclaw}"
+RUNTIME="${NAKO_AGENT_RUNTIME:-}"
 AGENT_ID="${AGENT_ID:-agent-nako}"
 BACKUP=1
 
@@ -25,7 +25,8 @@ Usage:
 
 Options:
   --config <path>        Explicit openclaw.json path.
-  --runtime <name>       openclaw|qclaw. Default: $NAKO_AGENT_RUNTIME or openclaw.
+  --runtime <name>       openclaw|qclaw. Default: $NAKO_AGENT_RUNTIME, otherwise
+                         auto-detect QClaw when only ~/.qclaw exists.
   --agent-id <id>        Agent id for workspace env discovery. Default: agent-nako.
   --env-file <path|->    Read KEY=VALUE lines before applying process env.
   --no-backup            Do not create a .bak file.
@@ -36,14 +37,30 @@ HELP
 while [ $# -gt 0 ]; do
   case "$1" in
     --config) CONFIG="$2"; shift 2 ;;
+    --config=*) CONFIG="${1#*=}"; shift ;;
     --runtime|--backend) RUNTIME="$2"; shift 2 ;;
+    --runtime=*|--backend=*) RUNTIME="${1#*=}"; shift ;;
     --agent-id) AGENT_ID="$2"; shift 2 ;;
+    --agent-id=*) AGENT_ID="${1#*=}"; shift ;;
     --env-file) ENV_FILE="$2"; shift 2 ;;
+    --env-file=*) ENV_FILE="${1#*=}"; shift ;;
     --no-backup) BACKUP=0; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown flag: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+
+if [ -z "$RUNTIME" ]; then
+  openclaw_probe="${OPENCLAW_HOME:-$HOME/.openclaw}"
+  qclaw_probe="${QCLAW_HOME:-$HOME/.qclaw}"
+  if [ -n "${QCLAW_HOME:-}" ] && { [ -f "$qclaw_probe/qclaw.json" ] || [ -f "$qclaw_probe/openclaw.json" ]; }; then
+    RUNTIME="qclaw"
+  elif [ ! -f "$openclaw_probe/openclaw.json" ] && { [ -f "$qclaw_probe/qclaw.json" ] || [ -f "$qclaw_probe/openclaw.json" ]; }; then
+    RUNTIME="qclaw"
+  else
+    RUNTIME="openclaw"
+  fi
+fi
 
 case "$RUNTIME" in
   openclaw|qclaw) ;;
@@ -147,8 +164,9 @@ def openclaw_home():
 
 def parse_env_file(path):
     values = {}
+    empty = []
     if not path:
-        return values, ""
+        return values, "", empty
     if path == "-":
         stdin_file = os.environ.get("SYNC_PROVIDER_KEYS_STDIN_FILE")
         if stdin_file:
@@ -163,7 +181,7 @@ def parse_env_file(path):
             raise SystemExit(f"env file not found: {p}")
         text = p.read_text(encoding="utf-8")
         label = str(p)
-    line_re = re.compile(r"^(?:export\s+)?([A-Z_][A-Z0-9_]*)=(.*)$")
+    line_re = re.compile(r"^(?:export\s+)?([A-Z_][A-Z0-9_]*)\s*=\s*(.*)$")
     for raw in text.splitlines():
         line = raw.strip()
         if not line or line.startswith("#"):
@@ -179,7 +197,9 @@ def parse_env_file(path):
             value = value[1:-1]
         if value:
             values[key] = value
-    return values, label
+        else:
+            empty.append(key)
+    return values, label, empty
 
 config_path = default_config_path()
 cfg = read_json(config_path)
@@ -196,14 +216,17 @@ if runtime == "qclaw":
 
 values = {}
 read_files = []
+empty_keys = []
 for candidate in default_env_files:
     if candidate.exists():
-        file_values, label = parse_env_file(str(candidate))
+        file_values, label, file_empty_keys = parse_env_file(str(candidate))
         values.update(file_values)
+        empty_keys.extend(file_empty_keys)
         read_files.append(str(candidate))
 if env_file:
-    file_values, label = parse_env_file(env_file)
+    file_values, label, file_empty_keys = parse_env_file(env_file)
     values.update(file_values)
+    empty_keys.extend(file_empty_keys)
     read_files.append(label)
 for key in allowed:
     value = os.environ.get(key)
@@ -214,7 +237,16 @@ if (values.get("FAL_KEY") or values.get("KIE_API_KEY")) and not values.get("SELF
     values["SELFIE_REFERENCE_IMAGE"] = default_selfie_reference_image
 
 if not values:
-    raise SystemExit("No supported keys found in env or env file")
+    message = [
+        "No supported non-empty keys found in env or env file",
+        "Supported keys: " + ", ".join(sorted(allowed)),
+        f"Config target: {config_path}",
+    ]
+    if read_files:
+        message.append("Checked env files: " + ", ".join(read_files))
+    if empty_keys:
+        message.append("Supported keys present but empty: " + ", ".join(sorted(set(empty_keys))))
+    raise SystemExit("\n".join(message))
 
 skills = cfg.setdefault("skills", {})
 entries = skills.setdefault("entries", {})
