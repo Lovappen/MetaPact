@@ -205,8 +205,8 @@ app_secret = "y"
     assert 'display_name = "OpenClaw agent-nako-1"' in text
     assert 'OPENCLAW_CCCONNECT_PROJECT = "agent-nako-1"' in text
     assert f'CC_CONNECT_DATA_DIR = "{Path(tmp) / ".cc-connect"}"' in text
-    assert f'CC_CONNECT_API_DATA_DIR = "{Path(tmp) / ".cc-connect" / ".cc-connect"}"' in text
-    assert f'CC_CONNECT_SESSION_DIR = "{Path(tmp) / ".cc-connect" / ".cc-connect" / "sessions"}"' in text
+    assert f'CC_CONNECT_API_DATA_DIR = "{Path(tmp) / ".cc-connect"}"' in text
+    assert f'CC_CONNECT_SESSION_DIR = "{Path(tmp) / ".cc-connect" / "sessions"}"' in text
     assert f'CC_CONNECT_CONFIG = "{Path(tmp) / ".cc-connect" / "config.toml"}"' in text
     assert 'NAKO_OUTPUT_MODE = "acp"' in text
     assert 'NAKO_CCCONNECT_PROJECT = "agent-nako-1"' in text
@@ -318,7 +318,7 @@ app_secret = "y"
         assert f'work_dir = "{(Path(tmp) / ".qclaw" / "workspace-agent-nako-5").resolve()}"' in text
         assert 'OPENCLAW_STATE_DIR' in text
         assert 'OPENCLAW_CONFIG_PATH' in text
-        assert f'CC_CONNECT_API_DATA_DIR = "{Path(tmp) / ".cc-connect" / ".cc-connect"}"' in text
+        assert f'CC_CONNECT_API_DATA_DIR = "{Path(tmp) / ".cc-connect"}"' in text
         assert 'NAKO_OUTPUT_MODE = "acp"' in text
         assert 'NAKO_CCCONNECT_PROJECT = "agent-nako-5"' in text
         assert f'NAKO_SKILLS_DIR = "{(Path(tmp) / ".qclaw" / "skills").resolve()}"' in text

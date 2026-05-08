@@ -39,8 +39,10 @@ grep -Fq 'send --data-dir "$data_dir" --file' "$ROOT/nako/skills/voice/scripts/v
 grep -Fq 'send --data-dir "$data_dir" --file' "$ROOT/nako/skills/voice/scripts/sing.sh"
 grep -Fq 'cc-connect media rule' "$ROOT/nako/agent/AGENTS.md"
 grep -Fq 'Skill script path rule' "$ROOT/nako/agent/AGENTS.md"
+grep -Fq 'Installed skill scripts are read-only runtime artifacts' "$ROOT/nako/agent/AGENTS.md"
 grep -Fq '$HOME/.qclaw/skills' "$ROOT/nako/agent/TOOLS.md"
 grep -Fq '不要调用 OpenClaw 原生 `image_generate` / `tts` / `video_generate`' "$ROOT/nako/agent/TOOLS.md"
+grep -Fq '不要热修已安装脚本' "$ROOT/nako/agent/TOOLS.md"
 grep -Fq 'never call OpenClaw native `video_generate` under any circumstance' "$ROOT/nako/agent/AGENTS.md"
 grep -Fq 'Never set `NAKO_OUTPUT_MODE=webchat`' "$ROOT/nako/agent/AGENTS.md"
 grep -Fq '即使工具列表里出现 `video_generate`，也绝对不要调用' "$ROOT/nako/agent/TOOLS.md"
@@ -104,6 +106,7 @@ grep -Fq 'QCLAW_PERSONA_CHANGED="${QCLAW_PERSONA_CHANGED:-0}"' "$ROOT/scripts/cc
 grep -Fq 'for tool_name in ("image_generate", "video_generate", "tts"):' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'QCLAW_AGENT_REGISTRATION_STATUS="$(ensure_qclaw_agent_registration)"' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'ensure_qclaw_cc_session' "$ROOT/scripts/cc-connect-setup.sh"
+grep -Fq 'sync_qclaw_pack_skills' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'ensure_qclaw_nako_persona' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'ensure_qclaw_agent_registration' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq '"avatar": "assets/nako-avatar-head.png"' "$ROOT/scripts/cc-connect-setup.sh"
@@ -115,6 +118,10 @@ grep -Fq 'QCLAW_PERSONA_CHANGED=1 bash "$CC_SETUP"' "$ROOT/install.sh"
 grep -Fq 'for tool_name in ("image_generate", "video_generate", "tts"):' "$ROOT/install.sh"
 grep -Fq 'safe_install_pack_file "$PACK_ROOT/skills/skill-log.sh" "$OPENCLAW_SKILLS_DIR/skill-log.sh"' "$ROOT/install.sh"
 grep -Fq 'safe_install_pack_file "$s" "$dst/scripts/$(basename "$s")"' "$ROOT/install.sh"
+grep -Fq 'function Safe-InstallPackFile' "$ROOT/install.ps1"
+grep -Fq 'Sync-QClawPackSkills' "$ROOT/install.ps1"
+grep -Fq 'Ensure-QClawRuntimeSafetyRules' "$ROOT/install.ps1"
+grep -Fq '$env:QCLAW_PERSONA_CHANGED = "1"' "$ROOT/install.ps1"
 grep -Fq '"selfie": ["FAL_KEY", "KIE_API_KEY", "SELFIE_REFERENCE_IMAGE", "SELFIE_CHARACTER_DESC", "OPENCLAW_GATEWAY_TOKEN"]' "$ROOT/install.sh"
 grep -Fq "set_env('selfie', ['FAL_KEY','KIE_API_KEY','SELFIE_REFERENCE_IMAGE','SELFIE_CHARACTER_DESC','OPENCLAW_GATEWAY_TOKEN'])" "$ROOT/install.ps1"
 grep -Fq 'set_env("selfie", ["FAL_KEY", "KIE_API_KEY", "SELFIE_REFERENCE_IMAGE", "SELFIE_CHARACTER_DESC", "OPENCLAW_GATEWAY_TOKEN"])' "$ROOT/nako/scripts/merge-config.sh"
@@ -238,6 +245,9 @@ app = root / ".qclaw-app"
 state = root / ".qclaw-state"
 app.mkdir(parents=True)
 state.mkdir(parents=True)
+stale_script = state / "skills" / "voice" / "scripts" / "voice.sh"
+stale_script.parent.mkdir(parents=True)
+stale_script.write_text("broken live edit\n", encoding="utf-8")
 (app / "qclaw.json").write_text(
     json.dumps(
         {
@@ -262,13 +272,14 @@ PY
       --agent-id agent-test --runtime qclaw --with-feishu --with-weixin \
       --cc-connect-source skip --non-interactive >/dev/null
 )
-python3 - "$tmp2" <<'PY'
+python3 - "$tmp2" "$ROOT" <<'PY'
 import json
 import re
 import sys
 from pathlib import Path
 
 root = Path(sys.argv[1])
+repo = Path(sys.argv[2])
 state = (root / ".qclaw-state").resolve()
 cfg = (root / ".cc-connect" / "config.toml").read_text(encoding="utf-8")
 assert f'work_dir = "{state / "workspace-agent-test"}"' in cfg
@@ -294,6 +305,14 @@ registered = [
 assert len(registered) == 1
 assert registered[0]["workspace"] == str(state / "workspace-agent-test")
 assert registered[0]["agentDir"] == str(state / "agents" / "agent-test" / "agent")
+for rel in [
+    "skill-log.sh",
+    "voice/scripts/voice.sh",
+    "selfie/scripts/video.sh",
+    "hearing/scripts/stt.sh",
+]:
+    assert (state / "skills" / rel).read_bytes() == (repo / "nako" / "skills" / rel).read_bytes(), rel
+assert list((state / "skills" / "voice" / "scripts").glob("voice.sh.bak-cc-connect-skill-*"))
 PY
 
 tmp3="$(mktemp -d)"
@@ -468,6 +487,14 @@ workspace.mkdir(parents=True)
     "# IDENTITY - custom\n\n**姓名**：野木奈子\n- Avatar: https://pulseact.lovappen.cn/test/act_ci_build/dlc-promotion/act-gengen/images/e.png\n\ncustom line\n",
     encoding="utf-8",
 )
+(workspace / "AGENTS.md").write_text(
+    "# AGENTS.md - Your Workspace\n\n## Tools\n\n**Skill script path rule:** Resolve scripts from `$NAKO_SKILLS_DIR` first.\n\n**ACP is not webchat:** old rule\n\n@custom.md\n",
+    encoding="utf-8",
+)
+(workspace / "TOOLS.md").write_text(
+    "# TOOLS.md - custom\n\n- **脚本路径解析**：先用 `$NAKO_SKILLS_DIR`。\n- **ACP 不是 webchat**：old rule\n",
+    encoding="utf-8",
+)
 PY
 (
   cd "$tmp4"
@@ -485,9 +512,15 @@ root = Path(sys.argv[1])
 state = (root / ".qclaw-state").resolve()
 workspace = state / "workspace-agent-nako"
 identity_text = (workspace / "IDENTITY.md").read_text(encoding="utf-8")
+agents_text = (workspace / "AGENTS.md").read_text(encoding="utf-8")
+tools_text = (workspace / "TOOLS.md").read_text(encoding="utf-8")
 assert "# IDENTITY - custom" in identity_text
 assert "custom line" in identity_text
 assert "- Avatar: assets/nako-avatar-head.png" in identity_text
+assert "@custom.md" in agents_text
+assert "Installed skill scripts are read-only runtime artifacts" in agents_text
+assert "# TOOLS.md - custom" in tools_text
+assert "不要热修已安装脚本" in tools_text
 assert (workspace / "assets" / "nako-avatar.svg").exists()
 assert (workspace / "assets" / "nako-avatar-head.png").exists()
 qclaw_config = json.loads((state / "openclaw.json").read_text(encoding="utf-8"))
@@ -516,6 +549,12 @@ old_session.write_text(
     '{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"old clean session"}]}}\n',
     encoding="utf-8",
 )
+orphan_session = session_dir / "orphan-session.jsonl"
+orphan_session.write_text(
+    '{"type":"session","id":"orphan-session","cwd":"test"}\n'
+    '{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"stale orphan"}]}}\n',
+    encoding="utf-8",
+)
 (session_dir / "sessions.json").write_text(
     json.dumps(
         {
@@ -531,6 +570,7 @@ old_session.write_text(
     encoding="utf-8",
 )
 PY
+mkdir -p "$tmp4/.cc-connect/sessions"
 (
   cd "$tmp4"
   HOME="$tmp4" QCLAW_HOME="$tmp4/.qclaw-app" QCLAW_PERSONA_CHANGED=1 BASH_ENV="$envfile4" \
@@ -551,6 +591,7 @@ entry = sessions["agent:agent-nako:session-cc-connect"]
 assert entry["sessionId"] != "env-force-session"
 assert entry["systemSent"] is False
 assert list((state / "agents" / "agent-nako" / "sessions").glob("env-force-session.jsonl.bak-cc-connect-stale-*"))
+assert list((state / "agents" / "agent-nako" / "sessions").glob("orphan-session.jsonl.bak-cc-connect-stale-*"))
 PY
 
 tmp5="$(mktemp -d)"
@@ -627,8 +668,8 @@ assert 'command = "' in project and "/hermes" in project
 assert 'args = ["acp"]' in project
 assert 'HERMES_HOME = "' in project
 assert f'CC_CONNECT_DATA_DIR = "{root / ".cc-connect"}"' in project
-assert f'CC_CONNECT_API_DATA_DIR = "{root / ".cc-connect" / ".cc-connect"}"' in project
-assert f'CC_CONNECT_SESSION_DIR = "{root / ".cc-connect" / ".cc-connect" / "sessions"}"' in project
+assert f'CC_CONNECT_API_DATA_DIR = "{root / ".cc-connect"}"' in project
+assert f'CC_CONNECT_SESSION_DIR = "{root / ".cc-connect" / "sessions"}"' in project
 assert f'CC_CONNECT_CONFIG = "{root / ".cc-connect" / "config.toml"}"' in project
 assert 'NAKO_OUTPUT_MODE = "acp"' in project
 assert 'NAKO_CCCONNECT_PROJECT = "agent-test"' in project

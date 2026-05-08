@@ -19,6 +19,9 @@ set -euo pipefail
 export PATH="/opt/homebrew/bin:$PATH"
 
 RUNTIME_HOME="${NAKO_RUNTIME_HOME:-${HERMES_HOME:-${OPENCLAW_HOME:-$HOME/.openclaw}}}"
+if [ -z "${NAKO_RUNTIME_HOME:-}" ] && [ -z "${HERMES_HOME:-}" ] && [ -z "${OPENCLAW_HOME:-}" ] && [ -d "$HOME/.qclaw/skills/hearing" ]; then
+  RUNTIME_HOME="$HOME/.qclaw"
+fi
 MEDIA_HOME="${NAKO_MEDIA_HOME:-$RUNTIME_HOME/media}"
 SKILLS_ROOT="${NAKO_SKILLS_DIR:-$RUNTIME_HOME/skills}"
 GATEWAY_LOG="${NAKO_GATEWAY_LOG:-${OPENCLAW_GATEWAY_LOG:-$RUNTIME_HOME/logs/gateway.log}}"
@@ -28,7 +31,7 @@ WHISPER_BIN="${WHISPER_BIN:-/opt/homebrew/bin/whisper}"
 WHISPER_MODEL="${WHISPER_MODEL:-turbo}"
 WHISPER_LANGUAGE="${WHISPER_LANGUAGE:-}"
 
-if [ -z "${SKILL_LOG_SH:-}" ]; then
+if [ -z "${SKILL_LOG_SH:-}" ] || [ ! -f "$SKILL_LOG_SH" ]; then
   if [ -n "${NAKO_SKILLS_DIR:-}" ] && [ -f "$NAKO_SKILLS_DIR/skill-log.sh" ]; then
     SKILL_LOG_SH="$NAKO_SKILLS_DIR/skill-log.sh"
   elif [ -n "${SKILLS_ROOT:-}" ] && [ -f "$SKILLS_ROOT/skill-log.sh" ]; then

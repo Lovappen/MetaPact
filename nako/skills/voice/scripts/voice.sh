@@ -7,6 +7,12 @@ set -euo pipefail
 
 # Two-layer env load: shared defaults first, per-agent overlay last wins.
 _SHARED_SKILLS_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+if [ -z "${QCLAW_HOME:-}" ] && [ "$_SHARED_SKILLS_DIR" = "$HOME/.qclaw/skills" ]; then
+  QCLAW_HOME="$HOME/.qclaw"
+fi
+if [ -z "${NAKO_MEDIA_HOME:-}" ] && [ -n "${QCLAW_HOME:-}" ] && [ "$_SHARED_SKILLS_DIR" = "$QCLAW_HOME/skills" ]; then
+  NAKO_MEDIA_HOME="$QCLAW_HOME/media"
+fi
 [ -f "$_SHARED_SKILLS_DIR/.env" ] && set -a && source "$_SHARED_SKILLS_DIR/.env" && set +a
 [ -n "${HERMES_HOME:-}" ] && [ -f "$HERMES_HOME/.env" ] && set -a && source "$HERMES_HOME/.env" && set +a
 
@@ -51,7 +57,7 @@ fi
 export PATH="/opt/homebrew/bin:$PATH"
 
 # Structured logging
-if [ -z "${SKILL_LOG_SH:-}" ]; then
+if [ -z "${SKILL_LOG_SH:-}" ] || [ ! -f "$SKILL_LOG_SH" ]; then
   if [ -n "${NAKO_SKILLS_DIR:-}" ] && [ -f "$NAKO_SKILLS_DIR/skill-log.sh" ]; then
     SKILL_LOG_SH="$NAKO_SKILLS_DIR/skill-log.sh"
   elif [ -n "${_SHARED_SKILLS_DIR:-}" ] && [ -f "$_SHARED_SKILLS_DIR/skill-log.sh" ]; then
@@ -107,6 +113,7 @@ _infer_ccconnect_project() {
     base="$(basename "$value")"
     case "$base" in
       agent-*) printf '%s\n' "$base"; return 0 ;;
+      workspace-agent-*) printf '%s\n' "${base#workspace-}"; return 0 ;;
     esac
   done
 

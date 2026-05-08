@@ -401,6 +401,23 @@ if not path.exists():
     }
     path.write_text(json.dumps(header, ensure_ascii=False, separators=(",", ":")) + "\n", encoding="utf-8")
 
+if force_reset == "1":
+    referenced = set()
+    for value in sessions.values():
+        if not isinstance(value, dict):
+            continue
+        file_value = value.get("sessionFile")
+        if isinstance(file_value, str) and file_value:
+            referenced.add(Path(file_value).expanduser().resolve())
+    current = path.resolve()
+    stamp = time.strftime('%Y%m%d-%H%M%S')
+    for stale in session_dir.glob("*.jsonl"):
+        stale_resolved = stale.resolve()
+        if stale_resolved == current or stale_resolved in referenced:
+            continue
+        backup = stale.with_name(f"{stale.name}.bak-cc-connect-stale-{stamp}")
+        shutil.move(str(stale), str(backup))
+
 serialized = json.dumps(sessions, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
 old = sessions_file.read_text(encoding="utf-8") if sessions_file.exists() else ""
 if old != serialized:
@@ -454,9 +471,11 @@ def looks_like_qclaw_template(path, name):
         "SOUL.md": "# SOUL.md - Who You Are",
         "USER.md": "# USER.md - About Your Human",
         "HEARTBEAT.md": "# HEARTBEAT.md Template",
-        "TOOLS.md": "# TOOLS.md - Local Notes",
+        "TOOLS.md": ("# TOOLS.md - Local Notes", "# TOOLS.md - 本地工具速查"),
     }
     marker = markers.get(name)
+    if isinstance(marker, tuple):
+        return any(item in text for item in marker)
     return bool(marker and marker in text)
 
 def looks_like_qclaw_bootstrap(path):
@@ -500,6 +519,42 @@ def ensure_qclaw_identity_sync_fields(path):
     path.write_text(updated.rstrip() + "\n" + "\n".join(block) + "\n", encoding="utf-8")
     return True
 
+def insert_after_anchor(path, anchor_prefix, marker, rule):
+    if not path.exists():
+        return False
+    text = read(path)
+    if marker in text:
+        return False
+    lines = text.splitlines()
+    insert_at = None
+    for idx, line in enumerate(lines):
+        if line.startswith(anchor_prefix):
+            insert_at = idx + 1
+            while insert_at < len(lines) and lines[insert_at].strip():
+                insert_at += 1
+            break
+    if insert_at is None:
+        return False
+    lines[insert_at:insert_at] = ["", rule]
+    path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    return True
+
+def ensure_qclaw_runtime_safety_rules(workspace):
+    changed = False
+    changed = insert_after_anchor(
+        workspace / "AGENTS.md",
+        "**Skill script path rule:**",
+        "Installed skill scripts are read-only runtime artifacts",
+        "**Installed skill scripts are read-only runtime artifacts:** Never edit files under `$HOME/.qclaw/skills`, `$HOME/.openclaw/skills`, or `$HOME/.hermes/skills/nako` to debug a live chat. If a skill script is wrong, report the failing command and ask the operator to patch the source repository, then reinstall or rerun cc-connect setup. Do not use `sed -i`, `cp`, `mv`, or an editor against installed skill scripts.",
+    ) or changed
+    changed = insert_after_anchor(
+        workspace / "TOOLS.md",
+        "- **脚本路径解析**",
+        "不要热修已安装脚本",
+        "- **不要热修已安装脚本**：`$HOME/.qclaw/skills`、`$HOME/.openclaw/skills`、`$HOME/.hermes/skills/nako` 是安装产物，不是工作区源码。会话里不要用 `sed -i`、`cp`、`mv` 或编辑器修改这些脚本；发现脚本问题只报告命令、日志和现象，由操作者改仓库源码后重新安装/重配。",
+    ) or changed
+    return changed
+
 workspace.mkdir(parents=True, exist_ok=True)
 changed = False
 for name in files:
@@ -528,6 +583,8 @@ if assets_src.is_dir():
 
 identity_path = workspace / "IDENTITY.md"
 if ensure_qclaw_identity_sync_fields(identity_path):
+    changed = True
+if ensure_qclaw_runtime_safety_rules(workspace):
     changed = True
 
 bootstrap = workspace / "BOOTSTRAP.md"
@@ -730,6 +787,57 @@ if old != new:
 else:
     print("ok")
 PY
+}
+
+sync_qclaw_pack_skills() {
+  local src="$CC_SETUP_REPO_ROOT/nako/skills" dst="$QCLAW_HOME/skills" result
+  [ -d "$src" ] || return 0
+  result="$(python3 - "$src" "$dst" <<'PY'
+import filecmp
+import shutil
+import sys
+import time
+from pathlib import Path
+
+src_root, dst_root = map(lambda p: Path(p).expanduser(), sys.argv[1:])
+dst_root.mkdir(parents=True, exist_ok=True)
+changed = False
+stamp = time.strftime("%Y%m%d-%H%M%S")
+
+def install(src: Path, dst: Path):
+    global changed
+    if not src.exists() or not src.is_file():
+        return
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    if dst.exists() and filecmp.cmp(src, dst, shallow=False):
+        return
+    if dst.exists():
+        backup = dst.with_name(f"{dst.name}.bak-cc-connect-skill-{stamp}")
+        shutil.copy2(dst, backup)
+    shutil.copy2(src, dst)
+    changed = True
+
+install(src_root / "skill-log.sh", dst_root / "skill-log.sh")
+for name in ("vision", "hearing", "voice", "selfie", "dokidoki"):
+    src_skill = src_root / name
+    dst_skill = dst_root / name
+    if not src_skill.exists():
+        continue
+    install(src_skill / "SKILL.md", dst_skill / "SKILL.md")
+    install(src_skill / "_meta.json", dst_skill / "_meta.json")
+    scripts = src_skill / "scripts"
+    if scripts.exists():
+        for item in sorted(scripts.iterdir()):
+            if item.is_file():
+                install(item, dst_skill / "scripts" / item.name)
+    (dst_skill / "logs").mkdir(parents=True, exist_ok=True)
+
+print("changed" if changed else "unchanged")
+PY
+)"
+  if [ "$result" = "changed" ]; then
+    info "QClaw skills 已从仓库源刷新: $dst"
+  fi
 }
 
 find_go() {
@@ -1132,6 +1240,7 @@ remove_cc_connect_sessions() {
     removed=$((removed + 1))
   done
   [ "$removed" -gt 0 ] && info "已删除 $removed 个 session 文件"
+  return 0
 }
 
 stop_cc_connect_processes() {
@@ -1373,6 +1482,7 @@ elif [ "$RUNTIME" = "qclaw" ]; then
     exit 1
   }
   mkdir -p "$QCLAW_WORKSPACE"
+  sync_qclaw_pack_skills
   ensure_qclaw_nako_persona
   QCLAW_AGENT_REGISTRATION_STATUS="$(ensure_qclaw_agent_registration)"
   if [ "$QCLAW_AGENT_REGISTRATION_STATUS" = "changed" ]; then
@@ -1439,7 +1549,7 @@ def normalize_global_options(text):
     return prefix + rest
 
 cc_data_dir = str(Path(home) / ".cc-connect")
-cc_api_data_dir = str(Path(cc_data_dir) / ".cc-connect")
+cc_api_data_dir = cc_data_dir
 cc_env = {
     "CC_CONNECT_DATA_DIR": cc_data_dir,
     "CC_CONNECT_API_DATA_DIR": cc_api_data_dir,

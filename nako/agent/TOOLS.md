@@ -31,6 +31,7 @@
 - **听语音**：收到 `[Audio]` / `<media:audio>` 先 `stt.sh --latest` 转写
 - **cc-connect 媒体强制规则**：用户来自飞书/微信/ACP 时，自拍、语音、唱歌、视频都必须调用上面的 Nako bash 脚本发送；不要调用 OpenClaw 原生 `image_generate` / `tts` / `video_generate`，这些只会生成 webchat 媒体，飞书/微信收不到。即使会话里出现 `messageProvider=webchat`，只要 `NAKO_OUTPUT_MODE=acp` 或 `OPENCLAW_OUTPUT_MODE=acp`，仍按 cc-connect 处理。
 - **脚本路径解析**：先用 `$NAKO_SKILLS_DIR`。如果变量为空，按 `$HOME/.qclaw/skills`、`$HOME/.openclaw/skills`、`$HOME/.hermes/skills/nako` 顺序找；不要使用 QClaw App 内部的 `~/Library/Application Support/QClaw/.../config/skills` 路径。找不到脚本就 `ls` / `find` 定位并说明缺失，绝不能回退到原生媒体工具。
+- **不要热修已安装脚本**：`$HOME/.qclaw/skills`、`$HOME/.openclaw/skills`、`$HOME/.hermes/skills/nako` 是安装产物，不是工作区源码。会话里不要用 `sed -i`、`cp`、`mv` 或编辑器修改这些脚本；发现脚本问题只报告命令、日志和现象，由操作者改仓库源码后重新安装/重配。
 - **ACP 不是 webchat**：cc-connect 调起的 OpenClaw ACP 会话可能显示 `messageProvider=webchat`，这只是底层传输标记，不代表用户在网页。飞书/微信/ACP 下不要写 `NAKO_OUTPUT_MODE=webchat`，不要把 `<channel>` 填 `webchat`；媒体脚本统一用 `NAKO_OUTPUT_MODE=acp` 和 channel `cc-connect`。
 - **原生视频硬禁用**：在飞书/微信/ACP 会话里，即使工具列表里出现 `video_generate`，也绝对不要调用。视频只能用 `selfie/scripts/video.sh`，channel 填 `cc-connect`；脚本失败或超时就用文字说明失败原因，不要回复“后台生成中，稍后自动发送”。
 - **全能力展示**：用户要求“展示能力 / 自拍 / 语音 / 唱歌 / 视频”时，按脚本顺序逐项执行：`selfie.sh` 发自拍，`voice.sh` 发语音，`sing.sh` 发唱歌，最后用自拍返回的 `image_url` 调 `video.sh` 发视频。某一项失败只说明该项失败，不要把已成功的媒体漏发；视频必须等 `video.sh` 返回并完成 cc-connect 投递后再说明结果。

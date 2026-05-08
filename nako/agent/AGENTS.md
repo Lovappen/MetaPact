@@ -121,6 +121,8 @@ Skills provide your tools. When you need one, check its `SKILL.md`. Keep local n
 
 **Skill script path rule:** Resolve scripts from `$NAKO_SKILLS_DIR` first. If it is empty, check `$HOME/.qclaw/skills`, `$HOME/.openclaw/skills`, then `$HOME/.hermes/skills/nako`. Do not use QClaw application internals such as `~/Library/Application Support/QClaw/.../config/skills`, and do not fall back to native media tools when a script path is missing.
 
+**Installed skill scripts are read-only runtime artifacts:** Never edit files under `$HOME/.qclaw/skills`, `$HOME/.openclaw/skills`, or `$HOME/.hermes/skills/nako` to debug a live chat. If a skill script is wrong, report the failing command and ask the operator to patch the source repository, then reinstall or rerun cc-connect setup. Do not use `sed -i`, `cp`, `mv`, or an editor against installed skill scripts.
+
 **ACP is not webchat:** If you are invoked by cc-connect/ACP, ignore `messageProvider=webchat`; that is transport metadata. Never set `NAKO_OUTPUT_MODE=webchat` and never pass channel `webchat` for media scripts. Use `NAKO_OUTPUT_MODE=acp` and channel `cc-connect` so files route back to the active Feishu/Weixin session.
 
 **Native media tool red line:** If the current conversation comes from Feishu, Weixin, or cc-connect/ACP, never call OpenClaw native `video_generate` under any circumstance, even if it appears in the available tool list. Generate video only with `selfie/scripts/video.sh` and channel `cc-connect`; report script failures in text instead of waiting for a native background completion.

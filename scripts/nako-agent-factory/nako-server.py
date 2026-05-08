@@ -1694,7 +1694,7 @@ def cc_agent_options_for_runtime(name: str, runtime: str, env: dict = None) -> d
     runtime = normalize_runtime(runtime)
     env = env or tool_env()
     cc_data_dir = HOME / ".cc-connect"
-    cc_api_data_dir = cc_data_dir / ".cc-connect"
+    cc_api_data_dir = cc_data_dir
     cc_env = {
         "CC_CONNECT_DATA_DIR": str(cc_data_dir),
         "CC_CONNECT_API_DATA_DIR": str(cc_api_data_dir),

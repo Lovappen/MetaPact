@@ -551,6 +551,16 @@ function Safe-InstallFile($src, $dst) {
   }
 }
 
+function Safe-InstallPackFile($src, $dst) {
+  $oldForce = $script:Force
+  try {
+    $script:Force = $true
+    Safe-InstallFile $src $dst
+  } finally {
+    $script:Force = $oldForce
+  }
+}
+
 function Test-DefaultWorkspaceTemplate($path) {
   if ($env:NAKO_OVERWRITE_DEFAULT_WORKSPACE_TEMPLATES -ne "1") { return $false }
   if (-not (Test-Path $path)) { return $false }
@@ -562,7 +572,7 @@ function Test-DefaultWorkspaceTemplate($path) {
     "SOUL.md" { return $text.Contains("# SOUL.md - Who You Are") }
     "USER.md" { return $text.Contains("# USER.md - About Your Human") }
     "HEARTBEAT.md" { return $text.Contains("# HEARTBEAT.md Template") }
-    "TOOLS.md" { return $text.Contains("# TOOLS.md - Local Notes") }
+    "TOOLS.md" { return $text.Contains("# TOOLS.md - Local Notes") -or $text.Contains("# TOOLS.md - 本地工具速查") }
     default { return $false }
   }
 }
@@ -591,6 +601,47 @@ function Complete-PreseededWorkspace($workspace) {
     New-Item -ItemType Directory -Path $stateDir -Force | Out-Null
     $state | ConvertTo-Json -Depth 8 | Set-Content -Path $statePath
   }
+}
+
+function Insert-RuleAfterAnchor($path, $anchorPrefix, $marker, $rule) {
+  if (-not (Test-Path $path)) { return $false }
+  $text = Get-Content $path -Raw
+  if ($text.Contains($marker)) { return $false }
+
+  $trimmed = $text.TrimEnd("`r", "`n")
+  $lines = [System.Collections.Generic.List[string]]::new()
+  foreach ($line in ([regex]::Split($trimmed, "\r?\n"))) {
+    $lines.Add($line)
+  }
+
+  for ($i = 0; $i -lt $lines.Count; $i++) {
+    if ($lines[$i].StartsWith($anchorPrefix)) {
+      $insertAt = $i + 1
+      while ($insertAt -lt $lines.Count -and -not [string]::IsNullOrWhiteSpace($lines[$insertAt])) {
+        $insertAt++
+      }
+      $lines.Insert($insertAt, "")
+      $lines.Insert($insertAt + 1, $rule)
+      Set-Content -Path $path -Value (($lines -join "`n") + "`n") -NoNewline -Encoding UTF8
+      return $true
+    }
+  }
+  return $false
+}
+
+function Ensure-QClawRuntimeSafetyRules($workspace) {
+  $changed = $false
+  $changed = (Insert-RuleAfterAnchor `
+    (Join-Path $workspace "AGENTS.md") `
+    "**Skill script path rule:**" `
+    "Installed skill scripts are read-only runtime artifacts" `
+    '**Installed skill scripts are read-only runtime artifacts:** Never edit files under `$HOME/.qclaw/skills`, `$HOME/.openclaw/skills`, or `$HOME/.hermes/skills/nako` to debug a live chat. If a skill script is wrong, report the failing command and ask the operator to patch the source repository, then reinstall or rerun cc-connect setup. Do not use `sed -i`, `cp`, `mv`, or an editor against installed skill scripts.') -or $changed
+  $changed = (Insert-RuleAfterAnchor `
+    (Join-Path $workspace "TOOLS.md") `
+    "- **脚本路径解析**" `
+    "不要热修已安装脚本" `
+    '- **不要热修已安装脚本**：`$HOME/.qclaw/skills`、`$HOME/.openclaw/skills`、`$HOME/.hermes/skills/nako` 是安装产物，不是工作区源码。会话里不要用 `sed -i`、`cp`、`mv` 或编辑器修改这些脚本；发现脚本问题只报告命令、日志和现象，由操作者改仓库源码后重新安装/重配。') -or $changed
+  return $changed
 }
 
 function Env-Merge($src, $dst) {
@@ -627,21 +678,21 @@ function Write-EnvValues($envPath, [string[]]$keys) {
 if (-not $SkipSkills) {
   Step "5. 安装 skills → $OpenclawSkills"
   New-Item -ItemType Directory -Path $OpenclawSkills -Force | Out-Null
-  Safe-InstallFile (Join-Path $PackRoot "skills\skill-log.sh") (Join-Path $OpenclawSkills "skill-log.sh")
+  Safe-InstallPackFile (Join-Path $PackRoot "skills\skill-log.sh") (Join-Path $OpenclawSkills "skill-log.sh")
 
   foreach ($sk in @("vision","hearing","voice","selfie","dokidoki")) {
     $src = Join-Path $PackRoot "skills\$sk"
     $dst = Join-Path $OpenclawSkills $sk
     New-Item -ItemType Directory -Path $dst -Force | Out-Null
-    Safe-InstallFile (Join-Path $src "SKILL.md") (Join-Path $dst "SKILL.md")
+    Safe-InstallPackFile (Join-Path $src "SKILL.md") (Join-Path $dst "SKILL.md")
     if (Test-Path (Join-Path $src "scripts")) {
       New-Item -ItemType Directory -Path (Join-Path $dst "scripts") -Force | Out-Null
       Get-ChildItem (Join-Path $src "scripts") -File | ForEach-Object {
-        Safe-InstallFile $_.FullName (Join-Path $dst "scripts\$($_.Name)")
+        Safe-InstallPackFile $_.FullName (Join-Path $dst "scripts\$($_.Name)")
       }
     }
     if (Test-Path (Join-Path $src "_meta.json")) {
-      Safe-InstallFile (Join-Path $src "_meta.json") (Join-Path $dst "_meta.json")
+      Safe-InstallPackFile (Join-Path $src "_meta.json") (Join-Path $dst "_meta.json")
     }
     New-Item -ItemType Directory -Path (Join-Path $dst "logs") -Force | Out-Null
   }
@@ -672,6 +723,11 @@ if (Test-Path $agentAssets) {
 }
 Remove-Item Env:\NAKO_OVERWRITE_DEFAULT_WORKSPACE_TEMPLATES -ErrorAction SilentlyContinue
 Complete-PreseededWorkspace $AgentWorkspace
+if ($Runtime -eq "qclaw") {
+  if (Ensure-QClawRuntimeSafetyRules $AgentWorkspace) {
+    Info "QClaw runtime 安全规则已写入: $AgentWorkspace"
+  }
+}
 $identityPath = Join-Path $AgentWorkspace "IDENTITY.md"
 if (Test-Path $identityPath) {
   $identityText = Get-Content $identityPath -Raw
@@ -839,6 +895,33 @@ function Copy-DirectoryContents($src, $dst) {
   }
 }
 
+function Sync-QClawPackSkills($qclawSkills) {
+  $skillsRoot = Join-Path $PackRoot "skills"
+  if (-not (Test-Path $skillsRoot)) { return }
+  New-Item -ItemType Directory -Path $qclawSkills -Force | Out-Null
+  Safe-InstallPackFile (Join-Path $skillsRoot "skill-log.sh") (Join-Path $qclawSkills "skill-log.sh")
+  foreach ($sk in @("vision","hearing","voice","selfie","dokidoki")) {
+    $src = Join-Path $skillsRoot $sk
+    if (-not (Test-Path $src)) { continue }
+    $dst = Join-Path $qclawSkills $sk
+    New-Item -ItemType Directory -Path $dst -Force | Out-Null
+    Safe-InstallPackFile (Join-Path $src "SKILL.md") (Join-Path $dst "SKILL.md")
+    $scripts = Join-Path $src "scripts"
+    if (Test-Path $scripts) {
+      New-Item -ItemType Directory -Path (Join-Path $dst "scripts") -Force | Out-Null
+      Get-ChildItem $scripts -File | ForEach-Object {
+        Safe-InstallPackFile $_.FullName (Join-Path $dst "scripts\$($_.Name)")
+      }
+    }
+    $meta = Join-Path $src "_meta.json"
+    if (Test-Path $meta) {
+      Safe-InstallPackFile $meta (Join-Path $dst "_meta.json")
+    }
+    New-Item -ItemType Directory -Path (Join-Path $dst "logs") -Force | Out-Null
+  }
+  Info "QClaw skills 已从 pack 源刷新: $qclawSkills"
+}
+
 function Sync-HermesRuntime {
   $hermesWorkspace = Join-Path $HermesHome "workspace\$AgentId"
   $hermesSkills = Join-Path $HermesHome "skills\nako"
@@ -861,6 +944,8 @@ function Sync-QClawRuntime {
   New-Item -ItemType Directory -Path $qclawWorkspace, $qclawAgentDir, $qclawSkills -Force | Out-Null
   if ($AgentWorkspace -ne $qclawWorkspace) { Copy-DirectoryContents $AgentWorkspace $qclawWorkspace }
   if ($OpenclawSkills -ne $qclawSkills) { Copy-DirectoryContents $OpenclawSkills $qclawSkills }
+  Sync-QClawPackSkills $qclawSkills
+  Ensure-QClawRuntimeSafetyRules $qclawWorkspace | Out-Null
 
   $env:NAKO_PS_QCLAW_HOME = $QclawHome
   $env:NAKO_PS_QCLAW_CONFIG = $OpenclawConfig
@@ -1042,7 +1127,17 @@ if ($WithCcConnect -or ((-not $NonInteractive) -and (Confirm "现在配置 cc-co
   if ($WithFeishu) { $CcFlags += "--with-feishu" }
   if ($WithWeixin) { $CcFlags += "--with-weixin" }
   $CcFlags += @("--cc-connect-source", $CcConnectSource)
-  $rc = Invoke-CcSetup $CcFlags
+  $oldQClawPersonaChanged = $env:QCLAW_PERSONA_CHANGED
+  if ($Runtime -eq "qclaw") { $env:QCLAW_PERSONA_CHANGED = "1" }
+  try {
+    $rc = Invoke-CcSetup $CcFlags
+  } finally {
+    if ($null -eq $oldQClawPersonaChanged) {
+      Remove-Item Env:\QCLAW_PERSONA_CHANGED -ErrorAction SilentlyContinue
+    } else {
+      $env:QCLAW_PERSONA_CHANGED = $oldQClawPersonaChanged
+    }
+  }
   if ($rc -ne 0) {
     Warn "cc-connect 配置未完成（可后续手动跑 scripts/cc-connect-setup.sh）"
   }
