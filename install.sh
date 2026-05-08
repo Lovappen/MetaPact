@@ -568,6 +568,28 @@ def apply_default_identity(identity):
                 result[key] = value
     return result
 
+def apply_qclaw_script_media_policy(item):
+    if not agent_id.startswith("agent-nako"):
+        return item
+    tools = item.get("tools")
+    if not isinstance(tools, dict):
+        tools = {}
+    else:
+        tools = dict(tools)
+    deny = tools.get("deny")
+    if not isinstance(deny, list):
+        deny = []
+    else:
+        deny = list(deny)
+    seen = {value for value in deny if isinstance(value, str)}
+    for tool_name in ("image_generate", "video_generate", "tts"):
+        if tool_name not in seen:
+            deny.append(tool_name)
+            seen.add(tool_name)
+    tools["deny"] = deny
+    item["tools"] = tools
+    return item
+
 identity = (
     existing_item.get("identity") if isinstance(existing_item.get("identity"), dict)
     else source_item.get("identity") if isinstance(source_item.get("identity"), dict)
@@ -594,11 +616,13 @@ model = (
 )
 if model:
     entry["model"] = model
+entry = apply_qclaw_script_media_policy(entry)
 
 for idx, item in enumerate(items):
     if isinstance(item, dict) and item.get("id") == agent_id:
         merged = dict(item)
         merged.update(entry)
+        merged = apply_qclaw_script_media_policy(merged)
         items[idx] = merged
         break
 else:
@@ -1667,7 +1691,13 @@ if [ "$WITH_CC_CONNECT" = "1" ] || { [ "$NON_INTERACTIVE" != "1" ] && confirm "�
   CC_FLAGS+=(--cc-connect-source "$CC_CONNECT_SOURCE")
   CC_SETUP="$PACK_ROOT/../scripts/cc-connect-setup.sh"
   if [ ! -f "$CC_SETUP" ]; then CC_SETUP="$SCRIPT_DIR/cc-connect-setup.sh"; fi  # legacy fallback
-  bash "$CC_SETUP" "${CC_FLAGS[@]}" || warn "cc-connect 配置未完成（可后续手动跑 scripts/cc-connect-setup.sh）"
+  if [ "$NAKO_AGENT_RUNTIME" = "qclaw" ] && [ "$FORCE" = "1" ]; then
+    QCLAW_PERSONA_CHANGED=1 bash "$CC_SETUP" "${CC_FLAGS[@]}" \
+      || warn "cc-connect 配置未完成（可后续手动跑 scripts/cc-connect-setup.sh）"
+  else
+    bash "$CC_SETUP" "${CC_FLAGS[@]}" \
+      || warn "cc-connect 配置未完成（可后续手动跑 scripts/cc-connect-setup.sh）"
+  fi
 fi
 
 # ─── @reboot persistence (no launchd/systemd → fall back to crontab) ───────

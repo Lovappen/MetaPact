@@ -23,6 +23,7 @@ grep -Fq 'QClaw 主模型继承' "$ROOT/install.ps1"
 grep -Fq 'name = identity.get("name") or agent_id' "$ROOT/install.ps1"
 grep -Fq '"avatar": "assets/nako-avatar-head.png"' "$ROOT/install.ps1"
 grep -Fq 'legacy_default_avatars = {' "$ROOT/install.ps1"
+grep -Fq 'for tool_name in ("image_generate", "video_generate", "tts"):' "$ROOT/install.ps1"
 grep -Fq 'OPENCLAW_CONFIG="${OPENCLAW_CONFIG:-${OPENCLAW_CONFIG_PATH:-$OPENCLAW_HOME/openclaw.json}}"' "$ROOT/nako/scripts/lib.sh"
 grep -Fq 'safe_install_pack_file()' "$ROOT/nako/scripts/lib.sh"
 grep -Fq 'non-interactive; use --force to overwrite' "$ROOT/nako/scripts/lib.sh"
@@ -99,6 +100,9 @@ grep -Fq '"NAKO_MEDIA_HOME": str(Path(openclaw_home) / "media")' "$ROOT/scripts/
 grep -Fq '"OPENCLAW_CONFIG": qclaw_config_path' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq '"OPENCLAW_CONFIG_PATH": qclaw_config_path' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'QCLAW_CC_SESSION_SUFFIX="${QCLAW_CC_SESSION_SUFFIX:-session-cc-connect}"' "$ROOT/scripts/cc-connect-setup.sh"
+grep -Fq 'QCLAW_PERSONA_CHANGED="${QCLAW_PERSONA_CHANGED:-0}"' "$ROOT/scripts/cc-connect-setup.sh"
+grep -Fq 'for tool_name in ("image_generate", "video_generate", "tts"):' "$ROOT/scripts/cc-connect-setup.sh"
+grep -Fq 'QCLAW_AGENT_REGISTRATION_STATUS="$(ensure_qclaw_agent_registration)"' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'ensure_qclaw_cc_session' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'ensure_qclaw_nako_persona' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'ensure_qclaw_agent_registration' "$ROOT/scripts/cc-connect-setup.sh"
@@ -107,6 +111,8 @@ grep -Fq 'f"agent:{agent_id}:{qclaw_session_suffix}"' "$ROOT/scripts/cc-connect-
 grep -Fq 'sync_qclaw_runtime' "$ROOT/install.sh"
 grep -Fq 'QCLAW_STATUS_TIMEOUT' "$ROOT/install.sh"
 grep -Fq 'QClaw 状态检查超时' "$ROOT/install.sh"
+grep -Fq 'QCLAW_PERSONA_CHANGED=1 bash "$CC_SETUP"' "$ROOT/install.sh"
+grep -Fq 'for tool_name in ("image_generate", "video_generate", "tts"):' "$ROOT/install.sh"
 grep -Fq 'safe_install_pack_file "$PACK_ROOT/skills/skill-log.sh" "$OPENCLAW_SKILLS_DIR/skill-log.sh"' "$ROOT/install.sh"
 grep -Fq 'safe_install_pack_file "$s" "$dst/scripts/$(basename "$s")"' "$ROOT/install.sh"
 grep -Fq '"selfie": ["FAL_KEY", "KIE_API_KEY", "SELFIE_REFERENCE_IMAGE", "SELFIE_CHARACTER_DESC", "OPENCLAW_GATEWAY_TOKEN"]' "$ROOT/install.sh"
@@ -401,6 +407,7 @@ assert len(registered) == 1
 assert registered[0]["identity"]["avatar"] == "assets/nako-avatar-head.png"
 assert "vibe" not in registered[0]["identity"]
 assert registered[0]["identity"]["theme"] == "核战后赛博世界专属战斗女仆"
+assert registered[0]["tools"]["deny"] == ["image_generate", "video_generate", "tts"]
 assert not (workspace / "BOOTSTRAP.md").exists()
 state_file = workspace / ".openclaw" / "workspace-state.json"
 setup_state = json.loads(state_file.read_text(encoding="utf-8"))
@@ -492,6 +499,58 @@ assert len(registered) == 1
 assert registered[0]["identity"]["avatar"] == "assets/nako-avatar-head.png"
 assert "vibe" not in registered[0]["identity"]
 assert registered[0]["identity"]["theme"] == "核战后赛博世界专属战斗女仆"
+assert registered[0]["tools"]["deny"] == ["image_generate", "video_generate", "tts"]
+PY
+python3 - "$tmp4" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+state = root / ".qclaw-state"
+session_dir = state / "agents" / "agent-nako" / "sessions"
+session_dir.mkdir(parents=True, exist_ok=True)
+old_session = session_dir / "env-force-session.jsonl"
+old_session.write_text(
+    '{"type":"session","id":"env-force-session","cwd":"test"}\n'
+    '{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"old clean session"}]}}\n',
+    encoding="utf-8",
+)
+(session_dir / "sessions.json").write_text(
+    json.dumps(
+        {
+            "agent:agent-nako:session-cc-connect": {
+                "sessionId": "env-force-session",
+                "updatedAt": 1,
+                "label": "cc-connect 飞书/微信",
+                "systemSent": True,
+                "sessionFile": str(old_session),
+            }
+        }
+    ),
+    encoding="utf-8",
+)
+PY
+(
+  cd "$tmp4"
+  HOME="$tmp4" QCLAW_HOME="$tmp4/.qclaw-app" QCLAW_PERSONA_CHANGED=1 BASH_ENV="$envfile4" \
+    bash "$ROOT/scripts/cc-connect-setup.sh" \
+      --agent-id agent-nako --runtime qclaw \
+      --cc-connect-source skip --non-interactive >/dev/null
+)
+python3 - "$tmp4" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+state = (root / ".qclaw-state").resolve()
+sessions_file = state / "agents" / "agent-nako" / "sessions" / "sessions.json"
+sessions = json.loads(sessions_file.read_text(encoding="utf-8"))
+entry = sessions["agent:agent-nako:session-cc-connect"]
+assert entry["sessionId"] != "env-force-session"
+assert entry["systemSent"] is False
+assert list((state / "agents" / "agent-nako" / "sessions").glob("env-force-session.jsonl.bak-cc-connect-stale-*"))
 PY
 
 tmp5="$(mktemp -d)"

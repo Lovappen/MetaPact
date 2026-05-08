@@ -80,7 +80,7 @@ QCLAW_NODE_BIN="${QCLAW_NODE_BIN:-}"
 QCLAW_OPENCLAW_MJS="${QCLAW_OPENCLAW_MJS:-}"
 QCLAW_CC_SESSION_SUFFIX="${QCLAW_CC_SESSION_SUFFIX:-session-cc-connect}"
 QCLAW_CC_SESSION_LABEL="${QCLAW_CC_SESSION_LABEL:-cc-connect 飞书/微信}"
-QCLAW_PERSONA_CHANGED=0
+QCLAW_PERSONA_CHANGED="${QCLAW_PERSONA_CHANGED:-0}"
 UNINSTALL=0
 PURGE_CC_CONNECT=0
 UNINSTALL_ALL=0
@@ -675,6 +675,28 @@ if not name:
 if not name:
     name = agent_id
 
+def apply_qclaw_script_media_policy(item):
+    if not agent_id.startswith("agent-nako"):
+        return item
+    tools = item.get("tools")
+    if not isinstance(tools, dict):
+        tools = {}
+    else:
+        tools = dict(tools)
+    deny = tools.get("deny")
+    if not isinstance(deny, list):
+        deny = []
+    else:
+        deny = list(deny)
+    seen = {value for value in deny if isinstance(value, str)}
+    for tool_name in ("image_generate", "video_generate", "tts"):
+        if tool_name not in seen:
+            deny.append(tool_name)
+            seen.add(tool_name)
+    tools["deny"] = deny
+    item["tools"] = tools
+    return item
+
 entry = dict(existing)
 entry.update({
     "id": agent_id,
@@ -690,6 +712,7 @@ model = (
 )
 if model:
     entry["model"] = model
+entry = apply_qclaw_script_media_policy(entry)
 
 if existing_index is None:
     items.append(entry)
@@ -703,6 +726,9 @@ if old != new:
         backup = config.with_name(f"openclaw.json.bak-cc-connect-qclaw-{time.strftime('%Y%m%d-%H%M%S')}")
         backup.write_text(old, encoding="utf-8")
     config.write_text(new, encoding="utf-8")
+    print("changed")
+else:
+    print("ok")
 PY
 }
 
@@ -1348,7 +1374,10 @@ elif [ "$RUNTIME" = "qclaw" ]; then
   }
   mkdir -p "$QCLAW_WORKSPACE"
   ensure_qclaw_nako_persona
-  ensure_qclaw_agent_registration
+  QCLAW_AGENT_REGISTRATION_STATUS="$(ensure_qclaw_agent_registration)"
+  if [ "$QCLAW_AGENT_REGISTRATION_STATUS" = "changed" ]; then
+    QCLAW_PERSONA_CHANGED=1
+  fi
   QCLAW_CC_SESSION_STATUS="$(ensure_qclaw_cc_session)"
   if [ "$QCLAW_CC_SESSION_STATUS" = "reset" ] || [ "$QCLAW_PERSONA_CHANGED" = "1" ]; then
     remove_cc_connect_sessions
