@@ -57,6 +57,15 @@ with tempfile.TemporaryDirectory() as tmp:
     runtime, error = module.factory_runtime_or_error("bad")
     assert runtime == module.DEFAULT_RUNTIME
     assert error is None
+    hermes_agent = Path(tmp) / ".hermes" / "hermes-agent"
+    (hermes_agent / "venv" / "bin").mkdir(parents=True, exist_ok=True)
+    hermes_python = hermes_agent / "venv" / "bin" / "python"
+    hermes_python.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    hermes_python.chmod(0o755)
+    (hermes_agent / "hermes").write_text("# hermes launcher\n", encoding="utf-8")
+    hermes_command = module.hermes_command({"PATH": "/usr/bin:/bin"})
+    assert hermes_command == str(Path(tmp) / ".hermes" / "bin" / "hermes")
+    assert Path(hermes_command).read_text(encoding="utf-8").startswith("#!/bin/sh\nexec ")
 
     hermes_config = Path(tmp) / ".hermes" / "config.yaml"
     hermes_config.parent.mkdir(parents=True, exist_ok=True)

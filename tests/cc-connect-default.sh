@@ -109,11 +109,18 @@ grep -Fq 'ensure_qclaw_cc_session' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'sync_qclaw_pack_skills' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'ensure_qclaw_nako_persona' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'ensure_qclaw_agent_registration' "$ROOT/scripts/cc-connect-setup.sh"
+grep -Fq 'ensure_hermes_venv_launcher' "$ROOT/scripts/cc-connect-setup.sh"
+grep -Fq 'ensure_hermes_venv_launcher' "$ROOT/install.sh"
+grep -Fq 'ensure_hermes_venv_launcher' "$ROOT/scripts/nako-agent-factory/nako-server.py"
 grep -Fq '"avatar": "assets/nako-avatar-head.png"' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'f"agent:{agent_id}:{qclaw_session_suffix}"' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'sync_qclaw_runtime' "$ROOT/install.sh"
 grep -Fq 'QCLAW_STATUS_TIMEOUT' "$ROOT/install.sh"
 grep -Fq 'QClaw 状态检查超时' "$ROOT/install.sh"
+grep -Fq 'qclaw_openclaw_timed cron add' "$ROOT/install.sh"
+grep -Fq 'register_or_update_qclaw_cron' "$ROOT/install.sh"
+grep -Fq 'register_or_update_hermes_cron' "$ROOT/install.sh"
+grep -Fq 'Hermes 精确 cron 需要 croniter' "$ROOT/install.sh"
 grep -Fq 'QCLAW_PERSONA_CHANGED=1 bash "$CC_SETUP"' "$ROOT/install.sh"
 grep -Fq 'for tool_name in ("image_generate", "video_generate", "tts"):' "$ROOT/install.sh"
 grep -Fq 'safe_install_pack_file "$PACK_ROOT/skills/skill-log.sh" "$OPENCLAW_SKILLS_DIR/skill-log.sh"' "$ROOT/install.sh"
@@ -687,6 +694,48 @@ assert ".openclaw" not in project
 env = (root / ".hermes" / "workspace" / "agent-test" / "skills" / ".env").read_text(encoding="utf-8")
 assert "FEISHU_APP_ID=cli_x" in env
 assert "FEISHU_APP_SECRET=secret_x" in env
+PY
+
+tmp6="$(mktemp -d)"
+trap 'rm -rf "$tmp" "$tmp2" "$tmp3" "$tmp4" "$tmp5" "$tmp6"' EXIT
+envfile6="$tmp6/bash_env"
+cat > "$envfile6" <<'EOF'
+cc-connect() {
+  case "$1" in
+    --version) echo "cc-connect lazycat/v1.3.3"; return 0 ;;
+    daemon) return 0 ;;
+    *) return 0 ;;
+  esac
+}
+ps() { return 0; }
+kill() { return 0; }
+sudo() { return 1; }
+EOF
+mkdir -p "$tmp6/.hermes/hermes-agent/venv/bin"
+cat > "$tmp6/.hermes/hermes-agent/venv/bin/python" <<'EOF'
+#!/usr/bin/env sh
+exit 0
+EOF
+chmod +x "$tmp6/.hermes/hermes-agent/venv/bin/python"
+touch "$tmp6/.hermes/hermes-agent/hermes"
+(
+  cd "$tmp6"
+  HOME="$tmp6" HERMES_HOME="$tmp6/.hermes" PATH="/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin" BASH_ENV="$envfile6" \
+    bash "$ROOT/scripts/cc-connect-setup.sh" \
+      --agent-id agent-venv --runtime hermes \
+      --cc-connect-source skip --non-interactive >/dev/null
+)
+python3 - "$tmp6" <<'PY'
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+wrapper = root / ".hermes" / "bin" / "hermes"
+cfg = (root / ".cc-connect" / "config.toml").read_text(encoding="utf-8")
+assert wrapper.exists()
+assert wrapper.read_text(encoding="utf-8").startswith("#!/bin/sh\nexec ")
+assert f'command = "{wrapper}"' in cfg
+assert 'args = ["acp"]' in cfg
 PY
 
 echo "cc-connect default source checks passed"

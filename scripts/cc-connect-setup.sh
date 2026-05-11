@@ -168,6 +168,41 @@ print(str(Path(os.path.expanduser(sys.argv[1])).resolve()))
 PY
 }
 
+hermes_agent_roots() {
+  printf '%s\n' "$HERMES_HOME/hermes-agent"
+  [ "$HERMES_HOME" != "$HOME/.hermes" ] && printf '%s\n' "$HOME/.hermes/hermes-agent"
+  if [ -d /home ]; then
+    for dir in /home/*/.hermes/hermes-agent; do
+      [ -d "$dir" ] && printf '%s\n' "$dir"
+    done
+  fi
+}
+
+ensure_hermes_venv_launcher() {
+  local root candidate python script wrapper
+  while IFS= read -r root; do
+    [ -n "$root" ] || continue
+    candidate="$root/venv/bin/hermes"
+    if [ -x "$candidate" ]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+    python="$root/venv/bin/python"
+    script="$root/hermes"
+    if [ -x "$python" ] && [ -f "$script" ]; then
+      wrapper="$HERMES_HOME/bin/hermes"
+      mkdir -p "$(dirname "$wrapper")" || continue
+      printf '#!/bin/sh\nexec "%s" "%s" "$@"\n' "$python" "$script" >"$wrapper" || continue
+      chmod +x "$wrapper" || continue
+      printf '%s\n' "$wrapper"
+      return 0
+    fi
+  done <<EOF
+$(hermes_agent_roots)
+EOF
+  return 1
+}
+
 resolve_hermes_bin() {
   if [ -n "$HERMES_BIN" ]; then
     printf '%s\n' "$HERMES_BIN"
@@ -181,7 +216,7 @@ resolve_hermes_bin() {
     command -v hermes
     return 0
   fi
-  return 1
+  ensure_hermes_venv_launcher
 }
 
 qclaw_json_file_value() {

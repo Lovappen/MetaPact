@@ -195,6 +195,57 @@ ${C_BOLD}野木奈子 Agent Pack - 安装器${C_NC}
 
 BANNER
 
+hermes_agent_roots() {
+  printf '%s\n' "$HERMES_HOME/hermes-agent"
+  [ "$HERMES_HOME" != "$HOME/.hermes" ] && printf '%s\n' "$HOME/.hermes/hermes-agent"
+  if [ -d /home ]; then
+    for dir in /home/*/.hermes/hermes-agent; do
+      [ -d "$dir" ] && printf '%s\n' "$dir"
+    done
+  fi
+}
+
+ensure_hermes_venv_launcher() {
+  local root candidate python script wrapper
+  while IFS= read -r root; do
+    [ -n "$root" ] || continue
+    candidate="$root/venv/bin/hermes"
+    if [ -x "$candidate" ]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+    python="$root/venv/bin/python"
+    script="$root/hermes"
+    if [ -x "$python" ] && [ -f "$script" ]; then
+      wrapper="$HERMES_HOME/bin/hermes"
+      mkdir -p "$(dirname "$wrapper")" || continue
+      printf '#!/bin/sh\nexec "%s" "%s" "$@"\n' "$python" "$script" >"$wrapper" || continue
+      chmod +x "$wrapper" || continue
+      printf '%s\n' "$wrapper"
+      return 0
+    fi
+  done <<EOF
+$(hermes_agent_roots)
+EOF
+  return 1
+}
+
+find_hermes_bin() {
+  if [ -n "${HERMES_BIN:-}" ]; then
+    printf '%s\n' "$HERMES_BIN"
+    return 0
+  fi
+  if [ -x "$HOME/.local/bin/hermes" ]; then
+    printf '%s\n' "$HOME/.local/bin/hermes"
+    return 0
+  fi
+  if command -v hermes >/dev/null 2>&1; then
+    command -v hermes
+    return 0
+  fi
+  ensure_hermes_venv_launcher
+}
+
 # ─── Preflight ──────────────────────────────────────────────────────────────
 step "1. 前置检查"
 
@@ -205,11 +256,7 @@ done
 
 if [ "$NAKO_AGENT_RUNTIME" = "hermes" ]; then
   if [ -z "${HERMES_BIN:-}" ]; then
-    if [ -x "$HOME/.local/bin/hermes" ]; then
-      HERMES_BIN="$HOME/.local/bin/hermes"
-    elif command -v hermes >/dev/null 2>&1; then
-      HERMES_BIN="$(command -v hermes)"
-    fi
+    HERMES_BIN="$(find_hermes_bin || true)"
   fi
   if [ -z "${HERMES_BIN:-}" ]; then
     err "选择 Hermes runtime，但找不到 hermes 命令。请先安装 Hermes，或设置 HERMES_BIN=/path/to/hermes"
@@ -384,20 +431,45 @@ openclaw_timed() {
   fi
 }
 
-find_hermes_bin() {
-  if [ -n "${HERMES_BIN:-}" ]; then
-    printf '%s\n' "$HERMES_BIN"
-    return 0
+qclaw_gateway_port() {
+  local port=""
+  port="$(qclaw_app_value_early "$QCLAW_HOME/qclaw.json" port)"
+  printf '%s\n' "${port:-28789}"
+}
+
+qclaw_openclaw_timed() {
+  local port
+  port="$(qclaw_gateway_port)"
+  if command -v timeout >/dev/null 2>&1; then
+    OPENCLAW_STATE_DIR="$QCLAW_HOME" \
+    OPENCLAW_CONFIG_PATH="${QCLAW_OPENCLAW_CONFIG:-$QCLAW_HOME/openclaw.json}" \
+    OPENCLAW_GATEWAY_URL="ws://127.0.0.1:$port" \
+      timeout "${OPENCLAW_INSTALL_CMD_TIMEOUT:-30}" "$QCLAW_NODE_BIN" "$QCLAW_OPENCLAW_MJS" "$@"
+  else
+    OPENCLAW_STATE_DIR="$QCLAW_HOME" \
+    OPENCLAW_CONFIG_PATH="${QCLAW_OPENCLAW_CONFIG:-$QCLAW_HOME/openclaw.json}" \
+    OPENCLAW_GATEWAY_URL="ws://127.0.0.1:$port" \
+      "$QCLAW_NODE_BIN" "$QCLAW_OPENCLAW_MJS" "$@"
   fi
-  if [ -x "$HOME/.local/bin/hermes" ]; then
-    printf '%s\n' "$HOME/.local/bin/hermes"
-    return 0
+}
+
+qclaw_cron_ready() {
+  [ -n "${QCLAW_NODE_BIN:-}" ] && [ -n "${QCLAW_OPENCLAW_MJS:-}" ] || return 1
+  [ -x "$QCLAW_NODE_BIN" ] && [ -f "$QCLAW_OPENCLAW_MJS" ] || return 1
+  qclaw_openclaw_timed cron status >/dev/null 2>&1
+}
+
+hermes_timed() {
+  if command -v timeout >/dev/null 2>&1; then
+    HERMES_HOME="$HERMES_HOME" timeout "${HERMES_INSTALL_CMD_TIMEOUT:-30}" "$HERMES_BIN" "$@"
+  else
+    HERMES_HOME="$HERMES_HOME" "$HERMES_BIN" "$@"
   fi
-  if command -v hermes >/dev/null 2>&1; then
-    command -v hermes
-    return 0
-  fi
-  return 1
+}
+
+hermes_cron_ready() {
+  [ -n "${HERMES_BIN:-}" ] && [ -x "$HERMES_BIN" ] || return 1
+  hermes_timed cron list >/dev/null 2>&1
 }
 
 qclaw_json_value() {
@@ -1611,28 +1683,135 @@ fi
 # ─── Register cron jobs (idempotent) ────────────────────────────────────────
 step "7b. 注册 cron jobs (heartbeat / daily-script / missing-reminder)"
 
-gateway_up=0
-if [ "$NAKO_AGENT_RUNTIME" = "hermes" ]; then
-  info "Hermes runtime 已选择，跳过 OpenClaw cron 注册"
-elif [ "$NAKO_AGENT_RUNTIME" = "qclaw" ]; then
-  info "QClaw runtime 已选择，跳过 OpenClaw cron 注册"
-elif has_bin openclaw; then
+cron_definitions() {
+  cat <<EOF
+nako-heartbeat|*/30 * * * *|every 30m|执行思念机制：先用 Bash 跑 $AGENT_WORKSPACE/scripts/heartbeat-check.sh。若退出码为 1，基于 HEARTBEAT.md、memory/daily-script.md 和当前情绪生成一条不超过100字的主动问候，然后必须用 Bash 调用 $AGENT_WORKSPACE/scripts/send-active-message.sh "<消息>" 发送；发送成功后最终只回复 HEARTBEAT_SENT。若未触发，只回复 HEARTBEAT_OK。不要依赖 openclaw cron delivery 发送消息。
+nako-daily-script|0 8 * * *|0 8 * * *|更新 memory/daily-script.md：参考前几日剧本生成今天的剧情（早午下晚四段），保持人物连续性、有生活感+恋爱气息，结尾加'角色状态'与'明日预告'。最终只回复 DAILY_SCRIPT_UPDATED，不要发送给用户。
+nako-missing-reminder|50 16 * * *|50 16 * * *|每天 16:50 思念提醒：生成一条不超过100字的主动问候，用 Bash 调用 $AGENT_WORKSPACE/scripts/send-active-message.sh "<消息>" 发送给主人；随后用 NAKO_REMINDER_SKIP_SEND=1 bash $AGENT_WORKSPACE/scripts/daily-missing-reminder.sh 触发设备振动并记录状态。最终只回复 MISSING_REMINDER_SENT。不要依赖 openclaw cron delivery 发送消息。
+EOF
+}
+
+wait_for_cron_ready() {
+  local ready_fn="$2" label="$3" i
   for i in $(seq 1 25); do
-    if openclaw_cron_ready; then
-      gateway_up=1
-      [ "$i" = "1" ] || info "gateway cron API 已恢复 (${i}s)"
-      break
+    if "$ready_fn"; then
+      [ "$i" = "1" ] || info "$label cron API 已恢复 (${i}s)"
+      return 0
     fi
     if [ $((i % 5)) = "0" ]; then
-      dim "  等待 gateway cron API 恢复... (${i})"
+      dim "  等待 $label cron API 恢复... (${i})"
     fi
     sleep 1
   done
-fi
+  return 1
+}
 
-if [ "$NAKO_AGENT_RUNTIME" = "hermes" ] || [ "$NAKO_AGENT_RUNTIME" = "qclaw" ]; then
-  :
-elif [ "$gateway_up" = "0" ]; then
+register_or_update_openclaw_cron() {
+  local name="$1" expr="$2" msg="$3" id="" rc=0 _err=""
+  id="$(openclaw_timed cron show "$name" --json 2>/dev/null | python3 -c 'import json,sys; print((json.load(sys.stdin).get("id") or ""))' 2>/dev/null || true)"
+  if [ -n "$id" ]; then
+    _err=$(openclaw_timed cron edit "$id" --agent "$AGENT_ID" --cron "$expr" \
+         --message "$msg" --session-key "agent:$AGENT_ID:main" \
+         --session isolated --no-deliver 2>&1 >/dev/null) && rc=0 || rc=$?
+    [ "$rc" = "0" ] && info "$name updated" || warn "$name 更新失败 (rc=$rc): $(echo "$_err" | head -2)"
+  else
+    _err=$(openclaw_timed cron add --name "$name" --agent "$AGENT_ID" --cron "$expr" \
+         --message "$msg" --session-key "agent:$AGENT_ID:main" \
+         --session isolated --no-deliver 2>&1 >/dev/null) && rc=0 || rc=$?
+    if [ "$rc" = "0" ]; then
+      info "$name registered"
+    else
+      warn "$name 注册失败 (rc=$rc): $(echo "$_err" | head -2)"
+      dim "  手动重试：openclaw cron add --name $name --agent $AGENT_ID --cron \"$expr\" --message ... --session-key agent:$AGENT_ID:main --no-deliver"
+    fi
+  fi
+}
+
+register_or_update_qclaw_cron() {
+  local name="$1" expr="$2" msg="$3" id="" rc=0 _err=""
+  id="$(qclaw_openclaw_timed cron show "$name" --json 2>/dev/null | python3 -c 'import json,sys; print((json.load(sys.stdin).get("id") or ""))' 2>/dev/null || true)"
+  if [ -n "$id" ]; then
+    _err=$(qclaw_openclaw_timed cron edit "$id" --agent "$AGENT_ID" --cron "$expr" \
+         --message "$msg" --session-key "agent:$AGENT_ID:main" \
+         --session isolated --no-deliver 2>&1 >/dev/null) && rc=0 || rc=$?
+    [ "$rc" = "0" ] && info "$name updated (QClaw)" || warn "$name QClaw 更新失败 (rc=$rc): $(echo "$_err" | head -2)"
+  else
+    _err=$(qclaw_openclaw_timed cron add --name "$name" --agent "$AGENT_ID" --cron "$expr" \
+         --message "$msg" --session-key "agent:$AGENT_ID:main" \
+         --session isolated --no-deliver 2>&1 >/dev/null) && rc=0 || rc=$?
+    if [ "$rc" = "0" ]; then
+      info "$name registered (QClaw)"
+    else
+      warn "$name QClaw 注册失败 (rc=$rc): $(echo "$_err" | head -2)"
+      dim "  确认 QClaw 正在运行后重跑 installer；手动命令可用 QClaw 内置 openclaw.mjs cron add。"
+    fi
+  fi
+}
+
+hermes_job_id_by_name() {
+  python3 - "$HERMES_HOME/cron/jobs.json" "$1" <<'PY' 2>/dev/null || true
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+name = sys.argv[2]
+try:
+    data = json.loads(path.read_text(encoding="utf-8"))
+except Exception:
+    data = {}
+for job in data.get("jobs") or []:
+    if isinstance(job, dict) and job.get("name") == name:
+        print(job.get("id") or "")
+        break
+PY
+}
+
+ensure_hermes_gateway_for_cron() {
+  local status=""
+  status="$(hermes_timed cron status 2>&1 || true)"
+  if echo "$status" | grep -q "Gateway is running"; then
+    info "Hermes gateway 已在跑，cron 会自动触发"
+    return 0
+  fi
+
+  dim "  Hermes gateway 未运行，尝试安装并启动 service..."
+  hermes_timed gateway install >/tmp/nako-hermes-gateway.log 2>&1 || true
+  hermes_timed gateway start >>/tmp/nako-hermes-gateway.log 2>&1 || true
+  status="$(hermes_timed cron status 2>&1 || true)"
+  if echo "$status" | grep -q "Gateway is running"; then
+    info "Hermes gateway 已启动，cron 会自动触发"
+    return 0
+  fi
+  warn "Hermes gateway 未启动；cron 已注册也不会自动跑"
+  dim "  查看：/tmp/nako-hermes-gateway.log"
+  dim "  手动：HERMES_HOME=\"$HERMES_HOME\" \"$HERMES_BIN\" gateway install && HERMES_HOME=\"$HERMES_HOME\" \"$HERMES_BIN\" gateway start"
+  return 1
+}
+
+register_or_update_hermes_cron() {
+  local name="$1" schedule="$2" msg="$3" id="" rc=0 _err=""
+  id="$(hermes_job_id_by_name "$name")"
+  if [ -n "$id" ]; then
+    _err=$(hermes_timed cron edit "$id" --name "$name" --schedule "$schedule" \
+      --prompt "$msg" --deliver local 2>&1 >/dev/null) && rc=0 || rc=$?
+    [ "$rc" = "0" ] && info "$name updated (Hermes)" || warn "$name Hermes 更新失败 (rc=$rc): $(echo "$_err" | head -2)"
+  else
+    _err=$(hermes_timed cron create --name "$name" --deliver local "$schedule" "$msg" 2>&1 >/dev/null) && rc=0 || rc=$?
+    if [ "$rc" = "0" ]; then
+      info "$name registered (Hermes)"
+    else
+      warn "$name Hermes 注册失败 (rc=$rc): $(echo "$_err" | head -2)"
+      if echo "$_err" | grep -qi "croniter"; then
+        dim "  Hermes 精确 cron 需要 croniter：python3 -m pip install --user croniter"
+      fi
+    fi
+  fi
+}
+
+if [ "$NAKO_AGENT_RUNTIME" = "openclaw" ] && ! has_bin openclaw; then
+  warn "未发现 openclaw 命令，跳过 cron 注册"
+elif [ "$NAKO_AGENT_RUNTIME" = "openclaw" ] && ! wait_for_cron_ready openclaw openclaw_cron_ready "OpenClaw"; then
   warn "gateway 自动启动失败，跳过 cron 注册"
   dim "  手动起后再 cron add，或重跑 installer："
   dim "    openclaw daemon install && openclaw daemon start"
@@ -1642,42 +1821,24 @@ elif [ "$gateway_up" = "0" ]; then
     n="${cron%%|*}"; e="${cron#*|}"
     dim "    openclaw cron add --name $n --agent $AGENT_ID --cron \"$e\" --message ... --session-key agent:$AGENT_ID:main --session isolated --no-deliver"
   done
-elif has_bin openclaw; then
-  register_or_update_cron() {
-    local name="$1" expr="$2" msg="$3" id="" rc=0 _err=""
-    id="$(openclaw_timed cron show "$name" --json 2>/dev/null | python3 -c 'import json,sys; print((json.load(sys.stdin).get("id") or ""))' 2>/dev/null || true)"
-    if [ -n "$id" ]; then
-      _err=$(openclaw_timed cron edit "$id" --agent "$AGENT_ID" --cron "$expr" \
-           --message "$msg" --session-key "agent:$AGENT_ID:main" \
-           --session isolated --no-deliver 2>&1 >/dev/null) && rc=0 || rc=$?
-      if [ "$rc" = "0" ]; then
-        info "$name updated"
-      else
-        warn "$name 更新失败 (rc=$rc): $(echo "$_err" | head -2)"
-      fi
-    else
-      _err=$(openclaw_timed cron add --name "$name" --agent "$AGENT_ID" --cron "$expr" \
-           --message "$msg" --session-key "agent:$AGENT_ID:main" \
-           --session isolated --no-deliver 2>&1 >/dev/null) && rc=0 || rc=$?
-      if [ "$rc" = "0" ]; then
-        info "$name registered"
-      else
-        warn "$name 注册失败 (rc=$rc): $(echo "$_err" | head -2)"
-        dim "  手动重试：openclaw cron add --name $name --agent $AGENT_ID --cron \"$expr\" --message ... --session-key agent:$AGENT_ID:main --no-deliver"
-      fi
-    fi
-  }
-
-  for line in \
-      "nako-heartbeat|*/30 * * * *|执行思念机制：先用 Bash 跑 $AGENT_WORKSPACE/scripts/heartbeat-check.sh。若退出码为 1，基于 HEARTBEAT.md、memory/daily-script.md 和当前情绪生成一条不超过100字的主动问候，然后必须用 Bash 调用 $AGENT_WORKSPACE/scripts/send-active-message.sh \"<消息>\" 发送；发送成功后最终只回复 HEARTBEAT_SENT。若未触发，只回复 HEARTBEAT_OK。不要依赖 openclaw cron delivery 发送消息。" \
-      "nako-daily-script|0 8 * * *|更新 memory/daily-script.md：参考前几日剧本生成今天的剧情（早午下晚四段），保持人物连续性、有生活感+恋爱气息，结尾加'角色状态'与'明日预告'。最终只回复 DAILY_SCRIPT_UPDATED，不要发送给用户。" \
-      "nako-missing-reminder|50 16 * * *|每天 16:50 思念提醒：生成一条不超过100字的主动问候，用 Bash 调用 $AGENT_WORKSPACE/scripts/send-active-message.sh \"<消息>\" 发送给主人；随后用 NAKO_REMINDER_SKIP_SEND=1 bash $AGENT_WORKSPACE/scripts/daily-missing-reminder.sh 触发设备振动并记录状态。最终只回复 MISSING_REMINDER_SENT。不要依赖 openclaw cron delivery 发送消息。"; do
-    name="${line%%|*}"; rest="${line#*|}"
-    expr="${rest%%|*}";  msg="${rest#*|}"
-    register_or_update_cron "$name" "$expr" "$msg"
-  done
+elif [ "$NAKO_AGENT_RUNTIME" = "qclaw" ] && ! wait_for_cron_ready qclaw qclaw_cron_ready "QClaw"; then
+  warn "QClaw gateway 不可用，跳过 cron 注册"
+  dim "  请确认 QClaw.app 正在运行后重跑 installer。"
+elif [ "$NAKO_AGENT_RUNTIME" = "hermes" ] && ! hermes_cron_ready; then
+  warn "Hermes cron CLI 不可用，跳过 cron 注册"
+  dim "  手动检查：HERMES_HOME=\"$HERMES_HOME\" \"$HERMES_BIN\" cron status"
 else
-  warn "未发现 openclaw 命令，跳过 cron 注册"
+  [ "$NAKO_AGENT_RUNTIME" = "hermes" ] && ensure_hermes_gateway_for_cron || true
+  while IFS='|' read -r name expr hermes_schedule msg; do
+    [ -n "$name" ] || continue
+    case "$NAKO_AGENT_RUNTIME" in
+      openclaw) register_or_update_openclaw_cron "$name" "$expr" "$msg" ;;
+      qclaw) register_or_update_qclaw_cron "$name" "$expr" "$msg" ;;
+      hermes) register_or_update_hermes_cron "$name" "$hermes_schedule" "$msg" ;;
+    esac
+  done <<EOF
+$(cron_definitions)
+EOF
 fi
 
 # ─── cc-connect 多平台 (可选) ──────────────────────────────────────────────

@@ -297,6 +297,45 @@ def openclaw_workspace(aid: str) -> Path:
     return HOME / ".openclaw" / "workspace" / aid
 
 
+def hermes_agent_roots() -> list:
+    roots = [hermes_home() / "hermes-agent", HOME / ".hermes/hermes-agent"]
+    home_root = Path("/home")
+    if home_root.exists():
+        try:
+            roots.extend(sorted(home_root.glob("*/.hermes/hermes-agent")))
+        except Exception:
+            pass
+    seen = set()
+    result = []
+    for root in roots:
+        key = str(root)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(root)
+    return result
+
+
+def ensure_hermes_venv_launcher() -> str:
+    for root in hermes_agent_roots():
+        candidate = root / "venv/bin/hermes"
+        if candidate.exists() and os.access(candidate, os.X_OK):
+            return str(candidate)
+        python = root / "venv/bin/python"
+        script = root / "hermes"
+        if not (python.exists() and os.access(python, os.X_OK) and script.exists()):
+            continue
+        wrapper = hermes_home() / "bin/hermes"
+        try:
+            wrapper.parent.mkdir(parents=True, exist_ok=True)
+            wrapper.write_text(f'#!/bin/sh\nexec "{python}" "{script}" "$@"\n', encoding="utf-8")
+            wrapper.chmod(0o755)
+            return str(wrapper)
+        except Exception:
+            continue
+    return ""
+
+
 def hermes_command(env: dict = None) -> str:
     configured = os.environ.get("HERMES_BIN")
     if configured:
@@ -305,7 +344,10 @@ def hermes_command(env: dict = None) -> str:
     if candidate.exists():
         return str(candidate)
     found = shutil.which("hermes", path=(env or tool_env()).get("PATH"))
-    return found or "hermes"
+    if found:
+        return found
+    launcher = ensure_hermes_venv_launcher()
+    return launcher or "hermes"
 
 
 def resolve_path(value: str) -> Path:
