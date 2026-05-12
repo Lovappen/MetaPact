@@ -47,6 +47,19 @@ err(){  echo -e "${C_RED}[✗]${C_NC} $*" >&2; }
 step(){ echo -e "\n${C_BOLD}${C_CYAN}▸ $*${C_NC}"; }
 dim(){  echo -e "${C_DIM}$*${C_NC}"; }
 has_bin(){ command -v "$1" >/dev/null 2>&1; }
+os_name_lc(){ uname -s | tr '[:upper:]' '[:lower:]'; }
+is_windows_shell(){
+  case "$(os_name_lc)" in
+    mingw*|msys*|cygwin*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+cc_connect_exe_suffix(){
+  if is_windows_shell; then
+    printf '.exe'
+  fi
+  return 0
+}
 confirm(){
   local q="$1" def="${2:-n}" reply hint="[y/N]"
   [ "$def" = "y" ] && hint="[Y/n]"
@@ -1023,12 +1036,30 @@ cc_connect_has_native_video() {
   return 1
 }
 
+copy_cc_connect_binary() {
+  local src="$1" dest="$2"
+  if has_bin install; then
+    install -m 0755 "$src" "$dest"
+  else
+    cp "$src" "$dest"
+    chmod 0755 "$dest" 2>/dev/null || true
+  fi
+}
+
+sudo_copy_cc_connect_binary() {
+  local src="$1" dest="$2"
+  if has_bin install; then
+    sudo install -m 0755 "$src" "$dest"
+  else
+    sudo cp "$src" "$dest"
+    sudo chmod 0755 "$dest" 2>/dev/null || true
+  fi
+}
+
 install_cc_connect_binary() {
   local src="$1" dest="${CC_CONNECT_BIN:-}"
-  local exe_suffix=""
-  case "$(uname -s | tr '[:upper:]' '[:lower:]')" in
-    mingw*|msys*|cygwin*) exe_suffix=".exe" ;;
-  esac
+  local exe_suffix
+  exe_suffix="$(cc_connect_exe_suffix)"
   if [ -z "$dest" ]; then
     if [ -d /usr/local/bin ] && [ -w /usr/local/bin ]; then
       dest="/usr/local/bin/cc-connect${exe_suffix}"
@@ -1042,11 +1073,11 @@ install_cc_connect_binary() {
 
   mkdir -p "$(dirname "$dest")"
   if [ -w "$(dirname "$dest")" ]; then
-    install -m 0755 "$src" "$dest"
+    copy_cc_connect_binary "$src" "$dest"
   elif command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
-    sudo install -m 0755 "$src" "$dest"
+    sudo_copy_cc_connect_binary "$src" "$dest"
   else
-    err "无法写入 ${dest}；请用 sudo 运行，或设置 CC_CONNECT_BIN=$HOME/.local/bin/cc-connect"
+    err "无法写入 ${dest}；请用 sudo 运行，或设置 CC_CONNECT_BIN=$HOME/.local/bin/cc-connect${exe_suffix}"
     return 1
   fi
   hash -r 2>/dev/null || true
@@ -1100,11 +1131,15 @@ install_cc_connect_lazycat_release() {
     [ "$expected" = "$actual" ] || { rm -rf "$tmp"; return 1; }
   fi
   tar -C "$tmp" -xzf "$archive"
-  bin="$tmp/cc-connect-$platform"
-  if [ ! -x "$bin" ]; then
-    bin="$(find "$tmp" -type f -perm -111 -name 'cc-connect*' | head -1 || true)"
+  case "$platform" in
+    windows-*) bin="$tmp/cc-connect-$platform.exe" ;;
+    *) bin="$tmp/cc-connect-$platform" ;;
+  esac
+  if [ ! -f "$bin" ]; then
+    bin="$(find "$tmp" -type f -name 'cc-connect*' | head -1 || true)"
   fi
   [ -n "$bin" ] || { rm -rf "$tmp"; return 1; }
+  chmod 0755 "$bin" 2>/dev/null || true
   install_cc_connect_binary "$bin"
   local rc=$?
   rm -rf "$tmp"
@@ -1164,6 +1199,24 @@ install_cc_connect_npm() {
 }
 
 cc_connect_running_pids() {
+  if is_windows_shell; then
+    if has_bin tasklist; then
+      tasklist //FI "IMAGENAME eq cc-connect.exe" //FO CSV //NH 2>/dev/null | awk -F',' '
+        {
+          image = $1
+          pid = $2
+          gsub(/^"|"$/, "", image)
+          gsub(/^"|"$/, "", pid)
+          if (tolower(image) == "cc-connect.exe" && pid ~ /^[0-9]+$/) print pid
+        }'
+      return 0
+    fi
+    ps -W 2>/dev/null | awk '
+      tolower($0) ~ /(^|[\\\/[:space:]])cc-connect(\.exe)?([[:space:]]|$)/ { print $1 }
+    '
+    return 0
+  fi
+
   ps -eo pid=,args= 2>/dev/null | awk '
     function trim(s) {
       sub(/^[[:space:]]+/, "", s)
@@ -1283,13 +1336,48 @@ remove_cc_connect_sessions() {
   return 0
 }
 
+stop_cc_connect_pids() {
+  local mode="${1:-graceful}" pid
+  shift || true
+  [ "$#" -gt 0 ] || return 0
+  if is_windows_shell && has_bin taskkill; then
+    for pid in "$@"; do
+      [ -n "$pid" ] || continue
+      if [ "$mode" = "force" ]; then
+        taskkill //F //PID "$pid" >/dev/null 2>&1 || taskkill /F /PID "$pid" >/dev/null 2>&1 || true
+      else
+        taskkill //PID "$pid" >/dev/null 2>&1 || taskkill /PID "$pid" >/dev/null 2>&1 || kill "$pid" 2>/dev/null || true
+      fi
+    done
+    return 0
+  fi
+  if [ "$mode" = "force" ]; then
+    kill -9 "$@" 2>/dev/null || true
+  else
+    kill "$@" 2>/dev/null || true
+  fi
+}
+
 stop_cc_connect_processes() {
   local old_pids
   old_pids="$(cc_connect_running_pids | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
   if [ -n "${old_pids:-}" ]; then
     warn "停止 cc-connect 进程: $old_pids"
-    kill $old_pids 2>/dev/null || true
+    stop_cc_connect_pids graceful $old_pids
   fi
+}
+
+start_cc_connect_background() {
+  local message="${1:-cc-connect 后台已启}" bg_pid
+  mkdir -p "$HOME/.cc-connect"
+  if has_bin nohup; then
+    nohup cc-connect </dev/null >"$HOME/.cc-connect/cc-connect.log" 2>&1 &
+  else
+    cc-connect </dev/null >"$HOME/.cc-connect/cc-connect.log" 2>&1 &
+  fi
+  bg_pid=$!
+  disown 2>/dev/null || true
+  info "${message} (PID $bg_pid)，日志: ~/.cc-connect/cc-connect.log"
 }
 
 purge_cc_connect_binary() {
@@ -1457,8 +1545,7 @@ uninstall_cc_connect_project() {
         ensure_cc_connect_api_socket_compat
         info "仍有其他 project，已重新启动 cc-connect daemon"
       else
-        nohup cc-connect </dev/null >>"$HOME/.cc-connect/cc-connect.log" 2>&1 &
-        info "仍有其他 project，已后台启动 cc-connect (PID $!)"
+        start_cc_connect_background "仍有其他 project，已后台启动 cc-connect"
       fi
     fi
   else
@@ -1749,7 +1836,7 @@ ensure_cc_connect_running() {
     old_pids="$(cc_connect_running_pids | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
     if [ -n "${old_pids:-}" ]; then
       warn "${reason}，重启旧 cc-connect 进程: $old_pids"
-      kill $old_pids 2>/dev/null || true
+      stop_cc_connect_pids graceful $old_pids
       for _ in 1 2 3 4 5; do
         [ -z "$(cc_connect_running_pids)" ] && break
         sleep 1
@@ -1757,7 +1844,7 @@ ensure_cc_connect_running() {
       old_pids="$(cc_connect_running_pids | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
       if [ -n "${old_pids:-}" ]; then
         warn "cc-connect 未及时退出，强制停止: $old_pids"
-        kill -9 $old_pids 2>/dev/null || true
+        stop_cc_connect_pids force $old_pids
         sleep 1
       fi
     fi
@@ -1780,9 +1867,7 @@ ensure_cc_connect_running() {
     info "cc-connect daemon 已启动 (launchd/systemd)"
     dim "  状态: cc-connect daemon status   日志: cc-connect daemon logs -f"
   else
-    nohup cc-connect </dev/null >"$HOME/.cc-connect/cc-connect.log" 2>&1 &
-    disown 2>/dev/null || true
-    info "cc-connect 后台已启 (PID $!)，日志: ~/.cc-connect/cc-connect.log"
+    start_cc_connect_background "cc-connect 后台已启"
   fi
   sleep 2
   ensure_cc_connect_api_socket_compat
