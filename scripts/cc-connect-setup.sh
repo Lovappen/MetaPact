@@ -1025,14 +1025,18 @@ cc_connect_has_native_video() {
 
 install_cc_connect_binary() {
   local src="$1" dest="${CC_CONNECT_BIN:-}"
+  local exe_suffix=""
+  case "$(uname -s | tr '[:upper:]' '[:lower:]')" in
+    mingw*|msys*|cygwin*) exe_suffix=".exe" ;;
+  esac
   if [ -z "$dest" ]; then
     if [ -d /usr/local/bin ] && [ -w /usr/local/bin ]; then
-      dest="/usr/local/bin/cc-connect"
+      dest="/usr/local/bin/cc-connect${exe_suffix}"
     elif [ -d /usr/local/bin ] && command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
-      dest="/usr/local/bin/cc-connect"
+      dest="/usr/local/bin/cc-connect${exe_suffix}"
     else
       mkdir -p "$HOME/.local/bin"
-      dest="$HOME/.local/bin/cc-connect"
+      dest="$HOME/.local/bin/cc-connect${exe_suffix}"
     fi
   fi
 
@@ -1061,6 +1065,7 @@ cc_connect_asset_platform() {
   esac
   case "$os" in
     linux|darwin) printf '%s-%s\n' "$os" "$arch" ;;
+    mingw*|msys*|cygwin*) printf 'windows-%s\n' "$arch" ;;
     *) return 1 ;;
   esac
 }
@@ -1484,7 +1489,7 @@ elif [ "$CC_CONNECT_SOURCE" = "lazycat" ] || [ "$CC_CONNECT_SOURCE" = "auto" ]; 
       warn "CodeEagle/cc-connect 安装失败，回退 npm 版 cc-connect"
       install_cc_connect_npm || exit 1
     else
-      err "CodeEagle/cc-connect 安装失败；请修复网络/Go 环境后重跑，或显式设置 --cc-connect-source npm"
+      err "CodeEagle/cc-connect 安装失败；请修复网络/下载 release 制品后重跑，或显式设置 --cc-connect-source npm"
       exit 1
     fi
   fi
