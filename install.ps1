@@ -104,6 +104,36 @@ function Get-CcSetupPath {
   return $ccSetup
 }
 
+function Get-CcSetupPsPath {
+  $repoRootForSetup = Split-Path -Parent $PackRoot
+  $ccSetup = Join-Path $repoRootForSetup "scripts\cc-connect-setup.ps1"
+  if (-not (Test-Path $ccSetup)) {
+    $ccSetup = Join-Path $ScriptDir "cc-connect-setup.ps1"
+  }
+  return $ccSetup
+}
+
+function Convert-CcSetupFlagsToPowerShellArgs([string[]]$Flags) {
+  $out = @()
+  for ($i = 0; $i -lt $Flags.Count; $i++) {
+    switch ($Flags[$i]) {
+      "--agent-id" { $out += "-AgentId"; $i++; $out += $Flags[$i]; continue }
+      "--runtime" { $out += "-Runtime"; $i++; $out += $Flags[$i]; continue }
+      "--backend" { $out += "-Runtime"; $i++; $out += $Flags[$i]; continue }
+      "--display-name" { $out += "-DisplayName"; $i++; $out += $Flags[$i]; continue }
+      "--with-feishu" { $out += "-WithFeishu"; continue }
+      "--with-weixin" { $out += "-WithWeixin"; continue }
+      "--cc-connect-source" { $out += "-CcConnectSource"; $i++; $out += $Flags[$i]; continue }
+      "--non-interactive" { $out += "-NonInteractive"; continue }
+      "--uninstall" { $out += "-Uninstall"; continue }
+      "--purge-cc-connect" { $out += "-PurgeCcConnect"; continue }
+      "--uninstall-all" { $out += "-UninstallAll"; continue }
+      default { $out += $Flags[$i]; continue }
+    }
+  }
+  return $out
+}
+
 function Convert-PathForBash($path) {
   $winPath = [System.IO.Path]::GetFullPath($path)
   $bashCmd = (Get-Command bash -ErrorAction Stop).Source
@@ -121,6 +151,19 @@ function Convert-PathForBash($path) {
 }
 
 function Invoke-CcSetup([string[]]$Flags) {
+  $ccSetupPs = Get-CcSetupPsPath
+  if (Test-Path $ccSetupPs) {
+    $psArgs = Convert-CcSetupFlagsToPowerShellArgs $Flags
+    $psHost = (Get-Command pwsh -ErrorAction SilentlyContinue)
+    if (-not $psHost) { $psHost = Get-Command powershell -ErrorAction SilentlyContinue }
+    if (-not $psHost) {
+      Warn "未发现 PowerShell host，无法运行 cc-connect-setup.ps1。"
+      return 1
+    }
+    & $psHost.Source -NoProfile -File $ccSetupPs @psArgs
+    return $LASTEXITCODE
+  }
+
   $ccSetup = Get-CcSetupPath
   $bashInfo = Get-Command bash -ErrorAction SilentlyContinue
   if (-not $bashInfo) {

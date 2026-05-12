@@ -47,7 +47,7 @@ curl -fsSL https://cdn.jsdelivr.net/gh/Lovappen/MetaPact@main/install.sh | bash 
 
 ## 与 agent 无关的工具
 
-### `scripts/cc-connect-setup.sh` — 给任意 agent 做 cc-connect 多平台接入
+### `scripts/cc-connect-setup.sh` / `scripts/cc-connect-setup.ps1` — 给任意 agent 做 cc-connect 多平台接入
 
 也支持 curl 一键，参数走 `bash -s --` 传：
 
@@ -79,6 +79,9 @@ bash scripts/cc-connect-setup.sh --agent-id agent-nako --uninstall-all
 
 # Windows PowerShell: 通过 QClaw 接入飞书/微信
 pwsh install.ps1 -Runtime qclaw -WithFeishu -WithWeixin
+
+# Windows PowerShell: 只配置 cc-connect 接入
+pwsh scripts/cc-connect-setup.ps1 -AgentId agent-foo -Runtime qclaw -WithFeishu -WithWeixin
 ```
 
 QClaw 后端需要和 `cc-connect` 跑在同一个 host/user 下；如果 `cc-connect`

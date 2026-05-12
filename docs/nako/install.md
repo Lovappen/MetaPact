@@ -53,7 +53,7 @@ bash scripts/cc-connect-setup.sh --agent-id agent-nako --uninstall-all
 （默认 `agent-nako`）。对应 workspace、agent 数据目录会移到
 `~/.nako-agent.bak-uninstall-all-<agent-id>-*` 备份目录。
 
-Windows PowerShell 对应参数使用 PascalCase，例如 `-Runtime qclaw`、`-ResetSecrets`、`-WithFeishu`、`-WithWeixin`、`-CcConnectSource lazycat`。PowerShell 的 cc-connect 自动接入会调用仓库里的 `scripts/cc-connect-setup.sh`，因此需要 Git Bash / WSL 等可用的 `bash`。
+Windows PowerShell 对应参数使用 PascalCase，例如 `-Runtime qclaw`、`-ResetSecrets`、`-WithFeishu`、`-WithWeixin`、`-CcConnectSource lazycat`。PowerShell 的 cc-connect 自动接入会优先调用仓库里的 `scripts/cc-connect-setup.ps1`，不需要 Git Bash / WSL；只有旧包缺少 `.ps1` 时才会回退到 Bash 脚本。
 
 PowerShell 下接入 QClaw：
 
