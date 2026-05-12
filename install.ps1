@@ -104,9 +104,26 @@ function Get-CcSetupPath {
   return $ccSetup
 }
 
+function Convert-PathForBash($path) {
+  $winPath = [System.IO.Path]::GetFullPath($path)
+  $bashCmd = (Get-Command bash -ErrorAction Stop).Source
+  $env:NAKO_PS_PATH_FOR_BASH = $winPath
+  try {
+    $converted = & $bashCmd -lc 'winPath="$NAKO_PS_PATH_FOR_BASH"; if command -v wslpath >/dev/null 2>&1; then wslpath -a "$winPath"; elif command -v cygpath >/dev/null 2>&1; then cygpath -u "$winPath"; else printf "%s\n" "$winPath"; fi'
+    if ($LASTEXITCODE -eq 0 -and $converted) {
+      return ($converted | Select-Object -First 1)
+    }
+  } catch {
+  } finally {
+    Remove-Item Env:\NAKO_PS_PATH_FOR_BASH -ErrorAction SilentlyContinue
+  }
+  return $winPath
+}
+
 function Invoke-CcSetup([string[]]$Flags) {
   $ccSetup = Get-CcSetupPath
-  if (-not (Get-Command bash -ErrorAction SilentlyContinue)) {
+  $bashInfo = Get-Command bash -ErrorAction SilentlyContinue
+  if (-not $bashInfo) {
     Warn "未发现 bash。请安装 Git Bash / WSL 后运行：bash scripts/cc-connect-setup.sh $($Flags -join ' ')"
     return 1
   }
@@ -114,7 +131,9 @@ function Invoke-CcSetup([string[]]$Flags) {
     Warn "未找到 cc-connect-setup.sh，跳过 cc-connect 操作。"
     return 1
   }
-  & bash $ccSetup @Flags
+  $bashCmd = $bashInfo.Source
+  $bashPath = Convert-PathForBash $ccSetup
+  & $bashCmd $bashPath @Flags
   return $LASTEXITCODE
 }
 
@@ -139,6 +158,24 @@ function Resolve-InstallPath($path) {
   elseif ($expanded.StartsWith('~\')) { $expanded = Join-Path $env:USERPROFILE $expanded.Substring(2) }
   elseif ($expanded.StartsWith("~/")) { $expanded = Join-Path $env:USERPROFILE $expanded.Substring(2) }
   return [System.IO.Path]::GetFullPath($expanded)
+}
+
+function Get-PythonCommand {
+  foreach ($cmd in @("python3", "python")) {
+    if (Get-Command $cmd -ErrorAction SilentlyContinue) { return @($cmd) }
+  }
+  if (Get-Command py -ErrorAction SilentlyContinue) { return @("py", "-3") }
+  return $null
+}
+
+function Invoke-PythonInline([string]$Code) {
+  if (-not $script:PythonCommand) { throw "python required" }
+  $cmd = $script:PythonCommand[0]
+  $args = @()
+  if ($script:PythonCommand.Count -gt 1) {
+    $args += $script:PythonCommand[1..($script:PythonCommand.Count - 1)]
+  }
+  & $cmd @args -c $Code
 }
 
 function Get-QClawAppValue($path, $key) {
@@ -205,7 +242,13 @@ Write-Host ""
 Step "1. 前置检查"
 
 $MissingHard = @()
-foreach ($b in @("python", "jq", "curl")) {
+$script:PythonCommand = @(Get-PythonCommand | Where-Object { $_ })
+if ($script:PythonCommand.Count -gt 0) {
+  Info "python ($($script:PythonCommand -join ' '))"
+} else {
+  ErrL "python"; $MissingHard += "python"
+}
+foreach ($b in @("jq", "curl")) {
   if (Get-Command $b -ErrorAction SilentlyContinue) { Info $b }
   else { ErrL $b; $MissingHard += $b }
 }
@@ -836,7 +879,7 @@ if ($Runtime -eq "hermes") {
   $tsBak = Get-Date -Format "yyyyMMdd-HHmmss"
   Copy-Item $OpenclawConfig "$OpenclawConfig.bak-$tsBak"
 
-python -c @"
+Invoke-PythonInline @"
 import json, sys, os
 path = r'$OpenclawConfig'
 cfg = json.load(open(path))
@@ -952,7 +995,7 @@ function Sync-QClawRuntime {
   $env:NAKO_PS_OPENCLAW_CONFIG = $OpenclawConfig
   $env:NAKO_PS_AGENT_ID = $AgentId
   $env:NAKO_PS_PRIMARY = $Primary
-  python -c @'
+  Invoke-PythonInline @'
 import json
 import os
 import time

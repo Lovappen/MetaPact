@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+case "$(uname -s 2>/dev/null | tr '[:upper:]' '[:lower:]')" in
+  mingw*|msys*|cygwin*)
+    echo "Nako Agent Factory requires Linux/systemd; Windows local install uses pwsh install.ps1." >&2
+    exit 1
+    ;;
+esac
+
 APP_NAME="nako-agent-factory"
 INSTALL_DIR="${NAKO_INSTALL_DIR:-/opt/${APP_NAME}}"
 SERVICE_FILE="/etc/systemd/system/${APP_NAME}.service"

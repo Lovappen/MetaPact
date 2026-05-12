@@ -18,6 +18,14 @@
 
 set -euo pipefail
 
+case "$(uname -s 2>/dev/null | tr '[:upper:]' '[:lower:]')" in
+  mingw*|msys*|cygwin*)
+    echo "Windows shell detected. Use the Windows installer instead:" >&2
+    echo "  pwsh install.ps1" >&2
+    exit 1
+    ;;
+esac
+
 # ─── PATH augment: SSH 默认 shell 常常不带 brew/nvm 的 bin ──────────────────
 # 让 has_bin / 直接调用 npm/node/openclaw 都能找到，无论用户用 brew 还是 nvm 装。
 [ -d /opt/homebrew/bin ] && export PATH="/opt/homebrew/bin:$PATH"
