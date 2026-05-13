@@ -12,6 +12,8 @@ grep -Fq 'function Update-CcConnectConfig' "$ROOT/scripts/cc-connect-setup.ps1"
 grep -Fq 'function Setup-CcPlatform' "$ROOT/scripts/cc-connect-setup.ps1"
 grep -Fq 'function Ensure-CcConnectRunning' "$ROOT/scripts/cc-connect-setup.ps1"
 grep -Fq 'function Open-CcQrImage' "$ROOT/scripts/cc-connect-setup.ps1"
+grep -Fq 'function Remove-CcPlatformBinding' "$ROOT/scripts/cc-connect-setup.ps1"
+grep -Fq 'Confirm-Choice "$Label is already configured. Unbind and rescan QR?" "n"' "$ROOT/scripts/cc-connect-setup.ps1"
 grep -Fq 'function Test-CcIsWindows' "$ROOT/scripts/cc-connect-setup.ps1"
 grep -Fq -- '--qr-image' "$ROOT/scripts/cc-connect-setup.ps1"
 grep -Fq 'Start-Process -FilePath $Path' "$ROOT/scripts/cc-connect-setup.ps1"
@@ -56,6 +58,16 @@ case "$1" in
     if [ "$has_qr" = "1" ] && [ -n "${FAKE_CC_CONNECT_QR_MARKER:-}" ]; then
       : > "$FAKE_CC_CONNECT_QR_MARKER"
     fi
+    if [ "$has_qr" = "1" ] && [ -n "${FAKE_CC_CONNECT_APPEND_CONFIG:-}" ]; then
+      cat >> "$FAKE_CC_CONNECT_APPEND_CONFIG" <<'CFG'
+
+[[projects.platforms]]
+type = "weixin"
+
+[projects.platforms.options]
+token = "new-token"
+CFG
+    fi
     exit 0
     ;;
   *) exit 0 ;;
@@ -85,6 +97,29 @@ test -s "$tmp/.cc-connect/qr/agent-test-weixin.png"
 test -s "$tmp/open-marker"
 grep -Fq "agent-test-weixin.png" "$tmp/open-marker"
 
+cat >> "$tmp/.cc-connect/config.toml" <<'EOF'
+
+[[projects.platforms]]
+type = "weixin"
+
+[projects.platforms.options]
+token = "old-token"
+base_url = "https://ilinkai.weixin.qq.com"
+EOF
+printf 'y\n' | FAKE_CC_CONNECT_QR_MARKER="$tmp/rebind-marker" FAKE_OPEN_MARKER="$tmp/rebind-open-marker" \
+  FAKE_CC_CONNECT_APPEND_CONFIG="$tmp/.cc-connect/config.toml" NAKO_HOME="$tmp" PATH="$tmp/bin:$PATH" \
+  pwsh -NoProfile -File "$ROOT/scripts/cc-connect-setup.ps1" \
+  -AgentId agent-test -Runtime openclaw -CcConnectSource skip -WithWeixin >/dev/null
+test -f "$tmp/rebind-marker"
+python3 - "$tmp" <<'PY'
+import sys
+from pathlib import Path
+
+cfg = (Path(sys.argv[1]) / ".cc-connect" / "config.toml").read_text(encoding="utf-8")
+assert 'token = "old-token"' not in cfg
+assert 'token = "new-token"' in cfg
+PY
+
 python3 - "$tmp" <<'PY'
 import re
 import sys
@@ -99,7 +134,7 @@ assert 'OPENCLAW_GATEWAY_TOKEN = "tok_test"' in cfg
 assert 'NAKO_CCCONNECT_PROJECT = "agent-test"' in cfg
 assert '[stream_preview]' in cfg
 assert 'tool_messages = false' in cfg
-assert not re.search(r'\[\[projects\.platforms\]\]', cfg)
+assert 'token = "new-token"' in cfg
 PY
 
 echo "cc-connect PowerShell checks passed"

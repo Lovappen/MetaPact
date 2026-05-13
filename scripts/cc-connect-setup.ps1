@@ -486,6 +486,47 @@ function Test-CcPlatformConfigured($Platform) {
   return $false
 }
 
+function Remove-CcPlatformBinding($Platform) {
+  if (-not (Test-Path $script:CcConfig)) { return $false }
+  $text = Get-Content $script:CcConfig -Raw
+  $targets = if ($Platform -eq "feishu") { @("feishu", "lark") } else { @($Platform) }
+  $parts = [regex]::Split($text, "(?m)(?=^\[\[projects\]\]\s*$)")
+  $changed = $false
+  $out = New-Object System.Collections.Generic.List[string]
+  foreach ($part in $parts) {
+    if (-not $part.StartsWith("[[projects]]")) {
+      $out.Add($part)
+      continue
+    }
+    if ($part -notmatch "(?m)^name\s*=\s*`"$([regex]::Escape($AgentId))`"\s*$") {
+      $out.Add($part)
+      continue
+    }
+
+    $blocks = [regex]::Split($part, "(?m)(?=^\[\[projects\.platforms\]\]\s*$)")
+    $fixed = New-Object System.Collections.Generic.List[string]
+    $fixed.Add($blocks[0])
+    for ($i = 1; $i -lt $blocks.Count; $i++) {
+      $block = $blocks[$i]
+      $typeMatch = [regex]::Match($block, '(?m)^type\s*=\s*"([^"]+)"\s*$')
+      $blockType = if ($typeMatch.Success) { $typeMatch.Groups[1].Value } else { "" }
+      if ($targets -contains $blockType) {
+        $changed = $true
+        continue
+      }
+      $fixed.Add($block)
+    }
+    $out.Add(($fixed -join ""))
+  }
+  if ($changed) {
+    $backup = Join-Path (Split-Path -Parent $script:CcConfig) ("config.toml.bak-rebind-{0}-{1}-{2}" -f $AgentId,$Platform,(Get-Date -Format "yyyyMMdd-HHmmss"))
+    Set-Content -Path $backup -Value $text -NoNewline -Encoding UTF8
+    Set-Content -Path $script:CcConfig -Value ((($out -join "").TrimEnd()) + "`n") -NoNewline -Encoding UTF8
+    $script:CcConnectChanged = $true
+  }
+  return $changed
+}
+
 function Normalize-CcPlatformOptions {
   if (-not (Test-Path $script:CcConfig)) { return $false }
   $text = Get-Content $script:CcConfig -Raw
@@ -592,9 +633,22 @@ function Invoke-CcPlatformSetupWithQr($Platform, $Label, $QrPath) {
 
 function Setup-CcPlatform($Platform, $Label) {
   if (Test-CcPlatformConfigured $Platform) {
-    Info "$Label already configured"
-    if ($Platform -eq "feishu") { [void](Normalize-CcPlatformOptions) }
-    return
+    if ($NonInteractive) {
+      Info "$Label already configured"
+      if ($Platform -eq "feishu") { [void](Normalize-CcPlatformOptions) }
+      return
+    }
+    if (-not (Confirm-Choice "$Label is already configured. Unbind and rescan QR?" "n")) {
+      Info "$Label already configured"
+      if ($Platform -eq "feishu") { [void](Normalize-CcPlatformOptions) }
+      return
+    }
+    if (Remove-CcPlatformBinding $Platform) {
+      Warn "$Label unbound; starting QR onboarding"
+    } else {
+      Warn "$Label unbind failed; skipping QR onboarding"
+      return
+    }
   }
   if ($NonInteractive) {
     Dim "missing $Label; run manually: cc-connect $Platform setup --project $AgentId"

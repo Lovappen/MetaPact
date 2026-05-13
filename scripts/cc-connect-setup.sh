@@ -64,7 +64,13 @@ confirm(){
   local q="$1" def="${2:-n}" reply hint="[y/N]"
   [ "$def" = "y" ] && hint="[Y/n]"
   echo -en "${C_CYAN}?${C_NC} $q $hint: "
-  read -r reply </dev/tty || reply=""
+  if [ "${NAKO_CONFIRM_STDIN:-0}" = "1" ]; then
+    read -r reply || reply=""
+  elif { : </dev/tty; } 2>/dev/null; then
+    read -r reply </dev/tty || reply=""
+  else
+    read -r reply || reply=""
+  fi
   reply="${reply:-$def}"
   [[ "$reply" =~ ^[Yy]$ ]]
 }
@@ -1892,6 +1898,55 @@ print("no")
 PY
 }
 
+remove_platform_binding() {
+  python3 - "$1" "$AGENT_ID" "$CC_CONFIG" <<'PY'
+import os
+import re
+import sys
+import time
+from pathlib import Path
+
+ptype, agent_id, cfg_path = sys.argv[1:]
+path = Path(cfg_path)
+if not path.exists():
+    print("unchanged")
+    raise SystemExit(0)
+
+targets = {"feishu", "lark"} if ptype == "feishu" else {ptype}
+text = path.read_text(encoding="utf-8")
+parts = re.split(r"(?m)(?=^\[\[projects\]\]\s*$)", text)
+changed = False
+out = []
+
+for part in parts:
+    if not part.startswith("[[projects]]"):
+        out.append(part)
+        continue
+    name_match = re.search(r'(?m)^name\s*=\s*"([^"]+)"\s*$', part)
+    if (name_match.group(1) if name_match else "") != agent_id:
+        out.append(part)
+        continue
+
+    blocks = re.split(r"(?m)(?=^\[\[projects\.platforms\]\]\s*$)", part)
+    fixed = [blocks[0]]
+    for block in blocks[1:]:
+        type_match = re.search(r'(?m)^type\s*=\s*"([^"]+)"\s*$', block)
+        block_type = type_match.group(1) if type_match else ""
+        if block_type in targets:
+            changed = True
+            continue
+        fixed.append(block)
+    out.append("".join(fixed))
+
+if changed:
+    backup = path.with_name(f"config.toml.bak-rebind-{agent_id}-{ptype}-{time.strftime('%Y%m%d-%H%M%S')}")
+    backup.write_text(text, encoding="utf-8")
+    path.write_text("".join(out).rstrip() + "\n", encoding="utf-8")
+    os.chmod(path, 0o600)
+print("removed" if changed else "unchanged")
+PY
+}
+
 normalize_platform_options() {
   python3 - "$CC_CONFIG" "$AGENT_ID" <<'PY'
 import os
@@ -2020,10 +2075,24 @@ PY
 setup_platform() {
   local platform="$1" desc="$2"
   if [ "$(has_platform "$platform")" = "yes" ]; then
-    info "$desc 已配，跳过"
-    [ "$platform" = "feishu" ] && [ "$(normalize_platform_options)" = "updated" ] && CC_CONNECT_CHANGED=1
-    CC_CONNECT_CHANGED=1
-    return 0
+    if [ "$NON_INTERACTIVE" = "1" ]; then
+      info "$desc 已配，跳过"
+      [ "$platform" = "feishu" ] && [ "$(normalize_platform_options)" = "updated" ] && CC_CONNECT_CHANGED=1
+      CC_CONNECT_CHANGED=1
+      return 0
+    fi
+    if ! confirm "$desc 已绑定，是否解绑并重新扫码？" n; then
+      info "$desc 已配，跳过"
+      [ "$platform" = "feishu" ] && [ "$(normalize_platform_options)" = "updated" ] && CC_CONNECT_CHANGED=1
+      return 0
+    fi
+    if [ "$(remove_platform_binding "$platform")" = "removed" ]; then
+      CC_CONNECT_CHANGED=1
+      warn "$desc 已解绑，开始重新扫码..."
+    else
+      warn "$desc 解绑失败，跳过重新扫码"
+      return 1
+    fi
   fi
   if [ "$NON_INTERACTIVE" = "1" ]; then
     dim "未配 $desc — 手动跑：cc-connect $platform setup --project $AGENT_ID"

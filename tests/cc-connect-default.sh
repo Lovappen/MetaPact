@@ -99,6 +99,8 @@ grep -Fq 'warn "${reason}，重启旧 cc-connect 进程: $old_pids"' "$ROOT/scri
 ! grep -Fq 'warn "$reason，重启旧 cc-connect 进程: $old_pids"' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'ensure_cc_connect_running "$desc onboarding 完成"' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'CC_CONNECT_CHANGED=1' "$ROOT/scripts/cc-connect-setup.sh"
+grep -Fq 'remove_platform_binding()' "$ROOT/scripts/cc-connect-setup.sh"
+grep -Fq 'confirm "$desc 已绑定，是否解绑并重新扫码？" n' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'info "$desc 已配，跳过"' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'openclaw|hermes|qclaw)' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'QCLAW_OPENCLAW_MJS' "$ROOT/scripts/cc-connect-setup.sh"
@@ -706,8 +708,76 @@ assert "FEISHU_APP_ID=cli_x" in env
 assert "FEISHU_APP_SECRET=secret_x" in env
 PY
 
+tmp_rebind="$(mktemp -d)"
+envfile_rebind="$tmp_rebind/bash_env"
+cat > "$envfile_rebind" <<'EOF'
+cc-connect() {
+  case "$1" in
+    --version) echo "cc-connect lazycat/v1.3.3"; return 0 ;;
+    daemon) return 0 ;;
+    weixin)
+      shift
+      [ "${1:-}" = "setup" ] || return 2
+      echo "weixin setup called" >> "$CC_REBIND_MARKER"
+      python3 - "$HOME/.cc-connect/config.toml" <<'PY'
+import sys
+from pathlib import Path
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+text += '\n[[projects.platforms]]\ntype = "weixin"\n\n[projects.platforms.options]\ntoken = "new-token"\n'
+path.write_text(text, encoding="utf-8")
+PY
+      return 0
+      ;;
+    *) return 0 ;;
+  esac
+}
+ps() { return 0; }
+kill() { return 0; }
+sudo() { return 1; }
+EOF
+mkdir -p "$tmp_rebind/.cc-connect" "$tmp_rebind/.openclaw/workspace/agent-test" "$tmp_rebind/.openclaw"
+printf '{"gateway":{"auth":{"token":"tok_test"}}}\n' > "$tmp_rebind/.openclaw/openclaw.json"
+cat > "$tmp_rebind/.cc-connect/config.toml" <<'EOF'
+language = "en"
+
+[[projects]]
+name = "agent-test"
+
+[projects.agent]
+type = "acp"
+
+[projects.agent.options]
+work_dir = "/old"
+command = "old"
+args = ["old"]
+
+[[projects.platforms]]
+type = "weixin"
+
+[projects.platforms.options]
+token = "old-token"
+base_url = "https://ilinkai.weixin.qq.com"
+EOF
+(
+  cd "$tmp_rebind"
+  printf 'y\n' | NAKO_CONFIRM_STDIN=1 CC_REBIND_MARKER="$tmp_rebind/rebind-marker" HOME="$tmp_rebind" BASH_ENV="$envfile_rebind" \
+    bash "$ROOT/scripts/cc-connect-setup.sh" \
+      --agent-id agent-test --runtime openclaw \
+      --cc-connect-source skip --with-weixin >/dev/null
+)
+test -s "$tmp_rebind/rebind-marker"
+python3 - "$tmp_rebind" <<'PY'
+import sys
+from pathlib import Path
+
+cfg = (Path(sys.argv[1]) / ".cc-connect" / "config.toml").read_text(encoding="utf-8")
+assert 'token = "old-token"' not in cfg
+assert 'token = "new-token"' in cfg
+PY
+
 tmp6="$(mktemp -d)"
-trap 'rm -rf "$tmp" "$tmp2" "$tmp3" "$tmp4" "$tmp5" "$tmp6"' EXIT
+trap 'rm -rf "$tmp" "$tmp2" "$tmp3" "$tmp4" "$tmp5" "$tmp_rebind" "$tmp6"' EXIT
 envfile6="$tmp6/bash_env"
 cat > "$envfile6" <<'EOF'
 cc-connect() {
