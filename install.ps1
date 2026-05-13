@@ -160,8 +160,9 @@ function Invoke-CcSetup([string[]]$Flags) {
       Warn "未发现 PowerShell host，无法运行 cc-connect-setup.ps1。"
       return 1
     }
-    & $psHost.Source -NoProfile -File $ccSetupPs @psArgs
-    return $LASTEXITCODE
+    & $psHost.Source -NoProfile -File $ccSetupPs @psArgs 2>&1 | ForEach-Object { Write-Host $_ }
+    $exitCode = $LASTEXITCODE
+    return [int]$exitCode
   }
 
   $ccSetup = Get-CcSetupPath
@@ -176,8 +177,9 @@ function Invoke-CcSetup([string[]]$Flags) {
   }
   $bashCmd = $bashInfo.Source
   $bashPath = Convert-PathForBash $ccSetup
-  & $bashCmd $bashPath @Flags
-  return $LASTEXITCODE
+  & $bashCmd $bashPath @Flags 2>&1 | ForEach-Object { Write-Host $_ }
+  $exitCode = $LASTEXITCODE
+  return [int]$exitCode
 }
 
 function Get-CcConnectHomeForStatus {
