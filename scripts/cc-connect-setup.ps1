@@ -524,6 +524,64 @@ function Normalize-CcPlatformOptions {
   return $changed
 }
 
+function Open-CcQrImage($Path, $Label) {
+  try {
+    if ($IsWindows) {
+      Start-Process -FilePath $Path | Out-Null
+    } elseif ($IsMacOS) {
+      & open $Path *> $null
+    } else {
+      $opener = Get-Command xdg-open -ErrorAction SilentlyContinue
+      if ($opener) {
+        Start-Process -FilePath $opener.Source -ArgumentList @($Path) | Out-Null
+      } else {
+        Warn "QR image saved but no image opener was found: $Path"
+        return
+      }
+    }
+    Info "$Label QR image opened: $Path"
+  } catch {
+    Warn "QR image saved but could not be opened automatically: $Path"
+  }
+}
+
+function Invoke-CcPlatformSetupWithQr($Platform, $Label, $QrPath) {
+  $cmd = (Get-Command cc-connect -ErrorAction Stop).Source
+  $args = @($Platform, "setup", "--project", $AgentId, "--timeout", "600", "--qr-image", $QrPath)
+  $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+  $startInfo.FileName = $cmd
+  $startInfo.UseShellExecute = $false
+  foreach ($arg in $args) {
+    [void]$startInfo.ArgumentList.Add($arg)
+  }
+
+  $proc = [System.Diagnostics.Process]::new()
+  $proc.StartInfo = $startInfo
+
+  [void]$proc.Start()
+
+  $opened = $false
+  while (-not $proc.HasExited) {
+    if (-not $opened -and (Test-Path $QrPath)) {
+      $item = Get-Item $QrPath -ErrorAction SilentlyContinue
+      if ($item -and $item.Length -gt 0) {
+        Open-CcQrImage $QrPath $Label
+        $opened = $true
+      }
+    }
+    Start-Sleep -Milliseconds 500
+  }
+  $proc.WaitForExit()
+
+  if (-not $opened -and (Test-Path $QrPath)) {
+    $item = Get-Item $QrPath -ErrorAction SilentlyContinue
+    if ($item -and $item.Length -gt 0) {
+      Open-CcQrImage $QrPath $Label
+    }
+  }
+  return $proc.ExitCode
+}
+
 function Setup-CcPlatform($Platform, $Label) {
   if (Test-CcPlatformConfigured $Platform) {
     Info "$Label already configured"
@@ -535,8 +593,13 @@ function Setup-CcPlatform($Platform, $Label) {
     return
   }
   Warn "$Label is not configured; starting QR onboarding"
-  & cc-connect $Platform setup --project $AgentId --timeout 600
-  if ($LASTEXITCODE -eq 0) {
+  $qrDir = Join-Path $script:CcHome "qr"
+  New-Item -ItemType Directory -Path $qrDir -Force | Out-Null
+  $qrPath = Join-Path $qrDir "$AgentId-$Platform.png"
+  Remove-Item -Force $qrPath -ErrorAction SilentlyContinue
+  Dim "QR image will be saved to: $qrPath"
+  $rc = Invoke-CcPlatformSetupWithQr $Platform $Label $qrPath
+  if ($rc -eq 0) {
     $script:CcConnectChanged = $true
     if ($Platform -eq "feishu") { [void](Normalize-CcPlatformOptions) }
     Ensure-CcConnectRunning "$Label onboarding finished"
