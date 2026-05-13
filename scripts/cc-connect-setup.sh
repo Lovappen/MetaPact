@@ -90,6 +90,7 @@ RUNTIME="${NAKO_AGENT_RUNTIME:-openclaw}"
 DISPLAY_NAME=""
 CC_CONNECT_CHANGED=0
 GO_FOR_CC_CONNECT=""
+OPENCLAW_BIN="${OPENCLAW_BIN:-}"
 HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
 HERMES_BIN="${HERMES_BIN:-}"
 QCLAW_HOME="${QCLAW_HOME:-$HOME/.qclaw}"
@@ -185,6 +186,76 @@ from pathlib import Path
 
 print(str(Path(os.path.expanduser(sys.argv[1])).resolve()))
 PY
+}
+
+resolve_openclaw_bin() {
+  if [ -n "${OPENCLAW_BIN:-}" ]; then
+    expand_path "$OPENCLAW_BIN"
+    return 0
+  fi
+  if command -v openclaw >/dev/null 2>&1; then
+    command -v openclaw
+    return 0
+  fi
+  local candidate
+  for candidate in \
+    "$HOME/.local/bin/openclaw" \
+    "${APPDATA:-}/npm/openclaw.cmd" \
+    "${APPDATA:-}/npm/openclaw.exe" \
+    "$HOME/AppData/Roaming/npm/openclaw.cmd" \
+    "$HOME/AppData/Roaming/npm/openclaw.exe"; do
+    [ -n "$candidate" ] || continue
+    if [ -f "$candidate" ] || [ -x "$candidate" ]; then
+      expand_path "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+log_tail() {
+  local path="$1" label="$2"
+  [ -s "$path" ] || return 0
+  err "$label ($path):"
+  tail -n 40 "$path" >&2 || true
+}
+
+check_runtime_launch() {
+  local label="$1" work_dir="$2"
+  shift 2
+  mkdir -p "$work_dir" "$HOME/.cc-connect"
+  local stdout="$HOME/.cc-connect/runtime-check-$AGENT_ID-$RUNTIME.out.log"
+  local stderr="$HOME/.cc-connect/runtime-check-$AGENT_ID-$RUNTIME.err.log"
+  rm -f "$stdout" "$stderr"
+
+  (
+    cd "$work_dir"
+    "$@" >"$stdout" 2>"$stderr"
+  ) &
+  local pid=$! elapsed=0 runtime_timeout="${CC_CONNECT_RUNTIME_CHECK_TIMEOUT:-2}"
+  while command kill -0 "$pid" 2>/dev/null; do
+    if [ "$elapsed" -ge "$runtime_timeout" ]; then
+      command kill "$pid" 2>/dev/null || true
+      sleep 1
+      command kill -9 "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      info "$label runtime preflight launched successfully"
+      return 0
+    fi
+    sleep 1
+    elapsed=$((elapsed+1))
+  done
+  local rc=0
+  wait "$pid" || rc=$?
+  if [ "$rc" -eq 0 ]; then
+    info "$label runtime preflight exited cleanly"
+    return 0
+  fi
+  err "$label runtime failed during setup preflight (exit $rc)."
+  log_tail "$stderr" "stderr"
+  log_tail "$stdout" "stdout"
+  err "Fix the runtime error above, then rerun scripts/cc-connect-setup.sh --agent-id $AGENT_ID --runtime $RUNTIME"
+  return "$rc"
 }
 
 hermes_agent_roots() {
@@ -1265,6 +1336,124 @@ ensure_cc_connect_api_socket_compat() {
   ln -s ".cc-connect/run" "$public_run" 2>/dev/null || true
 }
 
+cc_connect_api_socket_paths() {
+  printf '%s\n' \
+    "$HOME/.cc-connect/run/api.sock" \
+    "$HOME/.cc-connect/.cc-connect/run/api.sock"
+}
+
+cc_connect_api_socket_ready() {
+  local socket_path
+  ensure_cc_connect_api_socket_compat
+  while IFS= read -r socket_path; do
+    [ -n "$socket_path" ] || continue
+    if [ -S "$socket_path" ] || [ -e "$socket_path" ]; then
+      return 0
+    fi
+  done <<EOF
+$(cc_connect_api_socket_paths)
+EOF
+  return 1
+}
+
+print_cc_connect_start_diagnostics() {
+  local socket_path status_log="$HOME/.cc-connect/daemon-status.log"
+  err "cc-connect API socket not ready."
+  err "expected socket paths:"
+  while IFS= read -r socket_path; do
+    err "  - $socket_path"
+  done <<EOF
+$(cc_connect_api_socket_paths)
+EOF
+  if cc-connect daemon status --work-dir "$HOME/.cc-connect" >"$status_log" 2>&1; then
+    log_tail "$status_log" "daemon status"
+  else
+    log_tail "$status_log" "daemon status"
+  fi
+  log_tail "$HOME/.cc-connect/cc-connect.err.log" "stderr"
+  log_tail "$HOME/.cc-connect/cc-connect.log" "stdout"
+}
+
+wait_cc_connect_api_socket() {
+  local timeout="${CC_CONNECT_SOCKET_TIMEOUT:-15}" elapsed=0
+  while [ "$elapsed" -lt "$timeout" ]; do
+    if cc_connect_api_socket_ready; then
+      return 0
+    fi
+    sleep 1
+    elapsed=$((elapsed + 1))
+  done
+  print_cc_connect_start_diagnostics
+  return 1
+}
+
+disable_blocking_cc_projects() {
+  [ -f "$CC_CONFIG" ] || { echo "unchanged"; return 0; }
+  local has_claude=0
+  command -v claude >/dev/null 2>&1 && has_claude=1
+  python3 - "$CC_CONFIG" "$AGENT_ID" "$has_claude" <<'PY'
+import os
+import re
+import shutil
+import sys
+import time
+from pathlib import Path
+
+path = Path(sys.argv[1])
+agent_id = sys.argv[2]
+has_claude = sys.argv[3] == "1"
+text = path.read_text(encoding="utf-8")
+parts = re.split(r"(?m)(?=^\[\[projects\]\]\s*$)", text)
+kept = []
+disabled = []
+
+def unquote(value):
+    value = value.strip()
+    if len(value) >= 2 and value[0] == value[-1] == '"':
+        return value[1:-1].replace('\\"', '"').replace("\\\\", "\\")
+    return value
+
+def command_missing(command):
+    if not command:
+        return not has_claude
+    command = os.path.expandvars(os.path.expanduser(command))
+    if os.path.isabs(command):
+        return not Path(command).exists()
+    return shutil.which(command) is None
+
+for part in parts:
+    if not part.startswith("[[projects]]"):
+        kept.append(part)
+        continue
+    name_match = re.search(r'(?m)^name\s*=\s*"([^"]+)"\s*$', part)
+    name = name_match.group(1) if name_match else ""
+    if name == agent_id:
+        kept.append(part)
+        continue
+    type_match = re.search(r'(?ms)^\[projects\.agent\]\s*\n.*?^type\s*=\s*"([^"]+)"\s*$', part)
+    agent_type = type_match.group(1) if type_match else ""
+    if agent_type != "claudecode":
+        kept.append(part)
+        continue
+    command_match = re.search(r'(?m)^command\s*=\s*(.+?)\s*$', part)
+    command = unquote(command_match.group(1)) if command_match else ""
+    if command_missing(command):
+        disabled.append(name or "<unnamed>")
+        continue
+    kept.append(part)
+
+if not disabled:
+    print("unchanged")
+    raise SystemExit(0)
+
+backup = path.with_name(f"config.toml.bak-disabled-blocking-projects-{time.strftime('%Y%m%d-%H%M%S')}")
+backup.write_text(text, encoding="utf-8")
+path.write_text("".join(kept).rstrip() + "\n", encoding="utf-8")
+os.chmod(path, 0o600)
+print("disabled\t" + "\t".join(disabled))
+PY
+}
+
 cc_connect_project_count() {
   [ -f "$CC_CONFIG" ] || { printf '0\n'; return 0; }
   python3 - "$CC_CONFIG" <<'PY'
@@ -1599,12 +1788,45 @@ fi
 step "2. 配置 cc-connect 项目: $AGENT_ID"
 mkdir -p "$(dirname "$CC_CONFIG")"
 
-if [ "$RUNTIME" = "hermes" ]; then
+if [ "$RUNTIME" = "openclaw" ]; then
+  OPENCLAW_BIN="$(resolve_openclaw_bin)" || {
+    err "选择 OpenClaw runtime，但找不到 openclaw 命令。请先安装 OpenClaw，或设置 OPENCLAW_BIN=/path/to/openclaw"
+    exit 1
+  }
+  mkdir -p "$HOME/.openclaw" "$WORKSPACE"
+  export OPENCLAW_HOME="$HOME/.openclaw"
+  export OPENCLAW_OUTPUT_MODE="acp"
+  export OPENCLAW_CCCONNECT_PROJECT="$AGENT_ID"
+  export NAKO_OUTPUT_MODE="acp"
+  export NAKO_CCCONNECT_PROJECT="$AGENT_ID"
+  export NAKO_AGENT_WORKSPACE="$WORKSPACE"
+  export NAKO_SKILLS_DIR="$HOME/.openclaw/skills"
+  export NAKO_MEDIA_HOME="$HOME/.openclaw/media"
+  export NAKO_AGENT_RUNTIME="openclaw"
+  gateway_token="$(python3 - "$HOME/.openclaw/openclaw.json" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+try:
+    data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+except Exception:
+    data = {}
+gateway = data.get("gateway") if isinstance(data.get("gateway"), dict) else {}
+auth = gateway.get("auth") if isinstance(gateway.get("auth"), dict) else {}
+token = auth.get("token")
+print(token if isinstance(token, str) else "")
+PY
+)"
+  [ -n "$gateway_token" ] && export OPENCLAW_GATEWAY_TOKEN="$gateway_token"
+  check_runtime_launch "OpenClaw" "$HOME/.openclaw" "$OPENCLAW_BIN" acp --session "agent:$AGENT_ID:main" || exit 1
+elif [ "$RUNTIME" = "hermes" ]; then
   HERMES_BIN="$(resolve_hermes_bin)" || {
     err "选择 Hermes runtime，但找不到 hermes 命令。请先安装 Hermes，或设置 HERMES_BIN=/path/to/hermes"
     exit 1
   }
   mkdir -p "$HERMES_WORKSPACE" "$HERMES_HOME/skills/nako" "$HERMES_HOME/media"
+  check_runtime_launch "Hermes" "$HERMES_WORKSPACE" "$HERMES_BIN" acp || exit 1
 elif [ "$RUNTIME" = "qclaw" ]; then
   QCLAW_NODE_BIN="$(resolve_qclaw_node_bin)" || {
     err "选择 QClaw runtime，但找不到 QClaw Node。请先安装 QClaw，或设置 QCLAW_NODE_BIN=/path/to/node"
@@ -1626,9 +1848,10 @@ elif [ "$RUNTIME" = "qclaw" ]; then
     remove_cc_connect_sessions
     CC_CONNECT_CHANGED=1
   fi
+  check_runtime_launch "QClaw" "$QCLAW_WORKSPACE" "$QCLAW_NODE_BIN" "$QCLAW_OPENCLAW_MJS" acp --session "agent:$AGENT_ID:$QCLAW_CC_SESSION_SUFFIX" || exit 1
 fi
 
-CONFIG_CHANGED="$(python3 - "$CC_CONFIG" "$AGENT_ID" "$RUNTIME" "$DISPLAY_NAME" "$HOME" "$WORKSPACE" "$HERMES_HOME" "$HERMES_WORKSPACE" "${HERMES_BIN:-}" "$QCLAW_HOME" "$QCLAW_WORKSPACE" "${QCLAW_NODE_BIN:-}" "${QCLAW_OPENCLAW_MJS:-}" "${QCLAW_OPENCLAW_CONFIG:-$QCLAW_HOME/openclaw.json}" "$QCLAW_CC_SESSION_SUFFIX" "$PATH" <<'PY'
+CONFIG_CHANGED="$(python3 - "$CC_CONFIG" "$AGENT_ID" "$RUNTIME" "$DISPLAY_NAME" "$HOME" "$WORKSPACE" "${OPENCLAW_BIN:-}" "$HERMES_HOME" "$HERMES_WORKSPACE" "${HERMES_BIN:-}" "$QCLAW_HOME" "$QCLAW_WORKSPACE" "${QCLAW_NODE_BIN:-}" "${QCLAW_OPENCLAW_MJS:-}" "${QCLAW_OPENCLAW_CONFIG:-$QCLAW_HOME/openclaw.json}" "$QCLAW_CC_SESSION_SUFFIX" "$PATH" <<'PY'
 import os
 import json
 import re
@@ -1636,7 +1859,7 @@ import sys
 import time
 from pathlib import Path
 
-cfg_path, agent_id, runtime, display_name, home, openclaw_workspace, hermes_home, hermes_workspace, hermes_bin, qclaw_home, qclaw_workspace, qclaw_node_bin, qclaw_openclaw_mjs, qclaw_config_path, qclaw_session_suffix, path_value = sys.argv[1:]
+cfg_path, agent_id, runtime, display_name, home, openclaw_workspace, openclaw_bin, hermes_home, hermes_workspace, hermes_bin, qclaw_home, qclaw_workspace, qclaw_node_bin, qclaw_openclaw_mjs, qclaw_config_path, qclaw_session_suffix, path_value = sys.argv[1:]
 path = Path(cfg_path)
 
 def q(value):
@@ -1733,7 +1956,7 @@ elif runtime == "qclaw":
     if gateway_token:
         env["OPENCLAW_GATEWAY_TOKEN"] = gateway_token
 else:
-    command = "openclaw"
+    command = openclaw_bin or "openclaw"
     work_dir = str(Path(home) / ".openclaw")
     args = ["acp", "--session", f"agent:{agent_id}:main"]
     openclaw_home = str(Path(home) / ".openclaw")
@@ -1821,6 +2044,16 @@ print("updated" if changed else "unchanged")
 PY
 )"
 [ "$CONFIG_CHANGED" = "updated" ] && CC_CONNECT_CHANGED=1
+DISABLED_BLOCKING_PROJECTS="$(disable_blocking_cc_projects)"
+case "$DISABLED_BLOCKING_PROJECTS" in
+  disabled*)
+    CC_CONNECT_CHANGED=1
+    disabled_names="${DISABLED_BLOCKING_PROJECTS#disabled}"
+    disabled_names="${disabled_names#$'\t'}"
+    warn "已禁用会阻塞 cc-connect 启动的旧 project: $disabled_names"
+    dim "  已备份原配置：$HOME/.cc-connect/config.toml.bak-disabled-blocking-projects-*"
+    ;;
+esac
 CONFIG_RESULT="$(python3 - "$CC_CONFIG" "$AGENT_ID" <<'PY'
 import re, sys
 text = open(sys.argv[1], encoding="utf-8").read()
@@ -1865,8 +2098,14 @@ ensure_cc_connect_running() {
   fi
 
   if [ -n "$(cc_connect_running_pids)" ]; then
-    info "cc-connect 已在跑，跳过"
-    return 0
+    if wait_cc_connect_api_socket; then
+      info "cc-connect 已在跑，跳过"
+      return 0
+    fi
+    old_pids="$(cc_connect_running_pids | tr '\n' ' ' | sed 's/[[:space:]]*$//')"
+    warn "cc-connect 进程存在但 API socket 不可用，重启: $old_pids"
+    stop_cc_connect_pids force $old_pids
+    sleep 1
   fi
 
   if cc-connect daemon install --work-dir "$HOME/.cc-connect" --force >/dev/null 2>&1 && cc-connect daemon start --work-dir "$HOME/.cc-connect" >/dev/null 2>&1; then
@@ -1876,7 +2115,7 @@ ensure_cc_connect_running() {
     start_cc_connect_background "cc-connect 后台已启"
   fi
   sleep 2
-  ensure_cc_connect_api_socket_compat
+  wait_cc_connect_api_socket || return 1
 }
 
 # ── 3. 引导平台 QR onboarding ─────────────────────────────────────────

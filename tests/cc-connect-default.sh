@@ -104,6 +104,12 @@ grep -Fq 'weixin_args.append("--set-allow-from-empty")' "$ROOT/scripts/nako-agen
 grep -Fq 'remove_platform_binding()' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'confirm "$desc 已绑定，是否解绑并重新扫码？" n' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'info "$desc 已配，跳过"' "$ROOT/scripts/cc-connect-setup.sh"
+grep -Fq 'disable_blocking_cc_projects()' "$ROOT/scripts/cc-connect-setup.sh"
+grep -Fq 'resolve_openclaw_bin()' "$ROOT/scripts/cc-connect-setup.sh"
+grep -Fq 'check_runtime_launch()' "$ROOT/scripts/cc-connect-setup.sh"
+grep -Fq 'wait_cc_connect_api_socket()' "$ROOT/scripts/cc-connect-setup.sh"
+grep -Fq 'cc-connect API socket not ready' "$ROOT/scripts/cc-connect-setup.sh"
+grep -Fq 'runtime failed during setup preflight' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'openclaw|hermes|qclaw)' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'QCLAW_OPENCLAW_MJS' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'resolve_qclaw_layout' "$ROOT/scripts/cc-connect-setup.sh"
@@ -248,7 +254,13 @@ cat > "$envfile2" <<'EOF'
 cc-connect() {
   case "$1" in
     --version) echo "cc-connect lazycat/v1.3.3"; return 0 ;;
-    daemon) return 0 ;;
+    daemon)
+      if [ "${2:-}" = "start" ]; then
+        mkdir -p "$HOME/.cc-connect/run"
+        : > "$HOME/.cc-connect/run/api.sock"
+      fi
+      return 0
+      ;;
     *) return 0 ;;
   esac
 }
@@ -343,7 +355,13 @@ cat > "$envfile3" <<'EOF'
 cc-connect() {
   case "$1" in
     --version) echo "cc-connect lazycat/v1.3.3"; return 0 ;;
-    daemon) return 0 ;;
+    daemon)
+      if [ "${2:-}" = "start" ]; then
+        mkdir -p "$HOME/.cc-connect/run"
+        : > "$HOME/.cc-connect/run/api.sock"
+      fi
+      return 0
+      ;;
     *) return 0 ;;
   esac
 }
@@ -468,7 +486,13 @@ cat > "$envfile4" <<'EOF'
 cc-connect() {
   case "$1" in
     --version) echo "cc-connect lazycat/v1.3.3"; return 0 ;;
-    daemon) return 0 ;;
+    daemon)
+      if [ "${2:-}" = "start" ]; then
+        mkdir -p "$HOME/.cc-connect/run"
+        : > "$HOME/.cc-connect/run/api.sock"
+      fi
+      return 0
+      ;;
     *) return 0 ;;
   esac
 }
@@ -622,7 +646,13 @@ cat > "$envfile5" <<'EOF'
 cc-connect() {
   case "$1" in
     --version) echo "cc-connect lazycat/v1.3.3"; return 0 ;;
-    daemon) return 0 ;;
+    daemon)
+      if [ "${2:-}" = "start" ]; then
+        mkdir -p "$HOME/.cc-connect/run"
+        : > "$HOME/.cc-connect/run/api.sock"
+      fi
+      return 0
+      ;;
     *) return 0 ;;
   esac
 }
@@ -716,7 +746,13 @@ cat > "$envfile_rebind" <<'EOF'
 cc-connect() {
   case "$1" in
     --version) echo "cc-connect lazycat/v1.3.3"; return 0 ;;
-    daemon) return 0 ;;
+    daemon)
+      if [ "${2:-}" = "start" ] && [ "${FAKE_CC_CONNECT_NO_SOCKET:-0}" != "1" ]; then
+        mkdir -p "$HOME/.cc-connect/run"
+        : > "$HOME/.cc-connect/run/api.sock"
+      fi
+      return 0
+      ;;
     weixin)
       shift
       [ "${1:-}" = "setup" ] || return 2
@@ -743,10 +779,67 @@ ps() { return 0; }
 kill() { return 0; }
 sudo() { return 1; }
 EOF
-mkdir -p "$tmp_rebind/.cc-connect" "$tmp_rebind/.openclaw/workspace/agent-test" "$tmp_rebind/.openclaw"
+
+tmp_runtime_fail="$(mktemp -d)"
+trap 'rm -rf "$tmp" "$tmp2" "$tmp3" "$tmp4" "$tmp5" "$tmp_rebind" "$tmp_runtime_fail"' EXIT
+mkdir -p "$tmp_runtime_fail/bin" "$tmp_runtime_fail/.openclaw/workspace/agent-test" "$tmp_runtime_fail/.openclaw"
+cat > "$tmp_runtime_fail/bin/openclaw" <<'EOF'
+#!/usr/bin/env bash
+echo "fake openclaw acp failure" >&2
+exit 23
+EOF
+chmod +x "$tmp_runtime_fail/bin/openclaw"
+printf '{"gateway":{"auth":{"token":"tok_test"}}}\n' > "$tmp_runtime_fail/.openclaw/openclaw.json"
+set +e
+HOME="$tmp_runtime_fail" PATH="$tmp_runtime_fail/bin:$PATH" BASH_ENV="$envfile_rebind" \
+  bash "$ROOT/scripts/cc-connect-setup.sh" \
+    --agent-id agent-test --runtime openclaw \
+    --cc-connect-source skip --non-interactive >"$tmp_runtime_fail/setup.out" 2>&1
+rc=$?
+set -e
+test "$rc" -ne 0
+grep -Fq "fake openclaw acp failure" "$tmp_runtime_fail/setup.out"
+grep -Fq "OpenClaw runtime failed during setup preflight" "$tmp_runtime_fail/setup.out"
+
+tmp_socket_fail="$(mktemp -d)"
+trap 'rm -rf "$tmp" "$tmp2" "$tmp3" "$tmp4" "$tmp5" "$tmp_rebind" "$tmp_runtime_fail" "$tmp_socket_fail"' EXIT
+mkdir -p "$tmp_socket_fail/bin" "$tmp_socket_fail/.openclaw/workspace/agent-test" "$tmp_socket_fail/.openclaw"
+cat > "$tmp_socket_fail/bin/openclaw" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "$tmp_socket_fail/bin/openclaw"
+printf '{"gateway":{"auth":{"token":"tok_test"}}}\n' > "$tmp_socket_fail/.openclaw/openclaw.json"
+set +e
+FAKE_CC_CONNECT_NO_SOCKET=1 CC_CONNECT_SOCKET_TIMEOUT=1 CC_REBIND_MARKER="$tmp_socket_fail/socket-marker" \
+  HOME="$tmp_socket_fail" PATH="$tmp_socket_fail/bin:$PATH" BASH_ENV="$envfile_rebind" \
+  bash "$ROOT/scripts/cc-connect-setup.sh" \
+    --agent-id agent-test --runtime openclaw \
+    --cc-connect-source skip --with-weixin >"$tmp_socket_fail/setup.out" 2>&1
+rc=$?
+set -e
+test "$rc" -ne 0
+grep -Fq "cc-connect API socket not ready" "$tmp_socket_fail/setup.out"
+grep -Fq "api.sock" "$tmp_socket_fail/setup.out"
+
+mkdir -p "$tmp_rebind/bin" "$tmp_rebind/.cc-connect" "$tmp_rebind/.openclaw/workspace/agent-test" "$tmp_rebind/.openclaw"
+cat > "$tmp_rebind/bin/openclaw" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "$tmp_rebind/bin/openclaw"
 printf '{"gateway":{"auth":{"token":"tok_test"}}}\n' > "$tmp_rebind/.openclaw/openclaw.json"
 cat > "$tmp_rebind/.cc-connect/config.toml" <<'EOF'
 language = "en"
+
+[[projects]]
+name = "my-project"
+
+[projects.agent]
+type = "claudecode"
+
+[projects.agent.options]
+command = "/definitely/missing/claude"
 
 [[projects]]
 name = "agent-test"
@@ -768,7 +861,7 @@ base_url = "https://ilinkai.weixin.qq.com"
 EOF
 (
   cd "$tmp_rebind"
-  printf 'y\n' | NAKO_CONFIRM_STDIN=1 CC_REBIND_MARKER="$tmp_rebind/rebind-marker" HOME="$tmp_rebind" BASH_ENV="$envfile_rebind" \
+  printf 'y\n' | NAKO_CONFIRM_STDIN=1 CC_REBIND_MARKER="$tmp_rebind/rebind-marker" HOME="$tmp_rebind" PATH="$tmp_rebind/bin:$PATH" BASH_ENV="$envfile_rebind" \
     bash "$ROOT/scripts/cc-connect-setup.sh" \
       --agent-id agent-test --runtime openclaw \
       --cc-connect-source skip --with-weixin >/dev/null
@@ -781,16 +874,25 @@ from pathlib import Path
 cfg = (Path(sys.argv[1]) / ".cc-connect" / "config.toml").read_text(encoding="utf-8")
 assert 'token = "old-token"' not in cfg
 assert 'token = "new-token"' in cfg
+assert f'command = "{Path(sys.argv[1]) / "bin" / "openclaw"}"' in cfg
+assert 'name = "my-project"' not in cfg
+assert list((Path(sys.argv[1]) / ".cc-connect").glob("config.toml.bak-disabled-blocking-projects-*"))
 PY
 
 tmp6="$(mktemp -d)"
-trap 'rm -rf "$tmp" "$tmp2" "$tmp3" "$tmp4" "$tmp5" "$tmp_rebind" "$tmp6"' EXIT
+trap 'rm -rf "$tmp" "$tmp2" "$tmp3" "$tmp4" "$tmp5" "$tmp_rebind" "$tmp_runtime_fail" "$tmp_socket_fail" "$tmp6"' EXIT
 envfile6="$tmp6/bash_env"
 cat > "$envfile6" <<'EOF'
 cc-connect() {
   case "$1" in
     --version) echo "cc-connect lazycat/v1.3.3"; return 0 ;;
-    daemon) return 0 ;;
+    daemon)
+      if [ "${2:-}" = "start" ]; then
+        mkdir -p "$HOME/.cc-connect/run"
+        : > "$HOME/.cc-connect/run/api.sock"
+      fi
+      return 0
+      ;;
     *) return 0 ;;
   esac
 }

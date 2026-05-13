@@ -13,6 +13,11 @@ grep -Fq 'function Setup-CcPlatform' "$ROOT/scripts/cc-connect-setup.ps1"
 grep -Fq 'function Ensure-CcConnectRunning' "$ROOT/scripts/cc-connect-setup.ps1"
 grep -Fq 'function Open-CcQrImage' "$ROOT/scripts/cc-connect-setup.ps1"
 grep -Fq 'function Remove-CcPlatformBinding' "$ROOT/scripts/cc-connect-setup.ps1"
+grep -Fq 'function Resolve-OpenClawCommand' "$ROOT/scripts/cc-connect-setup.ps1"
+grep -Fq 'function Disable-CcBlockingProjects' "$ROOT/scripts/cc-connect-setup.ps1"
+grep -Fq 'function Test-CcAgentRuntimeLaunch' "$ROOT/scripts/cc-connect-setup.ps1"
+grep -Fq 'function Wait-CcConnectApiSocket' "$ROOT/scripts/cc-connect-setup.ps1"
+grep -Fq 'cc-connect API socket not ready' "$ROOT/scripts/cc-connect-setup.ps1"
 grep -Fq 'Confirm-Choice "$Label is already configured. Unbind and rescan QR?" "n"' "$ROOT/scripts/cc-connect-setup.ps1"
 grep -Fq 'function Test-CcIsWindows' "$ROOT/scripts/cc-connect-setup.ps1"
 grep -Fq -- '--qr-image' "$ROOT/scripts/cc-connect-setup.ps1"
@@ -34,13 +39,25 @@ grep -Fq 'cc-connect 绑定已写入配置，但后续启动/收尾失败' "$ROO
 grep -Fq 'exit 0' "$ROOT/scripts/cc-connect-setup.ps1"
 
 tmp="$(mktemp -d)"
-trap 'rm -rf "$tmp"' EXIT
+trap 'rm -rf "$tmp" "${tmp_fail:-}" "${tmp_socket:-}"' EXIT
 mkdir -p "$tmp/bin" "$tmp/.openclaw/workspace/agent-test" "$tmp/.openclaw"
 cat > "$tmp/bin/cc-connect" <<'EOF'
 #!/usr/bin/env bash
 case "$1" in
   --version) echo "cc-connect v1.3.3"; exit 0 ;;
-  daemon) exit 0 ;;
+  daemon)
+    if [ "${2:-}" = "start" ]; then
+      base="${NAKO_HOME:-$HOME}/.cc-connect"
+      if [ "${FAKE_CC_CONNECT_NO_SOCKET:-0}" != "1" ]; then
+        mkdir -p "$base/run"
+        : > "$base/run/api.sock"
+      fi
+      if [ -n "${FAKE_CC_CONNECT_START_MARKER:-}" ]; then
+        : > "$FAKE_CC_CONNECT_START_MARKER"
+      fi
+    fi
+    exit 0
+    ;;
   weixin)
     shift
     [ "${1:-}" = "setup" ] || exit 2
@@ -84,13 +101,62 @@ if [ -n "${FAKE_OPEN_MARKER:-}" ]; then
 fi
 exit 0
 EOF
+cat > "$tmp/bin/openclaw" <<'EOF'
+#!/usr/bin/env bash
+if [ "${FAKE_OPENCLAW_FAIL:-0}" = "1" ]; then
+  echo "fake openclaw acp failure" >&2
+  exit 23
+fi
+exit 0
+EOF
 cp "$tmp/bin/open" "$tmp/bin/xdg-open"
 chmod +x "$tmp/bin/cc-connect"
-chmod +x "$tmp/bin/open" "$tmp/bin/xdg-open"
+chmod +x "$tmp/bin/open" "$tmp/bin/openclaw" "$tmp/bin/xdg-open"
 printf '{"gateway":{"auth":{"token":"tok_test"}}}\n' > "$tmp/.openclaw/openclaw.json"
+
+tmp_fail="$(mktemp -d)"
+mkdir -p "$tmp_fail/.openclaw/workspace/agent-test" "$tmp_fail/.openclaw"
+printf '{"gateway":{"auth":{"token":"tok_test"}}}\n' > "$tmp_fail/.openclaw/openclaw.json"
+set +e
+FAKE_OPENCLAW_FAIL=1 NAKO_HOME="$tmp_fail" PATH="$tmp/bin:$PATH" \
+  pwsh -NoProfile -File "$ROOT/scripts/cc-connect-setup.ps1" \
+  -AgentId agent-test -Runtime openclaw -CcConnectSource skip -NonInteractive \
+  >"$tmp_fail/setup.out" 2>&1
+rc=$?
+set -e
+test "$rc" -ne 0
+grep -Fq "fake openclaw acp failure" "$tmp_fail/setup.out"
+grep -Fq "OpenClaw runtime failed during setup preflight" "$tmp_fail/setup.out"
+
+tmp_socket="$(mktemp -d)"
+mkdir -p "$tmp_socket/.openclaw/workspace/agent-test" "$tmp_socket/.openclaw"
+printf '{"gateway":{"auth":{"token":"tok_test"}}}\n' > "$tmp_socket/.openclaw/openclaw.json"
+set +e
+FAKE_CC_CONNECT_NO_SOCKET=1 CC_CONNECT_SOCKET_TIMEOUT=1 \
+  FAKE_CC_CONNECT_APPEND_CONFIG="$tmp_socket/.cc-connect/config.toml" \
+  NAKO_HOME="$tmp_socket" PATH="$tmp/bin:$PATH" \
+  pwsh -NoProfile -File "$ROOT/scripts/cc-connect-setup.ps1" \
+  -AgentId agent-test -Runtime openclaw -CcConnectSource skip -WithWeixin \
+  >"$tmp_socket/setup.out" 2>&1
+rc=$?
+set -e
+test "$rc" -ne 0
+grep -Fq "cc-connect API socket not ready" "$tmp_socket/setup.out"
+grep -Fq "api.sock" "$tmp_socket/setup.out"
 
 NAKO_HOME="$tmp" PATH="$tmp/bin:$PATH" pwsh -NoProfile -File "$ROOT/scripts/cc-connect-setup.ps1" \
   -AgentId agent-test -Runtime openclaw -CcConnectSource skip -NonInteractive >/dev/null
+cat >> "$tmp/.cc-connect/config.toml" <<EOF
+
+[[projects]]
+name = "my-project"
+
+[projects.agent]
+type = "claudecode"
+
+[projects.agent.options]
+command = "$tmp/missing/claude"
+EOF
 
 FAKE_CC_CONNECT_QR_MARKER="$tmp/qr-marker" FAKE_OPEN_MARKER="$tmp/open-marker" \
   NAKO_HOME="$tmp" PATH="$tmp/bin:$PATH" \
@@ -100,6 +166,8 @@ test -f "$tmp/qr-marker"
 test -s "$tmp/.cc-connect/qr/agent-test-weixin.png"
 test -s "$tmp/open-marker"
 grep -Fq "agent-test-weixin.png" "$tmp/open-marker"
+! grep -Fq 'name = "my-project"' "$tmp/.cc-connect/config.toml"
+test -n "$(find "$tmp/.cc-connect" -name 'config.toml.bak-disabled-blocking-projects-*' -print -quit)"
 
 cat >> "$tmp/.cc-connect/config.toml" <<'EOF'
 
@@ -132,7 +200,7 @@ from pathlib import Path
 root = Path(sys.argv[1])
 cfg = (root / ".cc-connect" / "config.toml").read_text(encoding="utf-8")
 assert 'name = "agent-test"' in cfg
-assert 'command = "openclaw"' in cfg
+assert f'command = "{root / "bin" / "openclaw"}"' in cfg
 assert 'args = ["acp", "--session", "agent:agent-test:main"]' in cfg
 assert 'OPENCLAW_GATEWAY_TOKEN = "tok_test"' in cfg
 assert 'NAKO_CCCONNECT_PROJECT = "agent-test"' in cfg

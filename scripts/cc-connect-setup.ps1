@@ -89,6 +89,40 @@ function ConvertTo-TomlInlineTable($Table) {
   return "{ " + ($pairs -join ", ") + " }"
 }
 
+function Resolve-OpenClawCommand {
+  if ($env:OPENCLAW_BIN) {
+    $candidate = Resolve-InstallPath $env:OPENCLAW_BIN
+    if (Test-Path $candidate) {
+      if ($candidate.EndsWith(".ps1", [StringComparison]::OrdinalIgnoreCase)) {
+        $cmdShim = [IO.Path]::ChangeExtension($candidate, ".cmd")
+        if (Test-Path $cmdShim) { return $cmdShim }
+      }
+      return $candidate
+    }
+    throw "OpenClaw runtime selected but OPENCLAW_BIN does not exist: $candidate"
+  }
+  $cmd = Get-Command openclaw -ErrorAction SilentlyContinue
+  if ($cmd) {
+    $source = $cmd.Source
+    if ($source.EndsWith(".ps1", [StringComparison]::OrdinalIgnoreCase)) {
+      $cmdShim = [IO.Path]::ChangeExtension($source, ".cmd")
+      if (Test-Path $cmdShim) { return $cmdShim }
+    }
+    return $source
+  }
+  $candidates = @()
+  $candidates += Join-Path $script:HomeDir ".local/bin/openclaw"
+  if ($env:APPDATA) {
+    $candidates += Join-Path $env:APPDATA "npm/openclaw.cmd"
+    $candidates += Join-Path $env:APPDATA "npm/openclaw.exe"
+    $candidates += Join-Path $env:APPDATA "npm/openclaw.ps1"
+  }
+  foreach ($candidate in $candidates) {
+    if ($candidate -and (Test-Path $candidate)) { return $candidate }
+  }
+  throw "OpenClaw runtime selected but openclaw command was not found. Install OpenClaw or set OPENCLAW_BIN."
+}
+
 function Set-GlobalTomlOption($Text, $Section, $Key, $Value) {
   $projectMatch = [regex]::Match($Text, "(?m)^\[\[projects\]\]\s*$")
   $prefixEnd = if ($projectMatch.Success) { $projectMatch.Index } else { $Text.Length }
@@ -315,6 +349,7 @@ function New-AgentSection($RuntimeName) {
 
   $openclawHome = Join-Path $homeDir ".openclaw"
   $workspace = Join-Path $openclawHome "workspace/$AgentId"
+  $openclawCmd = Resolve-OpenClawCommand
   $envMap = [ordered]@{
     HOME = $homeDir
     OPENCLAW_HOME = $openclawHome
@@ -331,7 +366,107 @@ function New-AgentSection($RuntimeName) {
   $envMap["NAKO_AGENT_RUNTIME"] = "openclaw"
   $token = Get-GatewayToken (Join-Path $openclawHome "openclaw.json")
   if ($token) { $envMap["OPENCLAW_GATEWAY_TOKEN"] = $token }
-  [pscustomobject]@{ WorkDir = $openclawHome; Command = "openclaw"; Args = @("acp", "--session", "agent:${AgentId}:main"); Env = $envMap }
+  [pscustomobject]@{ WorkDir = $openclawHome; Command = $openclawCmd; Args = @("acp", "--session", "agent:${AgentId}:main"); Env = $envMap }
+}
+
+function Write-CcLogTail($PathValue, $Label) {
+  if (-not (Test-Path $PathValue)) { return }
+  $lines = @(Get-Content $PathValue -Tail 40 -ErrorAction SilentlyContinue)
+  if ($lines.Count -eq 0) { return }
+  ErrL "$Label ($PathValue):"
+  foreach ($line in $lines) {
+    Write-Host $line -ForegroundColor Red
+  }
+}
+
+function Get-CcApiSocketPaths {
+  @(
+    (Join-Path $script:CcHome "run/api.sock"),
+    (Join-Path $script:CcHome ".cc-connect/run/api.sock")
+  )
+}
+
+function Test-CcApiSocketReady {
+  foreach ($socketPath in (Get-CcApiSocketPaths)) {
+    if (Test-Path $socketPath) { return $true }
+  }
+  return $false
+}
+
+function Write-CcConnectStartDiagnostics {
+  ErrL "cc-connect API socket not ready."
+  ErrL "expected socket paths:"
+  foreach ($socketPath in (Get-CcApiSocketPaths)) {
+    ErrL "  - $socketPath"
+  }
+  $statusLog = Join-Path $script:CcHome "daemon-status.log"
+  try {
+    & cc-connect daemon status --work-dir $script:CcHome > $statusLog 2>&1
+  } catch {}
+  Write-CcLogTail $statusLog "daemon status"
+  Write-CcLogTail (Join-Path $script:CcHome "cc-connect.err.log") "stderr"
+  Write-CcLogTail (Join-Path $script:CcHome "cc-connect.log") "stdout"
+}
+
+function Wait-CcConnectApiSocket {
+  $timeout = 15
+  if ($env:CC_CONNECT_SOCKET_TIMEOUT -and [int]::TryParse($env:CC_CONNECT_SOCKET_TIMEOUT, [ref]$timeout)) {}
+  for ($i = 0; $i -lt $timeout; $i++) {
+    if (Test-CcApiSocketReady) { return $true }
+    Start-Sleep -Seconds 1
+  }
+  Write-CcConnectStartDiagnostics
+  return $false
+}
+
+function Test-CcAgentRuntimeLaunch {
+  $agent = New-AgentSection $Runtime
+  $label = switch ($Runtime) {
+    "hermes" { "Hermes" }
+    "qclaw" { "QClaw" }
+    default { "OpenClaw" }
+  }
+  New-Item -ItemType Directory -Path $agent.WorkDir -Force | Out-Null
+  New-Item -ItemType Directory -Path $script:CcHome -Force | Out-Null
+  $stdout = Join-Path $script:CcHome ("runtime-check-{0}-{1}.out.log" -f $AgentId,$Runtime)
+  $stderr = Join-Path $script:CcHome ("runtime-check-{0}-{1}.err.log" -f $AgentId,$Runtime)
+  Remove-Item -Force $stdout,$stderr -ErrorAction SilentlyContinue
+
+  $oldEnv = @{}
+  foreach ($entry in $agent.Env.GetEnumerator()) {
+    $oldEnv[$entry.Key] = [Environment]::GetEnvironmentVariable($entry.Key, "Process")
+    [Environment]::SetEnvironmentVariable($entry.Key, [string]$entry.Value, "Process")
+  }
+  try {
+    $proc = Start-Process -FilePath $agent.Command -ArgumentList $agent.Args -WorkingDirectory $agent.WorkDir -RedirectStandardOutput $stdout -RedirectStandardError $stderr -NoNewWindow -PassThru
+  } catch {
+    ErrL "$label runtime failed during setup preflight: $($_.Exception.Message)"
+    throw
+  } finally {
+    foreach ($entry in $oldEnv.GetEnumerator()) {
+      [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value, "Process")
+    }
+  }
+
+  for ($i = 0; $i -lt 20 -and -not $proc.HasExited; $i++) {
+    Start-Sleep -Milliseconds 100
+  }
+  if (-not $proc.HasExited) {
+    Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+    Info "$label runtime preflight launched successfully"
+    return
+  }
+  $proc.WaitForExit()
+  if ($proc.ExitCode -eq 0) {
+    Info "$label runtime preflight exited cleanly"
+    return
+  }
+
+  ErrL "$label runtime failed during setup preflight (exit $($proc.ExitCode))."
+  Write-CcLogTail $stderr "stderr"
+  Write-CcLogTail $stdout "stdout"
+  ErrL "Fix the runtime error above, then rerun scripts/cc-connect-setup.ps1 -AgentId $AgentId -Runtime $Runtime"
+  throw "$label runtime failed during setup preflight"
 }
 
 function Update-CcConnectConfig {
@@ -418,6 +553,63 @@ function Remove-CcConnectProject {
   return $true
 }
 
+function Disable-CcBlockingProjects {
+  if (-not (Test-Path $script:CcConfig)) { return @() }
+  $text = Get-Content $script:CcConfig -Raw
+  $parts = [regex]::Split($text, "(?m)(?=^\[\[projects\]\]\s*$)")
+  $kept = New-Object System.Collections.Generic.List[string]
+  $disabled = New-Object System.Collections.Generic.List[string]
+  $claudeCmd = Get-Command claude -ErrorAction SilentlyContinue
+
+  foreach ($part in $parts) {
+    if (-not $part.StartsWith("[[projects]]")) {
+      $kept.Add($part)
+      continue
+    }
+    $nameMatch = [regex]::Match($part, '(?m)^name\s*=\s*"([^"]+)"\s*$')
+    $name = if ($nameMatch.Success) { $nameMatch.Groups[1].Value } else { "" }
+    if ($name -eq $AgentId) {
+      $kept.Add($part)
+      continue
+    }
+    $typeMatch = [regex]::Match($part, '(?ms)^\[projects\.agent\]\s*\n.*?^type\s*=\s*"([^"]+)"\s*$')
+    $agentType = if ($typeMatch.Success) { $typeMatch.Groups[1].Value } else { "" }
+    if ($agentType -ne "claudecode") {
+      $kept.Add($part)
+      continue
+    }
+
+    $commandMatch = [regex]::Match($part, '(?m)^command\s*=\s*"([^"]+)"\s*$')
+    $commandValue = if ($commandMatch.Success) { $commandMatch.Groups[1].Value } else { "" }
+    $missing = $false
+    if ($commandValue) {
+      $expanded = [Environment]::ExpandEnvironmentVariables($commandValue)
+      if ($expanded.StartsWith("~\")) { $expanded = Join-Path $script:HomeDir $expanded.Substring(2) }
+      elseif ($expanded.StartsWith("~/")) { $expanded = Join-Path $script:HomeDir $expanded.Substring(2) }
+      if ([IO.Path]::IsPathRooted($expanded) -and -not (Test-Path $expanded)) { $missing = $true }
+      elseif (-not [IO.Path]::IsPathRooted($expanded) -and -not (Get-Command $expanded -ErrorAction SilentlyContinue)) { $missing = $true }
+    } elseif (-not $claudeCmd) {
+      $missing = $true
+    }
+
+    if ($missing) {
+      $disabled.Add($(if ($name) { $name } else { "<unnamed>" }))
+      continue
+    }
+    $kept.Add($part)
+  }
+
+  if ($disabled.Count -gt 0) {
+    $backup = Join-Path (Split-Path -Parent $script:CcConfig) ("config.toml.bak-disabled-blocking-projects-{0}" -f (Get-Date -Format "yyyyMMdd-HHmmss"))
+    Set-Content -Path $backup -Value $text -NoNewline -Encoding UTF8
+    Set-Content -Path $script:CcConfig -Value ((($kept -join "").TrimEnd()) + "`n") -NoNewline -Encoding UTF8
+    $script:CcConnectChanged = $true
+    Warn "disabled cc-connect projects that block startup: $($disabled -join ', ')"
+    Dim "  backup: $backup"
+  }
+  return @($disabled)
+}
+
 function Remove-CcConnectSessions {
   $sessionDir = Join-Path $script:CcHome "sessions"
   if (-not (Test-Path $sessionDir)) { return }
@@ -456,8 +648,15 @@ function Ensure-CcConnectRunning {
     return
   }
   if ((Get-CcConnectPids).Count -gt 0) {
-    Info "cc-connect is already running"
-    return
+    if (Wait-CcConnectApiSocket) {
+      Info "cc-connect is already running"
+      return
+    }
+    $oldPids = Get-CcConnectPids
+    Warn "cc-connect process exists but API socket is not ready; restarting: $($oldPids -join ' ')"
+    foreach ($pidValue in $oldPids) {
+      Stop-Process -Id $pidValue -Force -ErrorAction SilentlyContinue
+    }
   }
   & cc-connect daemon install --work-dir $script:CcHome --force *> $null
   $installRc = $LASTEXITCODE
@@ -465,6 +664,9 @@ function Ensure-CcConnectRunning {
   $startRc = $LASTEXITCODE
   if ($installRc -eq 0 -and $startRc -eq 0) {
     Info "cc-connect daemon started"
+    if (-not (Wait-CcConnectApiSocket)) {
+      throw "cc-connect API socket not ready after daemon start"
+    }
     return
   }
   $cmd = (Get-Command cc-connect -ErrorAction Stop).Source
@@ -472,6 +674,9 @@ function Ensure-CcConnectRunning {
   $stderr = Join-Path $script:CcHome "cc-connect.err.log"
   $proc = Start-Process -FilePath $cmd -WorkingDirectory $script:CcHome -RedirectStandardOutput $stdout -RedirectStandardError $stderr -WindowStyle Hidden -PassThru
   Info "cc-connect started in background (PID $($proc.Id)); log: $stdout"
+  if (-not (Wait-CcConnectApiSocket)) {
+    throw "cc-connect API socket not ready after start"
+  }
 }
 
 function Test-CcPlatformConfigured($Platform) {
@@ -822,7 +1027,14 @@ if ($CcConnectSource -eq "skip") {
 Info (& cc-connect --version 2>&1 | Select-Object -First 1)
 
 Step "2. configure cc-connect project: $AgentId"
-Update-CcConnectConfig
+try {
+  Update-CcConnectConfig
+  [void](Disable-CcBlockingProjects)
+  Test-CcAgentRuntimeLaunch
+} catch {
+  ErrL $_.Exception.Message
+  exit 1
+}
 Info "cc-connect project configured: $AgentId -> $Runtime"
 
 Step "3. platform QR onboarding"
