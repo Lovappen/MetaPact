@@ -45,6 +45,14 @@ curl -fsSL https://cdn.jsdelivr.net/gh/Lovappen/MetaPact@main/install.sh | bash 
 - [进阶玩法：Agent 通用自定义与调优](docs/advanced.md)
 - [nako 文档](docs/nako/README.md)
 
+## 致谢
+
+感谢以下用户帮助完善 MetaPact：
+
+| 用户 | 贡献 |
+|---|---|
+| 久部 | 帮助排查并完善 Windows 安装流程，尤其是 PowerShell、cc-connect 启动与微信绑定相关问题。 |
+
 ## 与 agent 无关的工具
 
 ### `scripts/cc-connect-setup.sh` / `scripts/cc-connect-setup.ps1` — 给任意 agent 做 cc-connect 多平台接入
