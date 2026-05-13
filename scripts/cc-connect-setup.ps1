@@ -607,6 +607,9 @@ function Open-CcQrImage($Path, $Label) {
 function Invoke-CcPlatformSetupWithQr($Platform, $Label, $QrPath) {
   $cmd = (Get-Command cc-connect -ErrorAction Stop).Source
   $args = @($Platform, "setup", "--project", $AgentId, "--timeout", "600", "--qr-image", $QrPath)
+  if ($Platform -eq "weixin") {
+    $args += "--set-allow-from-empty"
+  }
   $proc = Start-Process -FilePath $cmd -ArgumentList $args -NoNewWindow -PassThru
 
   $opened = $false

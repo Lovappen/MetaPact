@@ -2469,9 +2469,12 @@ def run_install_and_qr_locked(n: int, force_qr: bool = False, generation: int = 
         if not generation_current(n, generation):
             return
         qr_path = JOB_DIR / f"{aid}-{plat}.png"
+        weixin_args = []
+        if plat == "weixin":
+            weixin_args.append("--set-allow-from-empty")
         proc = subprocess.Popen(
             ["bash", "-c",
-             f"cc-connect {plat} new --project {aid} --qr-image {qr_path} --timeout 480"],
+             f"cc-connect {plat} new --project {aid} --qr-image {qr_path} --timeout 480 {' '.join(weixin_args)}"],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env, text=True)
         register_qr_proc(n, proc)
         procs.append((plat, proc))

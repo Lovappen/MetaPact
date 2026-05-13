@@ -2101,7 +2101,9 @@ setup_platform() {
   echo
   warn "$desc 未配置，开始 QR onboarding..."
   dim "扫码完成后 cc-connect 会把凭据写进 config.toml，无需手动复制。"
-  if cc-connect "$platform" setup --project "$AGENT_ID" --timeout 600; then
+  setup_args=("$platform" setup --project "$AGENT_ID" --timeout 600)
+  [ "$platform" = "weixin" ] && setup_args+=(--set-allow-from-empty)
+  if cc-connect "${setup_args[@]}"; then
     CC_CONNECT_CHANGED=1
     [ "$platform" = "feishu" ] && normalize_platform_options >/dev/null
     ensure_cc_connect_running "$desc onboarding 完成"

@@ -18,6 +18,7 @@ grep -Fq 'function Test-CcIsWindows' "$ROOT/scripts/cc-connect-setup.ps1"
 grep -Fq -- '--qr-image' "$ROOT/scripts/cc-connect-setup.ps1"
 grep -Fq 'Start-Process -FilePath $Path' "$ROOT/scripts/cc-connect-setup.ps1"
 grep -Fq 'Start-Process -FilePath $cmd -ArgumentList $args' "$ROOT/scripts/cc-connect-setup.ps1"
+grep -Fq '"--set-allow-from-empty"' "$ROOT/scripts/cc-connect-setup.ps1"
 ! grep -Fq 'ArgumentList.Add' "$ROOT/scripts/cc-connect-setup.ps1"
 grep -Fq 'Get-Process -Name "cc-connect"' "$ROOT/scripts/cc-connect-setup.ps1"
 
@@ -44,13 +45,16 @@ case "$1" in
     shift
     [ "${1:-}" = "setup" ] || exit 2
     has_qr=0
+    has_allow=0
     qr_path=
     while [ "$#" -gt 0 ]; do
       case "$1" in
         --qr-image) has_qr=1; qr_path="${2:-}"; shift 2 ;;
+        --set-allow-from-empty) has_allow=1; shift ;;
         *) shift ;;
       esac
     done
+    [ "$has_allow" = "1" ] || exit 9
     if [ "$has_qr" = "1" ] && [ -n "$qr_path" ]; then
       mkdir -p "$(dirname "$qr_path")"
       printf 'fake qr image\n' > "$qr_path"

@@ -99,6 +99,8 @@ grep -Fq 'warn "${reason}，重启旧 cc-connect 进程: $old_pids"' "$ROOT/scri
 ! grep -Fq 'warn "$reason，重启旧 cc-connect 进程: $old_pids"' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'ensure_cc_connect_running "$desc onboarding 完成"' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'CC_CONNECT_CHANGED=1' "$ROOT/scripts/cc-connect-setup.sh"
+grep -Fq -- '--set-allow-from-empty' "$ROOT/scripts/cc-connect-setup.sh"
+grep -Fq 'weixin_args.append("--set-allow-from-empty")' "$ROOT/scripts/nako-agent-factory/nako-server.py"
 grep -Fq 'remove_platform_binding()' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'confirm "$desc 已绑定，是否解绑并重新扫码？" n' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'info "$desc 已配，跳过"' "$ROOT/scripts/cc-connect-setup.sh"
@@ -718,6 +720,11 @@ cc-connect() {
     weixin)
       shift
       [ "${1:-}" = "setup" ] || return 2
+      has_allow=0
+      for arg in "$@"; do
+        [ "$arg" = "--set-allow-from-empty" ] && has_allow=1
+      done
+      [ "$has_allow" = "1" ] || return 9
       echo "weixin setup called" >> "$CC_REBIND_MARKER"
       python3 - "$HOME/.cc-connect/config.toml" <<'PY'
 import sys
