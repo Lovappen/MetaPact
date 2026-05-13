@@ -1225,7 +1225,7 @@ if ($WithCcConnect -or ((-not $NonInteractive) -and (Confirm "现在配置 cc-co
     }
   }
   if ($rc -ne 0) {
-    Warn "cc-connect 配置未完成（可后续手动跑 scripts/cc-connect-setup.sh）"
+    Warn "cc-connect 配置未完成（可后续手动跑 scripts/cc-connect-setup.ps1 -AgentId $AgentId -Runtime $Runtime）"
   }
 }
 

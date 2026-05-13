@@ -12,13 +12,18 @@ grep -Fq 'function Update-CcConnectConfig' "$ROOT/scripts/cc-connect-setup.ps1"
 grep -Fq 'function Setup-CcPlatform' "$ROOT/scripts/cc-connect-setup.ps1"
 grep -Fq 'function Ensure-CcConnectRunning' "$ROOT/scripts/cc-connect-setup.ps1"
 grep -Fq 'function Open-CcQrImage' "$ROOT/scripts/cc-connect-setup.ps1"
+grep -Fq 'function Test-CcIsWindows' "$ROOT/scripts/cc-connect-setup.ps1"
 grep -Fq -- '--qr-image' "$ROOT/scripts/cc-connect-setup.ps1"
 grep -Fq 'Start-Process -FilePath $Path' "$ROOT/scripts/cc-connect-setup.ps1"
+grep -Fq 'Start-Process -FilePath $cmd -ArgumentList $args' "$ROOT/scripts/cc-connect-setup.ps1"
+! grep -Fq 'ArgumentList.Add' "$ROOT/scripts/cc-connect-setup.ps1"
 grep -Fq 'Get-Process -Name "cc-connect"' "$ROOT/scripts/cc-connect-setup.ps1"
 
 grep -Fq 'cc-connect-setup.ps1' "$ROOT/install.ps1"
 grep -Fq 'Convert-CcSetupFlagsToPowerShellArgs' "$ROOT/install.ps1"
 grep -Fq '& $psHost.Source -NoProfile -File $ccSetupPs @psArgs' "$ROOT/install.ps1"
+grep -Fq 'scripts/cc-connect-setup.ps1 -AgentId' "$ROOT/install.ps1"
+! grep -Fq 'cc-connect 配置未完成（可后续手动跑 scripts/cc-connect-setup.sh）' "$ROOT/install.ps1"
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT

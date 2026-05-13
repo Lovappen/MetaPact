@@ -524,11 +524,29 @@ function Normalize-CcPlatformOptions {
   return $changed
 }
 
+function Test-CcIsWindows {
+  $var = Get-Variable IsWindows -ErrorAction SilentlyContinue
+  if ($var) { return [bool]$var.Value }
+  return [System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT
+}
+
+function Test-CcIsMacOS {
+  $var = Get-Variable IsMacOS -ErrorAction SilentlyContinue
+  if ($var) { return [bool]$var.Value }
+  try {
+    return [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform(
+      [System.Runtime.InteropServices.OSPlatform]::OSX
+    )
+  } catch {
+    return $false
+  }
+}
+
 function Open-CcQrImage($Path, $Label) {
   try {
-    if ($IsWindows) {
+    if (Test-CcIsWindows) {
       Start-Process -FilePath $Path | Out-Null
-    } elseif ($IsMacOS) {
+    } elseif (Test-CcIsMacOS) {
       & open $Path *> $null
     } else {
       $opener = Get-Command xdg-open -ErrorAction SilentlyContinue
@@ -548,17 +566,7 @@ function Open-CcQrImage($Path, $Label) {
 function Invoke-CcPlatformSetupWithQr($Platform, $Label, $QrPath) {
   $cmd = (Get-Command cc-connect -ErrorAction Stop).Source
   $args = @($Platform, "setup", "--project", $AgentId, "--timeout", "600", "--qr-image", $QrPath)
-  $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
-  $startInfo.FileName = $cmd
-  $startInfo.UseShellExecute = $false
-  foreach ($arg in $args) {
-    [void]$startInfo.ArgumentList.Add($arg)
-  }
-
-  $proc = [System.Diagnostics.Process]::new()
-  $proc.StartInfo = $startInfo
-
-  [void]$proc.Start()
+  $proc = Start-Process -FilePath $cmd -ArgumentList $args -NoNewWindow -PassThru
 
   $opened = $false
   while (-not $proc.HasExited) {
