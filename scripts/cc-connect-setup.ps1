@@ -785,3 +785,4 @@ Sync-HermesFeishuEnv
 Step "4. start cc-connect"
 Ensure-CcConnectRunning "cc-connect config or binary changed"
 Info "ready"
+exit 0

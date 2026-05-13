@@ -180,6 +180,51 @@ function Invoke-CcSetup([string[]]$Flags) {
   return $LASTEXITCODE
 }
 
+function Get-CcConnectHomeForStatus {
+  $homeSeed = if ($env:NAKO_HOME) {
+    $env:NAKO_HOME
+  } elseif ($env:USERPROFILE) {
+    $env:USERPROFILE
+  } elseif ($HOME) {
+    $HOME
+  } elseif ($env:HOME) {
+    $env:HOME
+  } else {
+    [Environment]::GetFolderPath("UserProfile")
+  }
+  return (Join-Path (Resolve-InstallPath $homeSeed) ".cc-connect")
+}
+
+function Test-CcPlatformBound($ProjectName, $Platform) {
+  $config = Join-Path (Get-CcConnectHomeForStatus) "config.toml"
+  if (-not (Test-Path $config)) { return $false }
+  try {
+    $text = Get-Content $config -Raw
+  } catch {
+    return $false
+  }
+  $parts = [regex]::Split($text, "(?m)(?=^\[\[projects\]\]\s*$)")
+  foreach ($part in $parts) {
+    if (-not $part.StartsWith("[[projects]]")) { continue }
+    if ($part -notmatch "(?m)^name\s*=\s*`"$([regex]::Escape($ProjectName))`"\s*$") { continue }
+    $blocks = [regex]::Split($part, "(?m)(?=^\[\[projects\.platforms\]\]\s*$)")
+    foreach ($block in $blocks) {
+      if ($block -notmatch "(?m)^type\s*=\s*`"$([regex]::Escape($Platform))`"\s*$") { continue }
+      if ($Platform -eq "weixin") {
+        return [regex]::IsMatch($block, '(?m)^\s*token\s*=\s*"[^"]+"\s*$')
+      }
+      if ($Platform -eq "feishu") {
+        return (
+          [regex]::IsMatch($block, '(?m)^\s*app_id\s*=\s*"[^"]+"\s*$') -and
+          [regex]::IsMatch($block, '(?m)^\s*app_secret\s*=\s*"[^"]+"\s*$')
+        )
+      }
+      return $true
+    }
+  }
+  return $false
+}
+
 if ($UninstallAllCcConnect) {
   Step "cc-connect + agent 一键完整卸载"
   $rc = Invoke-CcSetup @("--agent-id", $AgentId, "--uninstall-all")
@@ -1225,7 +1270,25 @@ if ($WithCcConnect -or ((-not $NonInteractive) -and (Confirm "现在配置 cc-co
     }
   }
   if ($rc -ne 0) {
-    Warn "cc-connect 配置未完成（可后续手动跑 scripts/cc-connect-setup.ps1 -AgentId $AgentId -Runtime $Runtime）"
+    $requestedPlatforms = @()
+    if ($WithFeishu) { $requestedPlatforms += "feishu" }
+    if ($WithWeixin) { $requestedPlatforms += "weixin" }
+    $boundPlatforms = @()
+    foreach ($platform in @("feishu", "weixin")) {
+      if (Test-CcPlatformBound $AgentId $platform) { $boundPlatforms += $platform }
+    }
+    $requestedBound = $false
+    if ($requestedPlatforms.Count -gt 0) {
+      $missing = @($requestedPlatforms | Where-Object { $boundPlatforms -notcontains $_ })
+      $requestedBound = ($missing.Count -eq 0)
+    } else {
+      $requestedBound = ($boundPlatforms.Count -gt 0)
+    }
+    if ($requestedBound) {
+      Warn "cc-connect 绑定已写入配置，但后续启动/收尾失败（exit $rc）。可后续手动跑 scripts/cc-connect-setup.ps1 -AgentId $AgentId -Runtime $Runtime。"
+    } else {
+      Warn "cc-connect 配置未完成（可后续手动跑 scripts/cc-connect-setup.ps1 -AgentId $AgentId -Runtime $Runtime）"
+    }
   }
 }
 

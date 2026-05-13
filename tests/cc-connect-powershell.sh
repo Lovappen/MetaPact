@@ -21,9 +21,12 @@ grep -Fq 'Get-Process -Name "cc-connect"' "$ROOT/scripts/cc-connect-setup.ps1"
 
 grep -Fq 'cc-connect-setup.ps1' "$ROOT/install.ps1"
 grep -Fq 'Convert-CcSetupFlagsToPowerShellArgs' "$ROOT/install.ps1"
+grep -Fq 'function Test-CcPlatformBound' "$ROOT/install.ps1"
 grep -Fq '& $psHost.Source -NoProfile -File $ccSetupPs @psArgs' "$ROOT/install.ps1"
 grep -Fq 'scripts/cc-connect-setup.ps1 -AgentId' "$ROOT/install.ps1"
+grep -Fq 'cc-connect 绑定已写入配置，但后续启动/收尾失败' "$ROOT/install.ps1"
 ! grep -Fq 'cc-connect 配置未完成（可后续手动跑 scripts/cc-connect-setup.sh）' "$ROOT/install.ps1"
+grep -Fq 'exit 0' "$ROOT/scripts/cc-connect-setup.ps1"
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
