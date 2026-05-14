@@ -122,6 +122,7 @@ EOF
 cp "$tmp/bin/open" "$tmp/bin/xdg-open"
 chmod +x "$tmp/bin/cc-connect"
 chmod +x "$tmp/bin/open" "$tmp/bin/openclaw" "$tmp/bin/xdg-open"
+cp "$tmp/bin/cc-connect" "$tmp/bin/cc-connect.fake"
 printf '{"gateway":{"auth":{"token":"tok_test"}}}\n' > "$tmp/.openclaw/openclaw.json"
 
 tmp_fail="$(mktemp -d)"
@@ -216,6 +217,54 @@ assert entry, sessions
 assert entry.get("label") == "cc-connect 飞书/微信"
 assert entry.get("origin", {}).get("surface") == "webchat"
 assert entry.get("origin", {}).get("label") == "cc-connect 飞书/微信"
+PY
+
+printf 'qclaw workspace marker\n' > "$tmp_qclaw/.qclaw-state/workspace-agent-test/reinstall-marker.txt"
+printf 'qclaw agent marker\n' > "$tmp_qclaw/.qclaw-state/agents/agent-test/agent/reinstall-marker.txt"
+NAKO_HOME="$tmp_qclaw" PATH="$tmp/bin:$PATH" \
+  pwsh -NoProfile -File "$ROOT/scripts/cc-connect-setup.ps1" \
+  -AgentId agent-test -Runtime qclaw -CcConnectSource skip -UninstallAll >/dev/null
+cp "$tmp/bin/cc-connect.fake" "$tmp/bin/cc-connect"
+chmod +x "$tmp/bin/cc-connect"
+python3 - "$tmp_qclaw" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+assert not (root / ".cc-connect").exists()
+cfg = json.loads((root / ".qclaw-state" / "openclaw.json").read_text(encoding="utf-8"))
+agents = cfg.get("agents", {}).get("list", [])
+assert all(item.get("id") != "agent-test" for item in agents), cfg
+backups = list(root.glob(".nako-agent.bak-uninstall-all-agent-test-*"))
+assert len(backups) == 1, backups
+expected = {
+    "qclaw-workspace-agent-test/reinstall-marker.txt",
+    "qclaw-agent-agent-test/agent/reinstall-marker.txt",
+}
+found = {str(path.relative_to(backups[0])) for path in backups[0].rglob("*") if path.is_file()}
+missing = expected - found
+assert not missing, missing
+assert list(root.glob(".cc-connect.bak-uninstall-all-*"))
+PY
+EXPECTED_QCLAW_MJS="$qclaw_mjs" NAKO_HOME="$tmp_qclaw" PATH="$tmp/bin:$PATH" \
+  pwsh -NoProfile -File "$ROOT/scripts/cc-connect-setup.ps1" \
+  -AgentId agent-test -Runtime qclaw -CcConnectSource skip -NonInteractive >/dev/null
+python3 - "$tmp_qclaw" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+cfg = json.loads((root / ".qclaw-state" / "openclaw.json").read_text(encoding="utf-8"))
+agent = next((item for item in cfg.get("agents", {}).get("list", []) if item.get("id") == "agent-test"), None)
+assert agent, cfg
+assert agent.get("workspace") == str(root / ".qclaw-state" / "workspace-agent-test")
+sessions = json.loads((root / ".qclaw-state" / "agents" / "agent-test" / "sessions" / "sessions.json").read_text(encoding="utf-8"))
+assert "agent:agent-test:session-cc-connect" in sessions, sessions
+cc = (root / ".cc-connect" / "config.toml").read_text(encoding="utf-8")
+assert 'name = "agent-test"' in cc
+assert 'NAKO_AGENT_RUNTIME = "qclaw"' in cc
 PY
 
 cat > "$tmp_qclaw/bin/node" <<'EOF'
