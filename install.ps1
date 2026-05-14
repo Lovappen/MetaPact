@@ -1,7 +1,8 @@
 # install.ps1 — Nako agent pack installer for Windows PowerShell 7+
 #
 # Usage:
-#   iex (iwr -UseBasicParsing https://cdn.jsdelivr.net/gh/Lovappen/MetaPact@main/install.ps1).Content
+#   iwr -UseBasicParsing "https://raw.githubusercontent.com/Lovappen/MetaPact/main/install.ps1" -OutFile "$env:TEMP\metapact-install.ps1"
+#   pwsh -NoProfile -ExecutionPolicy Bypass -File "$env:TEMP\metapact-install.ps1" -Runtime qclaw -WithWeixin
 #   # or: pwsh install.ps1 [-Force] [-AgentId agent-nako] [-Runtime openclaw|hermes|qclaw] [-NonInteractive] [-SkipSkills] [-SkipModels] [-ResetSecrets] [-WithFeishu] [-WithWeixin] [-CcConnectSource auto|npm|lazycat|skip]
 
 [CmdletBinding()]

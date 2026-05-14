@@ -34,6 +34,15 @@ curl -fsSL https://cdn.jsdelivr.net/gh/Lovappen/MetaPact@main/install.sh | bash 
 
 完整 flag：`bash install.sh --help`。
 
+Windows PowerShell 建议直接走 GitHub raw，避免 `cdn.jsdelivr.net @main` 缓存到旧脚本：
+
+```powershell
+$u = "https://raw.githubusercontent.com/Lovappen/MetaPact/main/install.ps1?ts=$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())"
+$p = Join-Path $env:TEMP "metapact-install.ps1"
+iwr -UseBasicParsing $u -OutFile $p
+pwsh -NoProfile -ExecutionPolicy Bypass -File $p -Runtime qclaw -AgentId agent-nako -WithWeixin
+```
+
 ## 现有 Agents
 
 | Agent | 角色 | 渠道 |
