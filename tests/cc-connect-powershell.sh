@@ -21,6 +21,7 @@ grep -Fq 'function Open-CcQrImage' "$ROOT/scripts/cc-connect-setup.ps1"
 grep -Fq 'function Remove-CcPlatformBinding' "$ROOT/scripts/cc-connect-setup.ps1"
 grep -Fq 'function Resolve-OpenClawCommand' "$ROOT/scripts/cc-connect-setup.ps1"
 grep -Fq 'function Disable-CcBlockingProjects' "$ROOT/scripts/cc-connect-setup.ps1"
+grep -Fq 'function Add-CcProcessArguments' "$ROOT/scripts/cc-connect-setup.ps1"
 grep -Fq 'function Test-CcAgentRuntimeLaunch' "$ROOT/scripts/cc-connect-setup.ps1"
 grep -Fq 'function Wait-CcConnectApiSocket' "$ROOT/scripts/cc-connect-setup.ps1"
 grep -Fq 'cc-connect API socket not ready' "$ROOT/scripts/cc-connect-setup.ps1"
@@ -45,7 +46,7 @@ grep -Fq 'cc-connect 绑定已写入配置，但后续启动/收尾失败' "$ROO
 grep -Fq 'exit 0' "$ROOT/scripts/cc-connect-setup.ps1"
 
 tmp="$(mktemp -d)"
-trap 'rm -rf "$tmp" "${tmp_fail:-}" "${tmp_socket:-}"' EXIT
+trap 'rm -rf "$tmp" "${tmp_fail:-}" "${tmp_socket:-}" "${tmp_qclaw:-}"' EXIT
 mkdir -p "$tmp/bin" "$tmp/.openclaw/workspace/agent-test" "$tmp/.openclaw"
 cat > "$tmp/bin/cc-connect" <<'EOF'
 #!/usr/bin/env bash
@@ -152,6 +153,48 @@ grep -Fq "api.sock" "$tmp_socket/setup.out"
 
 NAKO_HOME="$tmp" PATH="$tmp/bin:$PATH" pwsh -NoProfile -File "$ROOT/scripts/cc-connect-setup.ps1" \
   -AgentId agent-test -Runtime openclaw -CcConnectSource skip -NonInteractive >/dev/null
+
+tmp_qclaw="$(mktemp -d)"
+mkdir -p "$tmp_qclaw/.qclaw" "$tmp_qclaw/.qclaw-state" "$tmp_qclaw/bin" "$tmp_qclaw/Program Files/QClaw/openclaw"
+cat > "$tmp_qclaw/bin/node" <<'EOF'
+#!/usr/bin/env bash
+if [ "$1" != "$EXPECTED_QCLAW_MJS" ]; then
+  echo "bad first arg: $1" >&2
+  exit 42
+fi
+exit 0
+EOF
+chmod +x "$tmp_qclaw/bin/node"
+qclaw_mjs="$tmp_qclaw/Program Files/QClaw/openclaw/openclaw.mjs"
+: > "$qclaw_mjs"
+python3 - "$tmp_qclaw" "$qclaw_mjs" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+mjs = Path(sys.argv[2])
+(root / ".qclaw" / "qclaw.json").write_text(
+    json.dumps({
+        "stateDir": str(root / ".qclaw-state"),
+        "cli": {"nodeBinary": str(root / "bin" / "node"), "openclawMjs": str(mjs)},
+    }),
+    encoding="utf-8",
+)
+(root / ".qclaw-state" / "qclaw.json").write_text(
+    json.dumps({"configPath": str(root / ".qclaw-state" / "openclaw.json")}),
+    encoding="utf-8",
+)
+(root / ".qclaw-state" / "openclaw.json").write_text(
+    json.dumps({"gateway": {"auth": {"token": "tok_qclaw"}}}),
+    encoding="utf-8",
+)
+PY
+EXPECTED_QCLAW_MJS="$qclaw_mjs" NAKO_HOME="$tmp_qclaw" PATH="$tmp/bin:$PATH" \
+  pwsh -NoProfile -File "$ROOT/scripts/cc-connect-setup.ps1" \
+  -AgentId agent-test -Runtime qclaw -CcConnectSource skip -NonInteractive >/dev/null
+grep -Fq "$qclaw_mjs" "$tmp_qclaw/.cc-connect/config.toml"
+
 cat >> "$tmp/.cc-connect/config.toml" <<EOF
 
 [[projects]]

@@ -435,6 +435,78 @@ function Wait-CcConnectApiSocket {
   return $false
 }
 
+function ConvertTo-CcProcessArgument($Value) {
+  $text = [string]$Value
+  if ($text -eq "") { return '""' }
+  if ($text -notmatch '[\s"]') { return $text }
+  $quoted = '"'
+  $slashes = 0
+  foreach ($ch in $text.ToCharArray()) {
+    if ($ch -eq '\') {
+      $slashes += 1
+      continue
+    }
+    if ($ch -eq '"') {
+      $quoted += ('\' * ($slashes * 2 + 1)) + '"'
+      $slashes = 0
+      continue
+    }
+    if ($slashes -gt 0) {
+      $quoted += ('\' * $slashes)
+      $slashes = 0
+    }
+    $quoted += $ch
+  }
+  if ($slashes -gt 0) {
+    $quoted += ('\' * ($slashes * 2))
+  }
+  return $quoted + '"'
+}
+
+function Add-CcProcessArguments($StartInfo, [string[]]$Arguments) {
+  $argList = $null
+  try { $argList = $StartInfo.ArgumentList } catch {}
+  if ($null -ne $argList) {
+    foreach ($argument in $Arguments) {
+      [void]$argList.Add([string]$argument)
+    }
+    return
+  }
+  $StartInfo.Arguments = (($Arguments | ForEach-Object { ConvertTo-CcProcessArgument $_ }) -join " ")
+}
+
+function Start-CcRuntimeCheckProcess($Agent, $Stdout, $Stderr) {
+  $psi = [System.Diagnostics.ProcessStartInfo]::new()
+  $psi.FileName = $Agent.Command
+  $psi.WorkingDirectory = $Agent.WorkDir
+  $psi.UseShellExecute = $false
+  $psi.RedirectStandardOutput = $true
+  $psi.RedirectStandardError = $true
+  Add-CcProcessArguments $psi $Agent.Args
+  foreach ($entry in $Agent.Env.GetEnumerator()) {
+    $psi.Environment[$entry.Key] = [string]$entry.Value
+  }
+  $proc = [System.Diagnostics.Process]::Start($psi)
+  $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
+  $stderrTask = $proc.StandardError.ReadToEndAsync()
+  [pscustomobject]@{
+    Process = $proc
+    StdoutTask = $stdoutTask
+    StderrTask = $stderrTask
+    StdoutPath = $Stdout
+    StderrPath = $Stderr
+  }
+}
+
+function Save-CcRuntimeCheckOutput($RuntimeProcess) {
+  try {
+    $stdout = $RuntimeProcess.StdoutTask.GetAwaiter().GetResult()
+    $stderr = $RuntimeProcess.StderrTask.GetAwaiter().GetResult()
+    Set-Content -Path $RuntimeProcess.StdoutPath -Value $stdout -NoNewline -Encoding UTF8
+    Set-Content -Path $RuntimeProcess.StderrPath -Value $stderr -NoNewline -Encoding UTF8
+  } catch {}
+}
+
 function Test-CcAgentRuntimeLaunch {
   $agent = New-AgentSection $Runtime
   $label = switch ($Runtime) {
@@ -448,31 +520,21 @@ function Test-CcAgentRuntimeLaunch {
   $stderr = Join-Path $script:CcHome ("runtime-check-{0}-{1}.err.log" -f $AgentId,$Runtime)
   Remove-Item -Force $stdout,$stderr -ErrorAction SilentlyContinue
 
-  $oldEnv = @{}
-  foreach ($entry in $agent.Env.GetEnumerator()) {
-    $oldEnv[$entry.Key] = [Environment]::GetEnvironmentVariable($entry.Key, "Process")
-    [Environment]::SetEnvironmentVariable($entry.Key, [string]$entry.Value, "Process")
-  }
   try {
-    $proc = Start-Process -FilePath $agent.Command -ArgumentList $agent.Args -WorkingDirectory $agent.WorkDir -RedirectStandardOutput $stdout -RedirectStandardError $stderr -NoNewWindow -PassThru
+    $runtimeProcess = Start-CcRuntimeCheckProcess $agent $stdout $stderr
+    $proc = $runtimeProcess.Process
   } catch {
     ErrL "$label runtime failed during setup preflight: $($_.Exception.Message)"
     throw
-  } finally {
-    foreach ($entry in $oldEnv.GetEnumerator()) {
-      [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value, "Process")
-    }
   }
 
-  for ($i = 0; $i -lt 20 -and -not $proc.HasExited; $i++) {
-    Start-Sleep -Milliseconds 100
-  }
-  if (-not $proc.HasExited) {
+  if (-not $proc.WaitForExit(2000)) {
     Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+    Save-CcRuntimeCheckOutput $runtimeProcess
     Info "$label runtime preflight launched successfully"
     return
   }
-  $proc.WaitForExit()
+  Save-CcRuntimeCheckOutput $runtimeProcess
   if ($proc.ExitCode -eq 0) {
     Info "$label runtime preflight exited cleanly"
     return
