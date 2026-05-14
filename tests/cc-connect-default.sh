@@ -68,6 +68,8 @@ grep -Fq 'CodeEagle/cc-connect 安装失败；请修复网络/下载 release 制
 grep -Fq 'should_npm_fallback' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq -- '--uninstall' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq -- '--uninstall-all' "$ROOT/scripts/cc-connect-setup.sh"
+grep -Fq -- '--cc-project-id' "$ROOT/scripts/cc-connect-setup.sh"
+grep -Fq 'CC_PROJECT_ID="$AGENT_ID-$RUNTIME"' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'remove_cc_connect_project' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'uninstall_cc_connect_all' "$ROOT/scripts/cc-connect-setup.sh"
 grep -Fq 'uninstall_agent_runtime_data' "$ROOT/scripts/cc-connect-setup.sh"
@@ -142,6 +144,7 @@ grep -Fq 'register_or_update_qclaw_cron' "$ROOT/install.sh"
 grep -Fq 'register_or_update_hermes_cron' "$ROOT/install.sh"
 grep -Fq 'Hermes 精确 cron 需要 croniter' "$ROOT/install.sh"
 grep -Fq 'QCLAW_PERSONA_CHANGED=1 bash "$CC_SETUP"' "$ROOT/install.sh"
+grep -Fq 'CC_FLAGS+=(--cc-project-id "$CC_PROJECT_ID")' "$ROOT/install.sh"
 grep -Fq '未识别到模型能力声明，也未命中偏好表' "$ROOT/install.sh"
 grep -Fq 'Declared model capabilities win; model-map.yaml' "$ROOT/nako/scripts/map-model.sh"
 grep -Fq '"inputModalities", "input_modalities"' "$ROOT/nako/scripts/detect-models.sh"
@@ -152,6 +155,8 @@ grep -Fq '| `roleplay` |' "$ROOT/docs/nako/install.md"
 grep -Fq '| `general` |' "$ROOT/docs/nako/install.md"
 grep -Fq '| `vision` |' "$ROOT/docs/nako/install.md"
 grep -Fq '安装详解：模型能力要求' "$ROOT/README.md"
+grep -Fq '`agent-nako-qclaw`' "$ROOT/docs/nako/install.md"
+grep -Fq '<agent-id>-qclaw' "$ROOT/README.md"
 grep -Fq 'for tool_name in ("image_generate", "video_generate", "tts"):' "$ROOT/install.sh"
 grep -Fq 'safe_install_pack_file "$PACK_ROOT/skills/skill-log.sh" "$OPENCLAW_SKILLS_DIR/skill-log.sh"' "$ROOT/install.sh"
 grep -Fq 'safe_install_pack_file "$s" "$dst/scripts/$(basename "$s")"' "$ROOT/install.sh"
@@ -374,6 +379,31 @@ stale_script.write_text("broken live edit\n", encoding="utf-8")
     json.dumps({"configPath": str(state / "custom-openclaw.json")}),
     encoding="utf-8",
 )
+(root / ".cc-connect").mkdir(parents=True, exist_ok=True)
+(root / ".cc-connect" / "config.toml").write_text(
+    """
+language = "en"
+
+[[projects]]
+name = "agent-test"
+
+[projects.agent]
+type = "acp"
+
+[projects.agent.options]
+work_dir = "/existing-openclaw"
+command = "openclaw"
+args = ["acp", "--session", "agent:agent-test:main"]
+env = { NAKO_AGENT_RUNTIME = "openclaw", NAKO_CCCONNECT_PROJECT = "agent-test" }
+
+[[projects.platforms]]
+type = "weixin"
+
+[projects.platforms.options]
+token = "openclaw-token"
+""",
+    encoding="utf-8",
+)
 PY
 (
   cd "$tmp2"
@@ -392,15 +422,25 @@ root = Path(sys.argv[1])
 repo = Path(sys.argv[2])
 state = (root / ".qclaw-state").resolve()
 cfg = (root / ".cc-connect" / "config.toml").read_text(encoding="utf-8")
-assert f'work_dir = "{state / "workspace-agent-test"}"' in cfg
-assert 'command = "/bin/echo"' in cfg
-assert 'args = ["/tmp/fake-openclaw.mjs", "acp", "--session", "agent:agent-test:session-cc-connect"]' in cfg
-assert f'QCLAW_HOME = "{state}"' in cfg
-assert f'OPENCLAW_STATE_DIR = "{state}"' in cfg
-assert f'OPENCLAW_CONFIG = "{state / "custom-openclaw.json"}"' in cfg
-assert f'OPENCLAW_CONFIG_PATH = "{state / "custom-openclaw.json"}"' in cfg
-project = re.search(r'\[\[projects\]\].*', cfg, re.S).group(0)
-assert ".openclaw" not in project, project
+parts = [part for part in re.split(r"(?m)(?=^\[\[projects\]\]\s*$)", cfg) if part.startswith("[[projects]]")]
+projects = {}
+for part in parts:
+    name = re.search(r'(?m)^name\s*=\s*"([^"]+)"\s*$', part).group(1)
+    projects[name] = part
+assert set(projects) == {"agent-test", "agent-test-qclaw"}, projects
+openclaw_project = projects["agent-test"]
+assert 'args = ["acp", "--session", "agent:agent-test:main"]' in openclaw_project
+assert 'token = "openclaw-token"' in openclaw_project
+qclaw_project = projects["agent-test-qclaw"]
+assert f'work_dir = "{state / "workspace-agent-test"}"' in qclaw_project
+assert 'command = "/bin/echo"' in qclaw_project
+assert 'args = ["/tmp/fake-openclaw.mjs", "acp", "--session", "agent:agent-test:session-cc-connect"]' in qclaw_project
+assert f'QCLAW_HOME = "{state}"' in qclaw_project
+assert f'OPENCLAW_STATE_DIR = "{state}"' in qclaw_project
+assert f'OPENCLAW_CONFIG = "{state / "custom-openclaw.json"}"' in qclaw_project
+assert f'OPENCLAW_CONFIG_PATH = "{state / "custom-openclaw.json"}"' in qclaw_project
+assert 'NAKO_CCCONNECT_PROJECT = "agent-test-qclaw"' in qclaw_project
+assert f'{root / ".openclaw"}' not in qclaw_project, qclaw_project
 sessions = state / "agents" / "agent-test" / "sessions" / "sessions.json"
 assert sessions.exists()
 data = json.loads(sessions.read_text(encoding="utf-8"))
@@ -509,6 +549,7 @@ old_session.write_text(
 cc_sessions = root / ".cc-connect" / "sessions"
 cc_sessions.mkdir(parents=True)
 (cc_sessions / "agent-nako_stale.json").write_text("stale", encoding="utf-8")
+(cc_sessions / "agent-nako-qclaw_stale.json").write_text("stale", encoding="utf-8")
 PY
 (
   cd "$tmp3"
@@ -553,7 +594,8 @@ entry = sessions["agent:agent-nako:session-cc-connect"]
 assert entry["sessionId"] != "old-session"
 assert entry["systemSent"] is False
 assert Path(entry["sessionFile"]).exists()
-assert not (root / ".cc-connect" / "sessions" / "agent-nako_stale.json").exists()
+assert (root / ".cc-connect" / "sessions" / "agent-nako_stale.json").exists()
+assert not (root / ".cc-connect" / "sessions" / "agent-nako-qclaw_stale.json").exists()
 PY
 
 tmp4="$(mktemp -d)"
@@ -791,6 +833,7 @@ assert 'enabled = true' in cfg
 assert '[display]' in cfg
 assert 'tool_messages = false' in cfg
 project = re.search(r'\[\[projects\]\].*', cfg, re.S).group(0)
+assert 'name = "agent-test-hermes"' in project
 assert f'work_dir = "{root / ".hermes" / "workspace" / "agent-test"}"' in project
 assert 'command = "' in project and "/hermes" in project
 assert 'args = ["acp"]' in project
@@ -800,7 +843,7 @@ assert f'CC_CONNECT_API_DATA_DIR = "{root / ".cc-connect"}"' in project
 assert f'CC_CONNECT_SESSION_DIR = "{root / ".cc-connect" / "sessions"}"' in project
 assert f'CC_CONNECT_CONFIG = "{root / ".cc-connect" / "config.toml"}"' in project
 assert 'NAKO_OUTPUT_MODE = "acp"' in project
-assert 'NAKO_CCCONNECT_PROJECT = "agent-test"' in project
+assert 'NAKO_CCCONNECT_PROJECT = "agent-test-hermes"' in project
 assert 'NAKO_AGENT_WORKSPACE = "' in project
 assert 'NAKO_SKILLS_DIR = "' in project
 assert 'NAKO_MEDIA_HOME = "' in project

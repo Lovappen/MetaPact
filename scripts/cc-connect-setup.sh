@@ -14,6 +14,7 @@
 #   --agent-id <id>      agent id (默认 agent-nako)
 #   --runtime <name>     openclaw|hermes|qclaw (默认 openclaw)
 #   --display-name <n>   cc-connect 内显示名 (默认按 runtime 生成)
+#   --cc-project-id <id> cc-connect project id (默认 openclaw 用 agent id，其他 runtime 加后缀)
 #   --with-feishu        自动跑 feishu QR 引导（若未配 feishu）
 #   --with-weixin        自动跑 weixin QR 引导（若未配 weixin）
 #   --cc-connect-source  auto|npm|lazycat|skip (默认 lazycat；CodeEagle fork)
@@ -88,6 +89,7 @@ CC_CONNECT_GO_DOWNLOAD_VERSION="${CC_CONNECT_GO_DOWNLOAD_VERSION:-1.25.0}"
 AGENT_ID="agent-nako"
 RUNTIME="${NAKO_AGENT_RUNTIME:-openclaw}"
 DISPLAY_NAME=""
+CC_PROJECT_ID="${CC_PROJECT_ID:-${CC_CONNECT_PROJECT_ID:-}}"
 CC_CONNECT_CHANGED=0
 GO_FOR_CC_CONNECT=""
 OPENCLAW_BIN="${OPENCLAW_BIN:-}"
@@ -123,6 +125,7 @@ while [ $# -gt 0 ]; do
     --agent-id) AGENT_ID="$2"; shift 2 ;;
     --runtime|--backend) RUNTIME="$2"; shift 2 ;;
     --display-name) DISPLAY_NAME="$2"; shift 2 ;;
+    --cc-project-id|--project-id) CC_PROJECT_ID="$2"; shift 2 ;;
     --uninstall) UNINSTALL=1; shift ;;
     --purge-cc-connect) PURGE_CC_CONNECT=1; shift ;;
     --uninstall-all) UNINSTALL_ALL=1; shift ;;
@@ -139,6 +142,7 @@ Flags:
   --agent-id <id>      agent id (默认 agent-nako)
   --runtime <name>     openclaw|hermes|qclaw (默认 openclaw)
   --display-name <n>   cc-connect 内显示名 (默认按 runtime 生成)
+  --cc-project-id <id> cc-connect project id (默认 openclaw 用 agent id，其他 runtime 加后缀)
   --with-feishu        自动跑 feishu QR 引导（若未配 feishu）
   --with-weixin        自动跑 weixin QR 引导（若未配 weixin）
   --cc-connect-source  auto|npm|lazycat|skip (默认 lazycat；CodeEagle fork)
@@ -170,6 +174,14 @@ if [ -z "$DISPLAY_NAME" ]; then
     DISPLAY_NAME="QClaw $AGENT_ID"
   else
     DISPLAY_NAME="OpenClaw $AGENT_ID"
+  fi
+fi
+
+if [ -z "$CC_PROJECT_ID" ]; then
+  if [ "$RUNTIME" = "openclaw" ]; then
+    CC_PROJECT_ID="$AGENT_ID"
+  else
+    CC_PROJECT_ID="$AGENT_ID-$RUNTIME"
   fi
 fi
 
@@ -1391,7 +1403,7 @@ disable_blocking_cc_projects() {
   [ -f "$CC_CONFIG" ] || { echo "unchanged"; return 0; }
   local has_claude=0
   command -v claude >/dev/null 2>&1 && has_claude=1
-  python3 - "$CC_CONFIG" "$AGENT_ID" "$has_claude" <<'PY'
+  python3 - "$CC_CONFIG" "$CC_PROJECT_ID" "$has_claude" <<'PY'
 import os
 import re
 import shutil
@@ -1488,12 +1500,12 @@ PY
 
 remove_cc_connect_project() {
   [ -f "$CC_CONFIG" ] || return 1
-  python3 - "$CC_CONFIG" "$AGENT_ID" <<'PY'
+  python3 - "$CC_CONFIG" "$CC_PROJECT_ID" <<'PY'
 import os, re, sys, time
 from pathlib import Path
 
 path = Path(sys.argv[1])
-agent = sys.argv[2]
+project = sys.argv[2]
 text = path.read_text(encoding="utf-8")
 parts = re.split(r"(?m)(?=^\[\[projects\]\]\s*$)", text)
 kept = []
@@ -1503,7 +1515,7 @@ for part in parts:
         kept.append(part)
         continue
     m = re.search(r'(?m)^name\s*=\s*"([^"]+)"\s*$', part)
-    if (m.group(1) if m else "") == agent:
+    if (m.group(1) if m else "") == project:
         removed = True
         continue
     kept.append(part)
@@ -1511,7 +1523,7 @@ for part in parts:
 if not removed:
     sys.exit(1)
 
-backup = path.with_name(f"config.toml.bak-uninstall-{agent}-{time.strftime('%Y%m%d-%H%M%S')}")
+backup = path.with_name(f"config.toml.bak-uninstall-{project}-{time.strftime('%Y%m%d-%H%M%S')}")
 backup.write_text(text, encoding="utf-8")
 new = "".join(kept).rstrip() + "\n"
 path.write_text(new, encoding="utf-8")
@@ -1522,7 +1534,7 @@ PY
 remove_cc_connect_sessions() {
   local session_dir="$HOME/.cc-connect/sessions" removed=0 file
   [ -d "$session_dir" ] || return 0
-  for file in "$session_dir"/"$AGENT_ID"_*.json; do
+  for file in "$session_dir"/"$CC_PROJECT_ID"_*.json; do
     [ -e "$file" ] || continue
     rm -f "$file"
     removed=$((removed + 1))
@@ -1713,7 +1725,7 @@ uninstall_cc_connect_all() {
 }
 
 uninstall_cc_connect_project() {
-  step "卸载 cc-connect 接入: $AGENT_ID"
+  step "卸载 cc-connect 接入: $CC_PROJECT_ID"
   if command -v cc-connect >/dev/null 2>&1; then
     cc-connect daemon stop --work-dir "$HOME/.cc-connect" >/dev/null 2>&1 || true
     [ "$PURGE_CC_CONNECT" = "1" ] && cc-connect daemon uninstall --work-dir "$HOME/.cc-connect" >/dev/null 2>&1 || true
@@ -1721,9 +1733,9 @@ uninstall_cc_connect_project() {
   stop_cc_connect_processes
 
   if remove_cc_connect_project; then
-    info "已从 $CC_CONFIG 移除 project: $AGENT_ID"
+    info "已从 $CC_CONFIG 移除 project: $CC_PROJECT_ID"
   else
-    dim "$CC_CONFIG 中未找到 project: $AGENT_ID"
+    dim "$CC_CONFIG 中未找到 project: $CC_PROJECT_ID"
   fi
   remove_cc_connect_sessions
 
@@ -1785,7 +1797,7 @@ if ! cc_connect_has_native_video; then
 fi
 
 # ── 2. 初始化 / merge config.toml ─────────────────────────────────────
-step "2. 配置 cc-connect 项目: $AGENT_ID"
+step "2. 配置 cc-connect 项目: $CC_PROJECT_ID"
 mkdir -p "$(dirname "$CC_CONFIG")"
 
 if [ "$RUNTIME" = "openclaw" ]; then
@@ -1796,9 +1808,9 @@ if [ "$RUNTIME" = "openclaw" ]; then
   mkdir -p "$HOME/.openclaw" "$WORKSPACE"
   export OPENCLAW_HOME="$HOME/.openclaw"
   export OPENCLAW_OUTPUT_MODE="acp"
-  export OPENCLAW_CCCONNECT_PROJECT="$AGENT_ID"
+  export OPENCLAW_CCCONNECT_PROJECT="$CC_PROJECT_ID"
   export NAKO_OUTPUT_MODE="acp"
-  export NAKO_CCCONNECT_PROJECT="$AGENT_ID"
+  export NAKO_CCCONNECT_PROJECT="$CC_PROJECT_ID"
   export NAKO_AGENT_WORKSPACE="$WORKSPACE"
   export NAKO_SKILLS_DIR="$HOME/.openclaw/skills"
   export NAKO_MEDIA_HOME="$HOME/.openclaw/media"
@@ -1851,7 +1863,7 @@ elif [ "$RUNTIME" = "qclaw" ]; then
   check_runtime_launch "QClaw" "$QCLAW_WORKSPACE" "$QCLAW_NODE_BIN" "$QCLAW_OPENCLAW_MJS" acp --session "agent:$AGENT_ID:$QCLAW_CC_SESSION_SUFFIX" || exit 1
 fi
 
-CONFIG_CHANGED="$(python3 - "$CC_CONFIG" "$AGENT_ID" "$RUNTIME" "$DISPLAY_NAME" "$HOME" "$WORKSPACE" "${OPENCLAW_BIN:-}" "$HERMES_HOME" "$HERMES_WORKSPACE" "${HERMES_BIN:-}" "$QCLAW_HOME" "$QCLAW_WORKSPACE" "${QCLAW_NODE_BIN:-}" "${QCLAW_OPENCLAW_MJS:-}" "${QCLAW_OPENCLAW_CONFIG:-$QCLAW_HOME/openclaw.json}" "$QCLAW_CC_SESSION_SUFFIX" "$PATH" <<'PY'
+CONFIG_CHANGED="$(python3 - "$CC_CONFIG" "$AGENT_ID" "$CC_PROJECT_ID" "$RUNTIME" "$DISPLAY_NAME" "$HOME" "$WORKSPACE" "${OPENCLAW_BIN:-}" "$HERMES_HOME" "$HERMES_WORKSPACE" "${HERMES_BIN:-}" "$QCLAW_HOME" "$QCLAW_WORKSPACE" "${QCLAW_NODE_BIN:-}" "${QCLAW_OPENCLAW_MJS:-}" "${QCLAW_OPENCLAW_CONFIG:-$QCLAW_HOME/openclaw.json}" "$QCLAW_CC_SESSION_SUFFIX" "$PATH" <<'PY'
 import os
 import json
 import re
@@ -1859,7 +1871,7 @@ import sys
 import time
 from pathlib import Path
 
-cfg_path, agent_id, runtime, display_name, home, openclaw_workspace, openclaw_bin, hermes_home, hermes_workspace, hermes_bin, qclaw_home, qclaw_workspace, qclaw_node_bin, qclaw_openclaw_mjs, qclaw_config_path, qclaw_session_suffix, path_value = sys.argv[1:]
+cfg_path, agent_id, cc_project_id, runtime, display_name, home, openclaw_workspace, openclaw_bin, hermes_home, hermes_workspace, hermes_bin, qclaw_home, qclaw_workspace, qclaw_node_bin, qclaw_openclaw_mjs, qclaw_config_path, qclaw_session_suffix, path_value = sys.argv[1:]
 path = Path(cfg_path)
 
 def q(value):
@@ -1925,7 +1937,7 @@ if runtime == "hermes":
         "PATH": path_value,
         **cc_env,
         "NAKO_OUTPUT_MODE": "acp",
-        "NAKO_CCCONNECT_PROJECT": agent_id,
+        "NAKO_CCCONNECT_PROJECT": cc_project_id,
         "NAKO_AGENT_WORKSPACE": hermes_workspace,
         "NAKO_SKILLS_DIR": hermes_skills,
         "NAKO_MEDIA_HOME": hermes_media,
@@ -1944,9 +1956,9 @@ elif runtime == "qclaw":
         "PATH": path_value,
         **cc_env,
         "OPENCLAW_OUTPUT_MODE": "acp",
-        "OPENCLAW_CCCONNECT_PROJECT": agent_id,
+        "OPENCLAW_CCCONNECT_PROJECT": cc_project_id,
         "NAKO_OUTPUT_MODE": "acp",
-        "NAKO_CCCONNECT_PROJECT": agent_id,
+        "NAKO_CCCONNECT_PROJECT": cc_project_id,
         "NAKO_AGENT_WORKSPACE": qclaw_workspace,
         "NAKO_SKILLS_DIR": str(Path(qclaw_home) / "skills"),
         "NAKO_MEDIA_HOME": str(Path(qclaw_home) / "media"),
@@ -1966,9 +1978,9 @@ else:
         "PATH": path_value,
         **cc_env,
         "OPENCLAW_OUTPUT_MODE": "acp",
-        "OPENCLAW_CCCONNECT_PROJECT": agent_id,
+        "OPENCLAW_CCCONNECT_PROJECT": cc_project_id,
         "NAKO_OUTPUT_MODE": "acp",
-        "NAKO_CCCONNECT_PROJECT": agent_id,
+        "NAKO_CCCONNECT_PROJECT": cc_project_id,
         "NAKO_AGENT_WORKSPACE": openclaw_workspace,
         "NAKO_SKILLS_DIR": str(Path(openclaw_home) / "skills"),
         "NAKO_MEDIA_HOME": str(Path(openclaw_home) / "media"),
@@ -2005,6 +2017,10 @@ kept = []
 found = False
 changed = global_changed
 
+def project_runtime(part):
+    match = re.search(r'NAKO_AGENT_RUNTIME\s*=\s*"([^"]+)"', part)
+    return match.group(1) if match else ""
+
 for part in parts:
     if not part.startswith("[[projects]]"):
         kept.append(part)
@@ -2012,14 +2028,20 @@ for part in parts:
 
     name_match = re.search(r'(?m)^name\s*=\s*"([^"]+)"\s*$', part)
     name = name_match.group(1) if name_match else ""
-    if name != agent_id:
+    is_target = name == cc_project_id
+    is_legacy_same_runtime = (
+        cc_project_id != agent_id
+        and name == agent_id
+        and project_runtime(part) == runtime
+    )
+    if not is_target and not is_legacy_same_runtime:
         kept.append(part)
         continue
 
     found = True
     platform_match = re.search(r"(?m)^\[\[projects\.platforms\]\]\s*$", part)
     platforms = part[platform_match.start():].lstrip("\n") if platform_match else ""
-    new_part = f'[[projects]]\nname = {q(agent_id)}\n\n{agent_section}'
+    new_part = f'[[projects]]\nname = {q(cc_project_id)}\n\n{agent_section}'
     if platforms:
         new_part += "\n" + platforms
     if new_part != part:
@@ -2029,14 +2051,14 @@ for part in parts:
 if not found:
     if kept and kept[-1] and not kept[-1].endswith("\n"):
         kept[-1] += "\n"
-    kept.append(f'\n[[projects]]\nname = {q(agent_id)}\n\n{agent_section}')
+    kept.append(f'\n[[projects]]\nname = {q(cc_project_id)}\n\n{agent_section}')
     changed = True
 
 new_text = "".join(kept)
 path.parent.mkdir(parents=True, exist_ok=True)
 if changed or not path.exists():
     if path.exists():
-        backup = path.with_name(f"config.toml.bak-runtime-{agent_id}-{runtime}-{time.strftime('%Y%m%d-%H%M%S')}")
+        backup = path.with_name(f"config.toml.bak-runtime-{cc_project_id}-{runtime}-{time.strftime('%Y%m%d-%H%M%S')}")
         backup.write_text(text, encoding="utf-8")
     path.write_text(new_text, encoding="utf-8")
     os.chmod(path, 0o600)
@@ -2054,20 +2076,20 @@ case "$DISABLED_BLOCKING_PROJECTS" in
     dim "  已备份原配置：$HOME/.cc-connect/config.toml.bak-disabled-blocking-projects-*"
     ;;
 esac
-CONFIG_RESULT="$(python3 - "$CC_CONFIG" "$AGENT_ID" <<'PY'
+CONFIG_RESULT="$(python3 - "$CC_CONFIG" "$CC_PROJECT_ID" <<'PY'
 import re, sys
 text = open(sys.argv[1], encoding="utf-8").read()
-agent = sys.argv[2]
+project = sys.argv[2]
 parts = re.split(r"(?m)(?=^\[\[projects\]\]\s*$)", text)
 for part in parts:
-    if f'name = "{agent}"' in part:
+    if f'name = "{project}"' in part:
         command = re.search(r'(?m)^command\s*=\s*"([^"]+)"', part)
         args = re.search(r'(?m)^args\s*=\s*(.+)$', part)
         print((command.group(1) if command else "?") + " " + (args.group(1) if args else "[]"))
         break
 PY
 )"
-info "cc-connect project 已配置: $AGENT_ID → $RUNTIME ($CONFIG_RESULT)"
+info "cc-connect project 已配置: $CC_PROJECT_ID → $RUNTIME ($CONFIG_RESULT)"
 
 ensure_cc_connect_running() {
   local reason="${1:-启动 cc-connect}" old_pids
@@ -2120,7 +2142,7 @@ ensure_cc_connect_running() {
 
 # ── 3. 引导平台 QR onboarding ─────────────────────────────────────────
 has_platform() {
-  python3 - "$1" "$AGENT_ID" "$CC_CONFIG" <<'PY'
+  python3 - "$1" "$CC_PROJECT_ID" "$CC_CONFIG" <<'PY'
 import sys, re
 ptype, agent, cfg = sys.argv[1], sys.argv[2], sys.argv[3]
 text = open(cfg).read()
@@ -2138,7 +2160,7 @@ PY
 }
 
 remove_platform_binding() {
-  python3 - "$1" "$AGENT_ID" "$CC_CONFIG" <<'PY'
+  python3 - "$1" "$CC_PROJECT_ID" "$CC_CONFIG" <<'PY'
 import os
 import re
 import sys
@@ -2187,7 +2209,7 @@ PY
 }
 
 normalize_platform_options() {
-  python3 - "$CC_CONFIG" "$AGENT_ID" <<'PY'
+  python3 - "$CC_CONFIG" "$CC_PROJECT_ID" <<'PY'
 import os
 import re
 import sys
@@ -2242,7 +2264,7 @@ PY
 
 sync_hermes_feishu_env_from_cc_config() {
   [ "$RUNTIME" = "hermes" ] || { echo "skipped"; return 0; }
-  python3 - "$CC_CONFIG" "$AGENT_ID" "$HERMES_WORKSPACE/skills/.env" <<'PY'
+  python3 - "$CC_CONFIG" "$CC_PROJECT_ID" "$HERMES_WORKSPACE/skills/.env" <<'PY'
 import os
 import re
 import sys
@@ -2334,13 +2356,13 @@ setup_platform() {
     fi
   fi
   if [ "$NON_INTERACTIVE" = "1" ]; then
-    dim "未配 $desc — 手动跑：cc-connect $platform setup --project $AGENT_ID"
+    dim "未配 $desc — 手动跑：cc-connect $platform setup --project $CC_PROJECT_ID"
     return 0
   fi
   echo
   warn "$desc 未配置，开始 QR onboarding..."
   dim "扫码完成后 cc-connect 会把凭据写进 config.toml，无需手动复制。"
-  setup_args=("$platform" setup --project "$AGENT_ID" --timeout 600)
+  setup_args=("$platform" setup --project "$CC_PROJECT_ID" --timeout 600)
   [ "$platform" = "weixin" ] && setup_args+=(--set-allow-from-empty)
   if cc-connect "${setup_args[@]}"; then
     CC_CONNECT_CHANGED=1

@@ -10,6 +10,7 @@ param(
   [ValidateSet("openclaw","hermes","qclaw")]
   [string]$Runtime = "openclaw",
   [string]$DisplayName = "",
+  [string]$CcProjectId = "",
   [switch]$WithFeishu,
   [switch]$WithWeixin,
   [ValidateSet("auto","npm","lazycat","skip")]
@@ -662,7 +663,7 @@ function New-AgentSection($RuntimeName) {
     }
     foreach ($entry in $ccEnv.GetEnumerator()) { $envMap[$entry.Key] = $entry.Value }
     $envMap["NAKO_OUTPUT_MODE"] = "acp"
-    $envMap["NAKO_CCCONNECT_PROJECT"] = $AgentId
+    $envMap["NAKO_CCCONNECT_PROJECT"] = $CcProjectId
     $envMap["NAKO_AGENT_WORKSPACE"] = $workspace
     $envMap["NAKO_SKILLS_DIR"] = Join-Path $hermesHome "skills/nako"
     $envMap["NAKO_MEDIA_HOME"] = Join-Path $hermesHome "media"
@@ -685,9 +686,9 @@ function New-AgentSection($RuntimeName) {
     }
     foreach ($entry in $ccEnv.GetEnumerator()) { $envMap[$entry.Key] = $entry.Value }
     $envMap["OPENCLAW_OUTPUT_MODE"] = "acp"
-    $envMap["OPENCLAW_CCCONNECT_PROJECT"] = $AgentId
+    $envMap["OPENCLAW_CCCONNECT_PROJECT"] = $CcProjectId
     $envMap["NAKO_OUTPUT_MODE"] = "acp"
-    $envMap["NAKO_CCCONNECT_PROJECT"] = $AgentId
+    $envMap["NAKO_CCCONNECT_PROJECT"] = $CcProjectId
     $envMap["NAKO_AGENT_WORKSPACE"] = $layout.Workspace
     $envMap["NAKO_SKILLS_DIR"] = Join-Path $layout.Home "skills"
     $envMap["NAKO_MEDIA_HOME"] = Join-Path $layout.Home "media"
@@ -712,9 +713,9 @@ function New-AgentSection($RuntimeName) {
   }
   foreach ($entry in $ccEnv.GetEnumerator()) { $envMap[$entry.Key] = $entry.Value }
   $envMap["OPENCLAW_OUTPUT_MODE"] = "acp"
-  $envMap["OPENCLAW_CCCONNECT_PROJECT"] = $AgentId
+  $envMap["OPENCLAW_CCCONNECT_PROJECT"] = $CcProjectId
   $envMap["NAKO_OUTPUT_MODE"] = "acp"
-  $envMap["NAKO_CCCONNECT_PROJECT"] = $AgentId
+  $envMap["NAKO_CCCONNECT_PROJECT"] = $CcProjectId
   $envMap["NAKO_AGENT_WORKSPACE"] = $workspace
   $envMap["NAKO_SKILLS_DIR"] = Join-Path $openclawHome "skills"
   $envMap["NAKO_MEDIA_HOME"] = Join-Path $openclawHome "media"
@@ -933,14 +934,23 @@ function Update-CcConnectConfig {
       continue
     }
     $nameMatch = [regex]::Match($part, '(?m)^name\s*=\s*"([^"]+)"\s*$')
-    if (-not $nameMatch.Success -or $nameMatch.Groups[1].Value -ne $AgentId) {
+    $projectName = if ($nameMatch.Success) { $nameMatch.Groups[1].Value } else { "" }
+    $runtimeMatch = [regex]::Match($part, 'NAKO_AGENT_RUNTIME\s*=\s*"([^"]+)"')
+    $projectRuntime = if ($runtimeMatch.Success) { $runtimeMatch.Groups[1].Value } else { "" }
+    $isTarget = $projectName -eq $CcProjectId
+    $isLegacySameRuntime = (
+      $CcProjectId -ne $AgentId -and
+      $projectName -eq $AgentId -and
+      $projectRuntime -eq $Runtime
+    )
+    if (-not $isTarget -and -not $isLegacySameRuntime) {
       $kept.Add($part)
       continue
     }
     $found = $true
     $platformMatch = [regex]::Match($part, "(?m)^\[\[projects\.platforms\]\]\s*$")
     $platforms = if ($platformMatch.Success) { $part.Substring($platformMatch.Index).TrimStart("`r","`n") } else { "" }
-    $newPart = "[[projects]]`nname = $(ConvertTo-TomlString $AgentId)`n`n$agentSection"
+    $newPart = "[[projects]]`nname = $(ConvertTo-TomlString $CcProjectId)`n`n$agentSection"
     if ($platforms) { $newPart += "`n$platforms" }
     $kept.Add($newPart)
   }
@@ -948,12 +958,12 @@ function Update-CcConnectConfig {
     if ($kept.Count -gt 0 -and $kept[$kept.Count - 1] -and -not $kept[$kept.Count - 1].EndsWith("`n")) {
       $kept[$kept.Count - 1] += "`n"
     }
-    $kept.Add("`n[[projects]]`nname = $(ConvertTo-TomlString $AgentId)`n`n$agentSection")
+    $kept.Add("`n[[projects]]`nname = $(ConvertTo-TomlString $CcProjectId)`n`n$agentSection")
   }
   $newText = ($kept -join "")
   if ($newText -ne $original -or -not (Test-Path $script:CcConfig)) {
     if (Test-Path $script:CcConfig) {
-      $backup = Join-Path (Split-Path -Parent $script:CcConfig) ("config.toml.bak-runtime-{0}-{1}-{2}" -f $AgentId,$Runtime,(Get-Date -Format "yyyyMMdd-HHmmss"))
+      $backup = Join-Path (Split-Path -Parent $script:CcConfig) ("config.toml.bak-runtime-{0}-{1}-{2}" -f $CcProjectId,$Runtime,(Get-Date -Format "yyyyMMdd-HHmmss"))
       Set-Content -Path $backup -Value $original -NoNewline -Encoding UTF8
     }
     Set-Content -Path $script:CcConfig -Value $newText -NoNewline -Encoding UTF8
@@ -970,14 +980,14 @@ function Remove-CcConnectProject {
   foreach ($part in $parts) {
     if (-not $part.StartsWith("[[projects]]")) { $kept.Add($part); continue }
     $nameMatch = [regex]::Match($part, '(?m)^name\s*=\s*"([^"]+)"\s*$')
-    if ($nameMatch.Success -and $nameMatch.Groups[1].Value -eq $AgentId) {
+    if ($nameMatch.Success -and $nameMatch.Groups[1].Value -eq $CcProjectId) {
       $removed = $true
       continue
     }
     $kept.Add($part)
   }
   if (-not $removed) { return $false }
-  $backup = Join-Path (Split-Path -Parent $script:CcConfig) ("config.toml.bak-uninstall-{0}-{1}" -f $AgentId,(Get-Date -Format "yyyyMMdd-HHmmss"))
+  $backup = Join-Path (Split-Path -Parent $script:CcConfig) ("config.toml.bak-uninstall-{0}-{1}" -f $CcProjectId,(Get-Date -Format "yyyyMMdd-HHmmss"))
   Set-Content -Path $backup -Value $text -NoNewline -Encoding UTF8
   Set-Content -Path $script:CcConfig -Value (($kept -join "").TrimEnd() + "`n") -NoNewline -Encoding UTF8
   return $true
@@ -998,7 +1008,7 @@ function Disable-CcBlockingProjects {
     }
     $nameMatch = [regex]::Match($part, '(?m)^name\s*=\s*"([^"]+)"\s*$')
     $name = if ($nameMatch.Success) { $nameMatch.Groups[1].Value } else { "" }
-    if ($name -eq $AgentId) {
+    if ($name -eq $CcProjectId) {
       $kept.Add($part)
       continue
     }
@@ -1043,7 +1053,7 @@ function Disable-CcBlockingProjects {
 function Remove-CcConnectSessions {
   $sessionDir = Join-Path $script:CcHome "sessions"
   if (-not (Test-Path $sessionDir)) { return }
-  Get-ChildItem -Path $sessionDir -Filter "$AgentId`_*.json" -File -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+  Get-ChildItem -Path $sessionDir -Filter "$CcProjectId`_*.json" -File -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
 }
 
 function Get-CcConnectPids {
@@ -1115,7 +1125,7 @@ function Test-CcPlatformConfigured($Platform) {
   $parts = [regex]::Split($text, "(?m)(?=^\[\[projects\]\]\s*$)")
   foreach ($part in $parts) {
     if (-not $part.StartsWith("[[projects]]")) { continue }
-    if ($part -notmatch "(?m)^name\s*=\s*`"$([regex]::Escape($AgentId))`"\s*$") { continue }
+    if ($part -notmatch "(?m)^name\s*=\s*`"$([regex]::Escape($CcProjectId))`"\s*$") { continue }
     if ($part -match "(?m)^type\s*=\s*`"$([regex]::Escape($Platform))`"\s*$") { return $true }
   }
   return $false
@@ -1133,7 +1143,7 @@ function Remove-CcPlatformBinding($Platform) {
       $out.Add($part)
       continue
     }
-    if ($part -notmatch "(?m)^name\s*=\s*`"$([regex]::Escape($AgentId))`"\s*$") {
+    if ($part -notmatch "(?m)^name\s*=\s*`"$([regex]::Escape($CcProjectId))`"\s*$") {
       $out.Add($part)
       continue
     }
@@ -1154,7 +1164,7 @@ function Remove-CcPlatformBinding($Platform) {
     $out.Add(($fixed -join ""))
   }
   if ($changed) {
-    $backup = Join-Path (Split-Path -Parent $script:CcConfig) ("config.toml.bak-rebind-{0}-{1}-{2}" -f $AgentId,$Platform,(Get-Date -Format "yyyyMMdd-HHmmss"))
+    $backup = Join-Path (Split-Path -Parent $script:CcConfig) ("config.toml.bak-rebind-{0}-{1}-{2}" -f $CcProjectId,$Platform,(Get-Date -Format "yyyyMMdd-HHmmss"))
     Set-Content -Path $backup -Value $text -NoNewline -Encoding UTF8
     Set-Content -Path $script:CcConfig -Value ((($out -join "").TrimEnd()) + "`n") -NoNewline -Encoding UTF8
     $script:CcConnectChanged = $true
@@ -1169,7 +1179,7 @@ function Normalize-CcPlatformOptions {
   $changed = $false
   $out = New-Object System.Collections.Generic.List[string]
   foreach ($part in $parts) {
-    if (-not $part.StartsWith("[[projects]]") -or $part -notmatch "(?m)^name\s*=\s*`"$([regex]::Escape($AgentId))`"\s*$") {
+    if (-not $part.StartsWith("[[projects]]") -or $part -notmatch "(?m)^name\s*=\s*`"$([regex]::Escape($CcProjectId))`"\s*$") {
       $out.Add($part)
       continue
     }
@@ -1192,7 +1202,7 @@ function Normalize-CcPlatformOptions {
     $out.Add(($fixed -join ""))
   }
   if ($changed) {
-    $backup = Join-Path (Split-Path -Parent $script:CcConfig) ("config.toml.bak-platform-options-{0}-{1}" -f $AgentId,(Get-Date -Format "yyyyMMdd-HHmmss"))
+    $backup = Join-Path (Split-Path -Parent $script:CcConfig) ("config.toml.bak-platform-options-{0}-{1}" -f $CcProjectId,(Get-Date -Format "yyyyMMdd-HHmmss"))
     Set-Content -Path $backup -Value $text -NoNewline -Encoding UTF8
     Set-Content -Path $script:CcConfig -Value ($out -join "") -NoNewline -Encoding UTF8
     $script:CcConnectChanged = $true
@@ -1241,7 +1251,7 @@ function Open-CcQrImage($Path, $Label) {
 
 function Invoke-CcPlatformSetupWithQr($Platform, $Label, $QrPath) {
   $cmd = (Get-Command cc-connect -ErrorAction Stop).Source
-  $args = @($Platform, "setup", "--project", $AgentId, "--timeout", "600", "--qr-image", $QrPath)
+  $args = @($Platform, "setup", "--project", $CcProjectId, "--timeout", "600", "--qr-image", $QrPath)
   if ($Platform -eq "weixin") {
     $args += "--set-allow-from-empty"
   }
@@ -1289,13 +1299,13 @@ function Setup-CcPlatform($Platform, $Label) {
     }
   }
   if ($NonInteractive) {
-    Dim "missing $Label; run manually: cc-connect $Platform setup --project $AgentId"
+    Dim "missing $Label; run manually: cc-connect $Platform setup --project $CcProjectId"
     return
   }
   Warn "$Label is not configured; starting QR onboarding"
   $qrDir = Join-Path $script:CcHome "qr"
   New-Item -ItemType Directory -Path $qrDir -Force | Out-Null
-  $qrPath = Join-Path $qrDir "$AgentId-$Platform.png"
+  $qrPath = Join-Path $qrDir "$CcProjectId-$Platform.png"
   Remove-Item -Force $qrPath -ErrorAction SilentlyContinue
   Dim "QR image will be saved to: $qrPath"
   $rc = Invoke-CcPlatformSetupWithQr $Platform $Label $qrPath
@@ -1314,7 +1324,7 @@ function Sync-HermesFeishuEnv {
   $appId = ""; $appSecret = ""
   $parts = [regex]::Split($text, "(?m)(?=^\[\[projects\]\]\s*$)")
   foreach ($part in $parts) {
-    if (-not $part.StartsWith("[[projects]]") -or $part -notmatch "(?m)^name\s*=\s*`"$([regex]::Escape($AgentId))`"\s*$") { continue }
+    if (-not $part.StartsWith("[[projects]]") -or $part -notmatch "(?m)^name\s*=\s*`"$([regex]::Escape($CcProjectId))`"\s*$") { continue }
     $blocks = [regex]::Split($part, "(?m)(?=^\[\[projects\.platforms\]\]\s*$)")
     foreach ($block in $blocks) {
       if ($block -notmatch '(?m)^type\s*=\s*"(feishu|lark)"\s*$') { continue }
@@ -1346,11 +1356,11 @@ function Sync-HermesFeishuEnv {
 }
 
 function Invoke-CcUninstall {
-  Step "uninstall cc-connect project: $AgentId"
+  Step "uninstall cc-connect project: $CcProjectId"
   & cc-connect daemon stop --work-dir $script:CcHome *> $null
   if ($PurgeCcConnect) { & cc-connect daemon uninstall --work-dir $script:CcHome *> $null }
   Stop-CcConnectProcesses
-  if (Remove-CcConnectProject) { Info "removed project: $AgentId" } else { Dim "project not found: $AgentId" }
+  if (Remove-CcConnectProject) { Info "removed project: $CcProjectId" } else { Dim "project not found: $CcProjectId" }
   Remove-CcConnectSessions
   if ($PurgeCcConnect) { Invoke-CcPurgeBinary }
 }
@@ -1429,6 +1439,17 @@ if (-not $DisplayName) {
     default { "OpenClaw $AgentId" }
   }
 }
+if (-not $CcProjectId) {
+  if ($env:CC_PROJECT_ID) {
+    $CcProjectId = $env:CC_PROJECT_ID
+  } elseif ($env:CC_CONNECT_PROJECT_ID) {
+    $CcProjectId = $env:CC_CONNECT_PROJECT_ID
+  } elseif ($Runtime -eq "openclaw") {
+    $CcProjectId = $AgentId
+  } else {
+    $CcProjectId = "$AgentId-$Runtime"
+  }
+}
 
 if ($UninstallAll) { Invoke-CcUninstallAll; exit 0 }
 if ($Uninstall) { Invoke-CcUninstall; exit 0 }
@@ -1456,7 +1477,7 @@ if ($CcConnectSource -eq "skip") {
 }
 Info (& cc-connect --version 2>&1 | Select-Object -First 1)
 
-Step "2. configure cc-connect project: $AgentId"
+Step "2. configure cc-connect project: $CcProjectId"
 try {
   Initialize-QClawRuntimeForCcConnect
   Update-CcConnectConfig
@@ -1466,7 +1487,7 @@ try {
   ErrL $_.Exception.Message
   exit 1
 }
-Info "cc-connect project configured: $AgentId -> $Runtime"
+Info "cc-connect project configured: $CcProjectId -> $Runtime"
 
 Step "3. platform QR onboarding"
 if ($WithFeishu) { Setup-CcPlatform "feishu" "Feishu" }

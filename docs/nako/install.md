@@ -69,6 +69,7 @@ Nako 本体需要一个能稳定中文对话、角色扮演、指令跟随的文
 | `--with-feishu` | 配置 cc-connect 并引导飞书 QR |
 | `--with-weixin` | 配置 cc-connect 并引导微信 QR |
 | `--cc-connect-source auto\|npm\|lazycat\|skip` | cc-connect 来源；默认 `auto`，微信会优先下载 CodeEagle fork release |
+| `--cc-project-id <id>` | 指定 cc-connect project 名。默认 OpenClaw 使用 `agent-id`，QClaw 使用 `agent-id-qclaw`，Hermes 使用 `agent-id-hermes`，避免同一台机器上多个 runtime 互相覆盖 |
 
 卸载某个 agent 的 cc-connect 接入：
 
@@ -90,6 +91,12 @@ bash scripts/cc-connect-setup.sh --agent-id agent-nako --uninstall-all
 `~/.nako-agent.bak-uninstall-all-<agent-id>-*` 备份目录。
 
 Windows PowerShell 对应参数使用 PascalCase，例如 `-Runtime qclaw`、`-ResetSecrets`、`-WithFeishu`、`-WithWeixin`、`-CcConnectSource lazycat`。PowerShell 的 cc-connect 自动接入会优先调用仓库里的 `scripts/cc-connect-setup.ps1`，不需要 Git Bash / WSL；只有旧包缺少 `.ps1` 时才会回退到 Bash 脚本。
+
+同一台机器同时安装 OpenClaw 和 QClaw 时，可以复用同一个 `--agent-id`。cc-connect
+project 会自动分开：OpenClaw 默认是 `agent-nako`，QClaw 默认是
+`agent-nako-qclaw`。这样 `~/.cc-connect/config.toml` 和
+`~/.cc-connect/sessions` 不会因为重装另一个 runtime 被覆盖。需要自定义 project
+名时用 `--cc-project-id` / `-CcProjectId`。
 
 PowerShell 下接入 QClaw：
 

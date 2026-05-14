@@ -120,8 +120,11 @@ pwsh scripts/cc-connect-setup.ps1 -AgentId agent-foo -Runtime qclaw -WithFeishu 
 
 QClaw 后端需要和 `cc-connect` 跑在同一个 host/user 下；如果 `cc-connect`
 在 Linux VM 里，不能直接执行宿主机 macOS 的 `QClaw.app`。
-接入后飞书/微信消息会写入 QClaw 的 `cc-connect 飞书/微信` ACP 会话，
-对应 session key 为 `agent:<id>:session-cc-connect`。
+同一台机器同时接 OpenClaw 和 QClaw 时，cc-connect project 会自动隔离：
+OpenClaw 默认使用 `<agent-id>`，QClaw 默认使用 `<agent-id>-qclaw`，
+Hermes 默认使用 `<agent-id>-hermes`；需要手动指定时加 `--cc-project-id` /
+`-CcProjectId`。接入后飞书/微信消息会写入 QClaw 的 `cc-connect 飞书/微信`
+ACP 会话，对应 QClaw session key 为 `agent:<id>:session-cc-connect`。
 
 完整 flag：`bash scripts/cc-connect-setup.sh --help`
 

@@ -15,6 +15,8 @@ grep -Fq 'function Install-CcConnectRelease' "$ROOT/scripts/cc-connect-setup.ps1
 grep -Fq 'cc-connect-$CcConnectLazycatVersion-$platform.tar.gz' "$ROOT/scripts/cc-connect-setup.ps1"
 grep -Fq 'cc-connect-$platform.exe' "$ROOT/scripts/cc-connect-setup.ps1"
 grep -Fq 'function Update-CcConnectConfig' "$ROOT/scripts/cc-connect-setup.ps1"
+grep -Fq '[string]$CcProjectId = ""' "$ROOT/scripts/cc-connect-setup.ps1"
+grep -Fq '$CcProjectId = "$AgentId-$Runtime"' "$ROOT/scripts/cc-connect-setup.ps1"
 grep -Fq 'function Setup-CcPlatform' "$ROOT/scripts/cc-connect-setup.ps1"
 grep -Fq 'function Ensure-CcConnectRunning' "$ROOT/scripts/cc-connect-setup.ps1"
 grep -Fq 'function Open-CcQrImage' "$ROOT/scripts/cc-connect-setup.ps1"
@@ -39,6 +41,7 @@ grep -Fq 'Get-Process -Name "cc-connect"' "$ROOT/scripts/cc-connect-setup.ps1"
 
 grep -Fq 'cc-connect-setup.ps1' "$ROOT/install.ps1"
 grep -Fq 'Convert-CcSetupFlagsToPowerShellArgs' "$ROOT/install.ps1"
+grep -Fq '"--cc-project-id" { $out += "-CcProjectId"' "$ROOT/install.ps1"
 grep -Fq 'function Test-CcPlatformBound' "$ROOT/install.ps1"
 grep -Fq '& $psHost.Source -NoProfile -File $ccSetupPs @psArgs 2>&1 | ForEach-Object { Write-Host $_ }' "$ROOT/install.ps1"
 grep -Fq 'return [int]$exitCode' "$ROOT/install.ps1"
@@ -222,6 +225,31 @@ mjs = Path(sys.argv[2])
     json.dumps({"gateway": {"auth": {"token": "tok_qclaw"}}}),
     encoding="utf-8",
 )
+(root / ".cc-connect").mkdir(parents=True, exist_ok=True)
+(root / ".cc-connect" / "config.toml").write_text(
+    """
+language = "en"
+
+[[projects]]
+name = "agent-test"
+
+[projects.agent]
+type = "acp"
+
+[projects.agent.options]
+work_dir = "/existing-openclaw"
+command = "openclaw"
+args = ["acp", "--session", "agent:agent-test:main"]
+env = { NAKO_AGENT_RUNTIME = "openclaw", NAKO_CCCONNECT_PROJECT = "agent-test" }
+
+[[projects.platforms]]
+type = "weixin"
+
+[projects.platforms.options]
+token = "openclaw-token"
+""",
+    encoding="utf-8",
+)
 PY
 EXPECTED_QCLAW_MJS="$qclaw_mjs" NAKO_HOME="$tmp_qclaw" PATH="$tmp/bin:$PATH" \
   pwsh -NoProfile -File "$ROOT/scripts/cc-connect-setup.ps1" \
@@ -246,6 +274,25 @@ assert entry, sessions
 assert entry.get("label") == "cc-connect 飞书/微信"
 assert entry.get("origin", {}).get("surface") == "webchat"
 assert entry.get("origin", {}).get("label") == "cc-connect 飞书/微信"
+PY
+python3 - "$tmp_qclaw" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+cfg = (root / ".cc-connect" / "config.toml").read_text(encoding="utf-8")
+parts = [part for part in re.split(r"(?m)(?=^\[\[projects\]\]\s*$)", cfg) if part.startswith("[[projects]]")]
+projects = {}
+for part in parts:
+    match = re.search(r'(?m)^name\s*=\s*"([^"]+)"\s*$', part)
+    if match:
+        projects[match.group(1)] = part
+assert set(projects) == {"agent-test", "agent-test-qclaw"}, projects
+assert 'args = ["acp", "--session", "agent:agent-test:main"]' in projects["agent-test"]
+assert 'token = "openclaw-token"' in projects["agent-test"]
+assert 'agent:agent-test:session-cc-connect' in projects["agent-test-qclaw"]
+assert 'NAKO_CCCONNECT_PROJECT = "agent-test-qclaw"' in projects["agent-test-qclaw"]
 PY
 
 printf 'qclaw workspace marker\n' > "$tmp_qclaw/.qclaw-state/workspace-agent-test/reinstall-marker.txt"
@@ -292,7 +339,7 @@ assert agent.get("workspace") == str(root / ".qclaw-state" / "workspace-agent-te
 sessions = json.loads((root / ".qclaw-state" / "agents" / "agent-test" / "sessions" / "sessions.json").read_text(encoding="utf-8"))
 assert "agent:agent-test:session-cc-connect" in sessions, sessions
 cc = (root / ".cc-connect" / "config.toml").read_text(encoding="utf-8")
-assert 'name = "agent-test"' in cc
+assert 'name = "agent-test-qclaw"' in cc
 assert 'NAKO_AGENT_RUNTIME = "qclaw"' in cc
 PY
 

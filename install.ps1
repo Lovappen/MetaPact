@@ -22,6 +22,7 @@ param(
   [switch]$UninstallCcConnect,
   [switch]$UninstallAllCcConnect,
   [switch]$PurgeCcConnect,
+  [string]$CcProjectId = "",
   [ValidateSet("auto","npm","lazycat","skip")]
   [string]$CcConnectSource = "lazycat"
 )
@@ -138,6 +139,8 @@ function Convert-CcSetupFlagsToPowerShellArgs([string[]]$Flags) {
       "--runtime" { $out += "-Runtime"; $i++; $out += $Flags[$i]; continue }
       "--backend" { $out += "-Runtime"; $i++; $out += $Flags[$i]; continue }
       "--display-name" { $out += "-DisplayName"; $i++; $out += $Flags[$i]; continue }
+      "--cc-project-id" { $out += "-CcProjectId"; $i++; $out += $Flags[$i]; continue }
+      "--project-id" { $out += "-CcProjectId"; $i++; $out += $Flags[$i]; continue }
       "--with-feishu" { $out += "-WithFeishu"; continue }
       "--with-weixin" { $out += "-WithWeixin"; continue }
       "--cc-connect-source" { $out += "-CcConnectSource"; $i++; $out += $Flags[$i]; continue }
@@ -1397,6 +1400,7 @@ if ($WithCcConnect -or ((-not $NonInteractive) -and (Confirm "现在配置 cc-co
   if ($WithFeishu) { $CcFlags += "--with-feishu" }
   if ($WithWeixin) { $CcFlags += "--with-weixin" }
   $CcFlags += @("--cc-connect-source", $CcConnectSource)
+  if ($CcProjectId) { $CcFlags += @("--cc-project-id", $CcProjectId) }
   $oldQClawPersonaChanged = $env:QCLAW_PERSONA_CHANGED
   if ($Runtime -eq "qclaw") { $env:QCLAW_PERSONA_CHANGED = "1" }
   try {

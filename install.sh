@@ -15,6 +15,7 @@
 #   --skip-skills       : skip skill install (persona only)
 #   --skip-models       : skip model mapping (keep existing primary)
 #   --cc-connect-source : auto|npm|lazycat|skip (default lazycat; CodeEagle fork)
+#   --cc-project-id ID  : cc-connect project id (默认 openclaw 用 agent id，其他 runtime 加后缀)
 
 set -euo pipefail
 
@@ -70,6 +71,7 @@ WITH_CC_CONNECT=0
 WITH_FEISHU=0
 WITH_WEIXIN=0
 CC_CONNECT_SOURCE="${CC_CONNECT_SOURCE:-lazycat}"
+CC_PROJECT_ID="${CC_PROJECT_ID:-${CC_CONNECT_PROJECT_ID:-}}"
 NAKO_AGENT_RUNTIME="${NAKO_AGENT_RUNTIME:-openclaw}"
 HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
 HERMES_BIN="${HERMES_BIN:-}"
@@ -95,6 +97,7 @@ while [ $# -gt 0 ]; do
     --with-feishu)     WITH_FEISHU=1; WITH_CC_CONNECT=1; shift ;;
     --with-weixin)     WITH_WEIXIN=1; WITH_CC_CONNECT=1; shift ;;
     --cc-connect-source) CC_CONNECT_SOURCE="$2"; WITH_CC_CONNECT=1; shift 2 ;;
+    --cc-project-id|--project-id) CC_PROJECT_ID="$2"; WITH_CC_CONNECT=1; shift 2 ;;
     -h|--help)
       grep -E "^# " "$0" | head -20; exit 0 ;;
     *) err "Unknown flag: $1"; exit 1 ;;
@@ -1876,6 +1879,7 @@ if [ "$WITH_CC_CONNECT" = "1" ] || { [ "$NON_INTERACTIVE" != "1" ] && confirm "�
   [ "$WITH_FEISHU" = "1" ]     && CC_FLAGS+=(--with-feishu)
   [ "$WITH_WEIXIN" = "1" ]     && CC_FLAGS+=(--with-weixin)
   CC_FLAGS+=(--cc-connect-source "$CC_CONNECT_SOURCE")
+  [ -n "$CC_PROJECT_ID" ] && CC_FLAGS+=(--cc-project-id "$CC_PROJECT_ID")
   CC_SETUP="$PACK_ROOT/../scripts/cc-connect-setup.sh"
   if [ ! -f "$CC_SETUP" ]; then CC_SETUP="$SCRIPT_DIR/cc-connect-setup.sh"; fi  # legacy fallback
   if [ "$NAKO_AGENT_RUNTIME" = "qclaw" ] && [ "$FORCE" = "1" ]; then
