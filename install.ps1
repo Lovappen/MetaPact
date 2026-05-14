@@ -26,6 +26,22 @@ param(
   [string]$CcConnectSource = "lazycat"
 )
 
+function Initialize-Utf8Console {
+  $env:PYTHONIOENCODING = "utf-8"
+  $env:PYTHONUTF8 = "1"
+  try {
+    $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+    if ([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Windows)) {
+      $chcp = Get-Command chcp.com -ErrorAction SilentlyContinue
+      if ($chcp) { & $chcp.Source 65001 > $null 2>&1 }
+    }
+    [Console]::InputEncoding = $utf8NoBom
+    [Console]::OutputEncoding = $utf8NoBom
+    $global:OutputEncoding = $utf8NoBom
+  } catch {}
+}
+Initialize-Utf8Console
+
 $ErrorActionPreference = "Stop"
 if ($env:NAKO_AGENT_RUNTIME -and -not $PSBoundParameters.ContainsKey("Runtime")) {
   if ($env:NAKO_AGENT_RUNTIME -in @("openclaw","hermes","qclaw")) {
