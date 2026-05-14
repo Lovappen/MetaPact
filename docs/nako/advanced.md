@@ -48,7 +48,16 @@ nako 默认称呼是「主人大人」，关系阶段从阶段 1 开始。轻度
 - 只有角色扮演模式才叫「主人大人」。
 ```
 
-长期状态写 `MEMORY.md`：
+长期状态通过安装后的记忆脚本写入，避免手工覆盖短期记忆或好感阶段：
+
+```bash
+bash <workspace>/scripts/memory-write.sh \
+  --summary "用户更喜欢轻松陪伴" \
+  --long "用户更喜欢轻松陪伴，不喜欢频繁主动消息" \
+  --affinity 35
+```
+
+脚本会同时更新 `memory/YYYY-MM-DD.md` 和 `MEMORY.md`：
 
 ```markdown
 **当前好感阶段**：2（互有好感阶段）

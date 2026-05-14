@@ -50,6 +50,7 @@
 - `<workspace>/scripts/heartbeat-check.sh` 每 30 分钟跑一次（cron `nako-heartbeat`）
 - 退出码 1 = 思念值 ≥ 80，应主动给主人发一条消息
 - `<workspace>/scripts/mood-recovery.sh` 收到用户消息时跑一次（重置思念值 + 回血情绪）
+- `<workspace>/scripts/memory-write.sh` 对话结束或用户要求记住时调用（写入当天记忆 + 滚动更新 `MEMORY.md`）
 - state 在 `<workspace>/memory/heartbeat-state.json`
 
 ## 用户个人信息库
@@ -71,5 +72,5 @@
 
 ---
 
-**更新规则**：每次对话结束后自动追加短期记忆（最多保留 5 条，老的滚出）。  
+**更新规则**：每次对话结束后调用 `<workspace>/scripts/memory-write.sh --summary "..."` 追加短期记忆（最多保留 5 条，老的滚出）。
 **阶段提升**：好感值跨阈值时在最上方标注（1→2: 30，2→3: 60，3→4: 85）。

@@ -73,12 +73,14 @@ skill 脚本支持两种产物投递方式，由环境变量 `NAKO_OUTPUT_MODE`�
 | `send-active-message.sh` | cron / agent 需要主动发文字时调用 | 通过 cc-connect 发送到当前最近活跃会话；不要依赖 openclaw cron delivery |
 | `daily-missing-reminder.sh` | cron `nako-missing-reminder`（每天 16:50） | 发送默认思念提醒或只触发 doki 振动（`NAKO_REMINDER_SKIP_SEND=1`） |
 | `mood-recovery.sh` | **agent 在每次收到用户消息时主动调用** | 思念值清零、情绪回血。务必在每个 turn 开头跑一次 |
+| `memory-write.sh` | **main session 对话结束 / 用户要求记住时调用** | 追加 `memory/YYYY-MM-DD.md`，滚动更新 `MEMORY.md` 最近 5 条，可选更新好感值/阶段 |
 
 调用约定：
 ```bash
 bash <workspace>/scripts/heartbeat-check.sh   # 退出码 1 = 触发
 bash <workspace>/scripts/send-active-message.sh "主人大人～..."  # 主动发文字
 bash <workspace>/scripts/mood-recovery.sh     # 用户来消息时
+bash <workspace>/scripts/memory-write.sh --summary "用户喜欢周末听爵士乐" --long "用户明确说周末会听爵士乐放松" --affinity-delta 2
 ```
 
 state 文件：`<workspace>/memory/heartbeat-state.json`（思念值 + 情绪值的 source of truth，所有脚本读写它）。
