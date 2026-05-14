@@ -23,6 +23,8 @@ grep -Fq 'function Resolve-OpenClawCommand' "$ROOT/scripts/cc-connect-setup.ps1"
 grep -Fq 'function Disable-CcBlockingProjects' "$ROOT/scripts/cc-connect-setup.ps1"
 grep -Fq 'function Add-CcProcessArguments' "$ROOT/scripts/cc-connect-setup.ps1"
 grep -Fq 'function Test-CcAgentRuntimeLaunch' "$ROOT/scripts/cc-connect-setup.ps1"
+grep -Fq 'function Ensure-QClawAgentRegistration' "$ROOT/scripts/cc-connect-setup.ps1"
+grep -Fq 'function Ensure-QClawCcSession' "$ROOT/scripts/cc-connect-setup.ps1"
 grep -Fq 'function Wait-CcConnectApiSocket' "$ROOT/scripts/cc-connect-setup.ps1"
 grep -Fq 'cc-connect API socket not ready' "$ROOT/scripts/cc-connect-setup.ps1"
 grep -Fq 'Confirm-Choice "$Label is already configured. Unbind and rescan QR?" "n"' "$ROOT/scripts/cc-connect-setup.ps1"
@@ -194,6 +196,25 @@ EXPECTED_QCLAW_MJS="$qclaw_mjs" NAKO_HOME="$tmp_qclaw" PATH="$tmp/bin:$PATH" \
   pwsh -NoProfile -File "$ROOT/scripts/cc-connect-setup.ps1" \
   -AgentId agent-test -Runtime qclaw -CcConnectSource skip -NonInteractive >/dev/null
 grep -Fq "$qclaw_mjs" "$tmp_qclaw/.cc-connect/config.toml"
+python3 - "$tmp_qclaw" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+cfg = json.loads((root / ".qclaw-state" / "openclaw.json").read_text(encoding="utf-8"))
+agents = cfg.get("agents", {}).get("list", [])
+agent = next((item for item in agents if item.get("id") == "agent-test"), None)
+assert agent, cfg
+assert agent.get("workspace") == str(root / ".qclaw-state" / "workspace-agent-test")
+assert agent.get("agentDir") == str(root / ".qclaw-state" / "agents" / "agent-test" / "agent")
+session_file = root / ".qclaw-state" / "agents" / "agent-test" / "sessions" / "sessions.json"
+sessions = json.loads(session_file.read_text(encoding="utf-8"))
+entry = sessions.get("agent:agent-test:session-cc-connect")
+assert entry, sessions
+assert entry.get("label") == "cc-connect"
+assert entry.get("origin", {}).get("surface") == "webchat"
+PY
 
 cat >> "$tmp/.cc-connect/config.toml" <<EOF
 

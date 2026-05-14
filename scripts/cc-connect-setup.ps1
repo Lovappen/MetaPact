@@ -302,6 +302,344 @@ function Get-GatewayToken($ConfigPath) {
   return ""
 }
 
+function ConvertTo-CcPlainJsonValue($Value) {
+  if ($null -eq $Value) { return $null }
+  if ($Value -is [string]) { return $Value }
+  if ($Value -is [System.Collections.IDictionary]) {
+    $out = [ordered]@{}
+    foreach ($key in $Value.Keys) {
+      $out[$key] = ConvertTo-CcPlainJsonValue $Value[$key]
+    }
+    return $out
+  }
+  if ($Value -is [pscustomobject]) {
+    $out = [ordered]@{}
+    foreach ($prop in $Value.PSObject.Properties) {
+      $out[$prop.Name] = ConvertTo-CcPlainJsonValue $prop.Value
+    }
+    return $out
+  }
+  if ($Value -is [System.Collections.IEnumerable]) {
+    $items = @()
+    foreach ($item in $Value) {
+      $items += ,(ConvertTo-CcPlainJsonValue $item)
+    }
+    return $items
+  }
+  return $Value
+}
+
+function Read-CcJsonMap($PathValue) {
+  if (-not (Test-Path $PathValue)) { return [ordered]@{} }
+  try {
+    $value = ConvertTo-CcPlainJsonValue (Get-Content $PathValue -Raw | ConvertFrom-Json)
+    if ($value -is [System.Collections.IDictionary]) { return $value }
+  } catch {}
+  return [ordered]@{}
+}
+
+function Test-CcMapKey($Map, $Key) {
+  return ($Map -is [System.Collections.IDictionary] -and $Map.Contains($Key))
+}
+
+function Copy-CcJsonMap($Map) {
+  $out = [ordered]@{}
+  if ($Map -is [System.Collections.IDictionary]) {
+    foreach ($key in $Map.Keys) {
+      $out[$key] = $Map[$key]
+    }
+  }
+  return $out
+}
+
+function Get-CcMapString($Map, $Key) {
+  if (-not (Test-CcMapKey $Map $Key)) { return "" }
+  $value = $Map[$Key]
+  if ($value -is [string]) { return $value }
+  return ""
+}
+
+function ConvertTo-CcJsonBoolean($Value) {
+  if ($Value -is [bool]) { return $Value }
+  if ($Value -is [string]) { return ($Value -match '^(1|true|yes)$') }
+  if ($null -eq $Value) { return $false }
+  return [bool]$Value
+}
+
+function Write-CcJsonIfChanged($PathValue, $Data, $BackupPrefix) {
+  $old = if (Test-Path $PathValue) { Get-Content $PathValue -Raw -ErrorAction SilentlyContinue } else { "" }
+  $new = ($Data | ConvertTo-Json -Depth 80) + "`n"
+  if ($old -eq $new) { return $false }
+  $parent = Split-Path -Parent $PathValue
+  New-Item -ItemType Directory -Path $parent -Force | Out-Null
+  if (Test-Path $PathValue) {
+    $backup = Join-Path $parent ("{0}-{1}" -f $BackupPrefix,(Get-Date -Format "yyyyMMdd-HHmmss"))
+    Set-Content -Path $backup -Value $old -NoNewline -Encoding UTF8
+  }
+  Set-Content -Path $PathValue -Value $new -NoNewline -Encoding UTF8
+  return $true
+}
+
+function Get-QClawIdentityFromWorkspace($Workspace) {
+  $text = ""
+  foreach ($name in @("IDENTITY.md", "AGENTS.md", "SOUL.md")) {
+    $path = Join-Path $Workspace $name
+    if (Test-Path $path) {
+      try { $text += "`n" + (Get-Content $path -Raw -Encoding UTF8 -ErrorAction SilentlyContinue) } catch {}
+    }
+  }
+  $identity = [ordered]@{}
+  foreach ($line in ($text -split "`r?`n")) {
+    if ($line.Trim() -match '^-?\s*(\w+)\s*:\s*(.+)$') {
+      $label = $Matches[1].ToLowerInvariant()
+      $value = $Matches[2].Trim()
+      switch ($label) {
+        "name" { $identity["name"] = $value }
+        "emoji" { $identity["emoji"] = $value }
+        "vibe" {
+          if (-not (Test-CcMapKey $identity "theme")) { $identity["theme"] = $value }
+        }
+        "avatar" { $identity["avatar"] = $value }
+      }
+    }
+  }
+  if ($identity.Count -gt 0) { return $identity }
+  foreach ($pattern in @("\*\*姓名\*\*[：:]\s*([^\n\r ]+)", "姓名[：:]\s*([^\n\r ]+)", "name[：:]\s*([^\n\r ]+)")) {
+    $match = [regex]::Match($text, $pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+    if ($match.Success) {
+      $identity["name"] = $match.Groups[1].Value.Trim()
+      return $identity
+    }
+  }
+  return [ordered]@{}
+}
+
+function ConvertTo-QClawIdentityMap($Value) {
+  $identity = [ordered]@{}
+  if (-not ($Value -is [System.Collections.IDictionary])) { return $identity }
+  foreach ($key in @("name", "emoji", "theme", "avatar")) {
+    $item = Get-CcMapString $Value $key
+    if ($item) { $identity[$key] = $item }
+  }
+  if (-not (Test-CcMapKey $identity "theme")) {
+    $vibe = Get-CcMapString $Value "vibe"
+    if ($vibe) { $identity["theme"] = $vibe }
+  }
+  return $identity
+}
+
+function Get-QClawAgentPaths($Layout) {
+  $agentsRoot = Join-Path $Layout.Home "agents"
+  $agentRoot = Join-Path $agentsRoot $AgentId
+  [pscustomobject]@{
+    Root = $agentRoot
+    AgentDir = Join-Path $agentRoot "agent"
+    SessionsDir = Join-Path $agentRoot "sessions"
+  }
+}
+
+function Ensure-QClawAgentRegistration {
+  $layout = Get-QClawLayout
+  $paths = Get-QClawAgentPaths $layout
+  New-Item -ItemType Directory -Path $layout.Workspace,$paths.AgentDir -Force | Out-Null
+
+  $cfg = Read-CcJsonMap $layout.ConfigPath
+  $agents = if (Test-CcMapKey $cfg "agents" -and $cfg["agents"] -is [System.Collections.IDictionary]) {
+    $cfg["agents"]
+  } else {
+    [ordered]@{}
+  }
+  $cfg["agents"] = $agents
+
+  $items = @()
+  if (Test-CcMapKey $agents "list" -and -not ($null -eq $agents["list"])) {
+    $items = @($agents["list"])
+  }
+  $existing = [ordered]@{}
+  $existingIndex = -1
+  for ($i = 0; $i -lt $items.Count; $i++) {
+    if ($items[$i] -is [System.Collections.IDictionary] -and (Get-CcMapString $items[$i] "id") -eq $AgentId) {
+      $existing = $items[$i]
+      $existingIndex = $i
+      break
+    }
+  }
+
+  $identity = ConvertTo-QClawIdentityMap $(if (Test-CcMapKey $existing "identity") { $existing["identity"] } else { $null })
+  if ($identity.Count -eq 0) {
+    $identity = Get-QClawIdentityFromWorkspace $layout.Workspace
+  }
+  if ($AgentId.StartsWith("agent-nako", [StringComparison]::Ordinal)) {
+    $legacyAvatars = @(
+      "assets/nako-avatar.svg",
+      "https://pulseact.lovappen.cn/test/act_ci_build/dlc-promotion/act-gengen/images/e.png"
+    )
+    if ((Get-CcMapString $identity "avatar") -in $legacyAvatars) {
+      $identity["avatar"] = "assets/nako-avatar-head.png"
+    }
+    foreach ($pair in @(
+      @("name", "野木奈子"),
+      @("emoji", "🎀"),
+      @("theme", "核战后赛博世界专属战斗女仆"),
+      @("avatar", "assets/nako-avatar-head.png")
+    )) {
+      if (-not (Get-CcMapString $identity $pair[0])) { $identity[$pair[0]] = $pair[1] }
+    }
+  }
+
+  $entry = Copy-CcJsonMap $existing
+  $name = Get-CcMapString $existing "name"
+  if (-not $name -or $name -eq $AgentId) { $name = Get-CcMapString $identity "name" }
+  if (-not $name) {
+    $fallback = $DisplayName.Trim()
+    if ($fallback.StartsWith("QClaw ", [StringComparison]::Ordinal)) {
+      $fallback = $fallback.Substring(6)
+    }
+    $name = if ($fallback) { $fallback } else { $AgentId }
+  }
+
+  $entry["id"] = $AgentId
+  $entry["name"] = $name
+  $entry["workspace"] = $layout.Workspace
+  $entry["agentDir"] = $paths.AgentDir
+  if ($identity.Count -gt 0) { $entry["identity"] = $identity }
+
+  $model = Get-CcMapString $existing "model"
+  if (-not $model -and (Test-CcMapKey $agents "defaults") -and $agents["defaults"] -is [System.Collections.IDictionary]) {
+    $defaults = $agents["defaults"]
+    if (Test-CcMapKey $defaults "model" -and $defaults["model"] -is [System.Collections.IDictionary]) {
+      $model = Get-CcMapString $defaults["model"] "primary"
+    }
+  }
+  if ($model) { $entry["model"] = $model }
+
+  if ($AgentId.StartsWith("agent-nako", [StringComparison]::Ordinal)) {
+    $tools = if (Test-CcMapKey $entry "tools" -and $entry["tools"] -is [System.Collections.IDictionary]) {
+      Copy-CcJsonMap $entry["tools"]
+    } else {
+      [ordered]@{}
+    }
+    $deny = if (Test-CcMapKey $tools "deny") { @($tools["deny"]) } else { @() }
+    foreach ($toolName in @("image_generate", "video_generate", "tts")) {
+      if ($deny -notcontains $toolName) { $deny += $toolName }
+    }
+    $tools["deny"] = $deny
+    $entry["tools"] = $tools
+  }
+
+  if ($existingIndex -ge 0) {
+    $items[$existingIndex] = $entry
+  } else {
+    $items += ,$entry
+  }
+  $agents["list"] = $items
+
+  if (Write-CcJsonIfChanged $layout.ConfigPath $cfg "openclaw.json.bak-cc-connect-qclaw") {
+    return "changed"
+  }
+  return "ok"
+}
+
+function Ensure-QClawCcSession {
+  $layout = Get-QClawLayout
+  $paths = Get-QClawAgentPaths $layout
+  New-Item -ItemType Directory -Path $paths.SessionsDir -Force | Out-Null
+
+  $sessionsPath = Join-Path $paths.SessionsDir "sessions.json"
+  $sessions = Read-CcJsonMap $sessionsPath
+  $key = "agent:${AgentId}:session-cc-connect"
+  $entry = if (Test-CcMapKey $sessions $key -and $sessions[$key] -is [System.Collections.IDictionary]) {
+    Copy-CcJsonMap $sessions[$key]
+  } else {
+    [ordered]@{}
+  }
+
+  $resetExisting = $false
+  if ($entry.Count -gt 0 -and $env:QCLAW_PERSONA_CHANGED -eq "1") {
+    $oldSessionFile = Get-CcMapString $entry "sessionFile"
+    if ($oldSessionFile -and (Test-Path $oldSessionFile)) {
+      $backup = "$oldSessionFile.bak-cc-connect-stale-$(Get-Date -Format "yyyyMMdd-HHmmss")"
+      Move-Item -Path $oldSessionFile -Destination $backup -Force -ErrorAction SilentlyContinue
+    }
+    $entry = [ordered]@{}
+    $resetExisting = $true
+  }
+
+  foreach ($otherKey in @($sessions.Keys)) {
+    if ($otherKey -eq $key -or -not ([string]$otherKey).StartsWith("agent:${AgentId}:", [StringComparison]::Ordinal)) {
+      continue
+    }
+    $other = $sessions[$otherKey]
+    if (-not ($other -is [System.Collections.IDictionary])) { continue }
+    $origin = if (Test-CcMapKey $other "origin" -and $other["origin"] -is [System.Collections.IDictionary]) { $other["origin"] } else { [ordered]@{} }
+    $delivery = if (Test-CcMapKey $other "deliveryContext" -and $other["deliveryContext"] -is [System.Collections.IDictionary]) { $other["deliveryContext"] } else { [ordered]@{} }
+    $staleCc = (
+      (Get-CcMapString $other "label") -in @("ACP", "cc-connect", "cc-connect 飞书/微信") -or
+      (Get-CcMapString $origin "provider") -eq "acp" -or
+      (Get-CcMapString $origin "surface") -eq "cc-connect" -or
+      (Get-CcMapString $delivery "channel") -eq "cc-connect" -or
+      (Get-CcMapString $other "lastChannel") -eq "cc-connect"
+    )
+    if ($staleCc) {
+      $sessions.Remove($otherKey)
+    }
+  }
+
+  $sessionId = Get-CcMapString $entry "sessionId"
+  if (-not $sessionId) { $sessionId = [guid]::NewGuid().ToString() }
+  $sessionFile = Get-CcMapString $entry "sessionFile"
+  if (-not $sessionFile) { $sessionFile = Join-Path $paths.SessionsDir "$sessionId.jsonl" }
+  try { $updatedAt = [int64]$entry["updatedAt"] } catch { $updatedAt = 0 }
+  if ($updatedAt -le 0) { $updatedAt = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() }
+
+  $entry["sessionId"] = $sessionId
+  $entry["updatedAt"] = $updatedAt
+  $entry["label"] = "cc-connect"
+  $entry["systemSent"] = ConvertTo-CcJsonBoolean $(if (Test-CcMapKey $entry "systemSent") { $entry["systemSent"] } else { $false })
+  $entry["abortedLastRun"] = ConvertTo-CcJsonBoolean $(if (Test-CcMapKey $entry "abortedLastRun") { $entry["abortedLastRun"] } else { $false })
+  $entry["chatType"] = $(if (Get-CcMapString $entry "chatType") { Get-CcMapString $entry "chatType" } else { "direct" })
+  $entry["deliveryContext"] = [ordered]@{ channel = "webchat" }
+  $entry["lastChannel"] = "webchat"
+  $entry["origin"] = [ordered]@{
+    label = "cc-connect"
+    provider = "webchat"
+    surface = "webchat"
+    chatType = "direct"
+  }
+  $entry["sessionFile"] = $sessionFile
+  $sessions[$key] = $entry
+
+  New-Item -ItemType Directory -Path (Split-Path -Parent $sessionFile) -Force | Out-Null
+  if (-not (Test-Path $sessionFile)) {
+    $header = [ordered]@{
+      type = "session"
+      version = 3
+      id = $sessionId
+      timestamp = [DateTimeOffset]::UtcNow.ToString("o").Replace("+00:00", "Z")
+      cwd = $layout.Workspace
+    }
+    Set-Content -Path $sessionFile -Value (($header | ConvertTo-Json -Compress -Depth 20) + "`n") -NoNewline -Encoding UTF8
+  }
+
+  [void](Write-CcJsonIfChanged $sessionsPath $sessions "sessions.json.bak-cc-connect")
+  if ($resetExisting) { return "reset" }
+  return "ok"
+}
+
+function Initialize-QClawRuntimeForCcConnect {
+  if ($Runtime -ne "qclaw") { return }
+  $registrationStatus = Ensure-QClawAgentRegistration
+  if ($registrationStatus -eq "changed") {
+    Info "QClaw agent registered: $AgentId"
+    $script:CcConnectChanged = $true
+  }
+  $sessionStatus = Ensure-QClawCcSession
+  if ($sessionStatus -eq "reset" -or $registrationStatus -eq "changed" -or $env:QCLAW_PERSONA_CHANGED -eq "1") {
+    Remove-CcConnectSessions
+    $script:CcConnectChanged = $true
+  }
+}
+
 function New-AgentSection($RuntimeName) {
   $homeDir = $script:HomeDir
   $ccData = Join-Path $homeDir ".cc-connect"
@@ -1106,6 +1444,7 @@ Info (& cc-connect --version 2>&1 | Select-Object -First 1)
 
 Step "2. configure cc-connect project: $AgentId"
 try {
+  Initialize-QClawRuntimeForCcConnect
   Update-CcConnectConfig
   [void](Disable-CcBlockingProjects)
   Test-CcAgentRuntimeLaunch
