@@ -1,12 +1,17 @@
-# model-map.yaml — 按能力的模型候选表
+# model-map.yaml — 按能力的模型偏好表
 #
 # 安装器会：
-# 1) 读用户的 ~/.openclaw/openclaw.json → agents.defaults.models 找出已可用的 provider/model
-# 2) 按下面 capabilities[<role>].preferred 顺序，挑第一个可用的
-# 3) 若候选里有多个可用，交互让用户选
-# 4) 若一个都没有，按 fallback_to 退化，并打印 fallback_msg
+# 1) 先读用户 openclaw.json 里模型条目声明的 capabilities/tags/features/modalities
+# 2) 能力字段能命中时，直接按用户已配置模型顺序选择
+# 3) 没有能力字段或能力字段不明确时，再参考下面 preferred 顺序
+# 4) general 能力允许任意已配置文本模型兜底，避免新模型因为表未收录而安装失败
 #
-# 要加新模型：往对应 preferred 列表里按偏好顺序加就行。
+# 这个表不是支持列表，只是无能力字段时的偏好排序和已知好用模型提示。
+#
+# 能力含义：
+# - roleplay: Nako 本体首选，要求中文对话稳定、角色扮演一致、能跟随工具指令。
+# - general: 安装可用的最低文本能力，要求日常对话、总结、代码/配置分析可用。
+# - vision: 可选图片理解能力，只影响 vision skill，不影响文字聊天和安装。
 
 version: 1
 
@@ -15,6 +20,12 @@ capabilities:
   roleplay:
     preferred:
       - sensenova/SenseChat-Character-Agt    # 商汤角色扮演专用
+      - moonshot/kimi-k2.6
+      - moonshot/kimi-k2.5
+      - moonshot/kimi-k2-turbo
+      - moonshot/kimi-k2-thinking-turbo
+      - moonshot/kimi-k2-thinking
+      - volcengine/kimi-k2-5-260127
       - zhipu/glm-4-plus
       - zai/glm-5
       - anthropic/claude-sonnet-4
@@ -38,6 +49,17 @@ capabilities:
   # 日常通用：指令跟随、代码、总结
   general:
     preferred:
+      - moonshot/kimi-k2.6
+      - volcengine-plan/ark-code-latest
+      - volcengine/deepseek-v3-2-251201
+      - volcengine/doubao-seed-1-8-251228
+      - volcengine/doubao-seed-code-preview-251028
+      - volcengine/glm-4-7-251222
+      - volcengine/kimi-k2-5-260127
+      - moonshot/kimi-k2-thinking-turbo
+      - moonshot/kimi-k2-thinking
+      - moonshot/kimi-k2-turbo
+      - moonshot/kimi-k2.5
       - zai/glm-4.7
       - zai/glm-5
       - anthropic/claude-sonnet-4

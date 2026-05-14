@@ -2,15 +2,19 @@
 
 ## 安装器怎么挑模型
 
-安装器根据 `config/model-map.yaml` 决定给 agent 配哪个 primary model：
+安装器从用户已经配置好的 `openclaw.json` 中挑 primary model。判断顺序是：
 
 ```
 1. 读你的 ~/.openclaw/openclaw.json，拿到 agents.defaults.models 下所有 provider/model
-2. 对照 model-map 的 capabilities.roleplay.preferred 列表，按顺序挑第一个你已配置的
-3. 若 preferred 里多个都已配置 → 交互让你选
-4. 若一个都没命中 → 退化到 capabilities.general.preferred，并打印说明
-5. 还没命中 → 报错退出，让你先加模型
+2. 优先看模型条目声明的 capabilities / tags / features / modalities
+3. 能力字段命中 roleplay，就按用户已配置模型顺序选择；多个命中时交互让你选
+4. 没有能力字段或字段不明确时，再参考 config/model-map.yaml 的 preferred 顺序
+5. roleplay 没命中会退到 general；general 允许任意已配置文本模型兜底
+6. 只有 openclaw.json 里完全没有模型时才报错
 ```
+
+所以 `config/model-map.yaml` 不是固定支持列表，只是旧配置没有能力字段时的
+偏好排序。新 provider 如果在模型条目里声明了能力，不需要先改表也能被识别。
 
 ## 推荐模型（按 nako 角色扮演的契合度）
 
@@ -72,9 +76,37 @@ zai/glm-4.7                 * (primary)
 
 详见 openclaw 官方文档的 provider 设置。
 
-## 加 provider 到 model-map.yaml
+## 给模型声明能力
 
-想让安装器自动识别更多模型，编辑 `config/model-map.yaml`：
+推荐在 `openclaw.json` 的模型条目里声明能力，例如：
+
+```json
+"agents": {
+  "defaults": {
+    "models": {
+      "your_provider/your_model": {
+        "capabilities": ["roleplay", "text"]
+      }
+    }
+  }
+}
+```
+
+安装器会读取这些字段：`capabilities`、`capability`、`tags`、`features`、
+`modalities`、`inputModalities`、`input_modalities`。
+
+当前能力含义：
+
+| 能力 | 要求 |
+|---|---|
+| `roleplay` | 中文对话稳定、角色一致、能跟随工具和人设指令 |
+| `general` | 日常对话、总结、代码/配置分析、基础工具意图理解 |
+| `vision` | 能直接理解图片输入；只影响 vision skill |
+
+## 调整 model-map.yaml 偏好
+
+如果模型本身没有能力字段，但你想让安装器优先选择它，可以编辑
+`config/model-map.yaml`：
 
 ```yaml
 capabilities:
@@ -85,7 +117,7 @@ capabilities:
       - zhipu/glm-4-plus
 ```
 
-往 preferred 列表靠前加 = 优先级高。
+往 preferred 列表靠前加 = 无能力字段时优先级高。
 
 ## 不同 skill 对模型的要求
 

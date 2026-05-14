@@ -34,6 +34,23 @@ curl -fsSL https://cdn.jsdelivr.net/gh/Lovappen/MetaPact@main/install.sh | bash 
 
 完整 flag：`bash install.sh --help`。
 
+### 模型要求
+
+OpenClaw 模式会从 `openclaw.json -> agents.defaults.models` 读取已配置模型，
+优先看模型条目里的 `capabilities` / `tags` / `features` / `modalities`
+等能力字段。Nako 本体优先需要 `roleplay` 能力，也就是稳定中文对话、
+角色扮演和指令跟随；没有命中时会退到 `general`，只要求能完成日常对话、
+工具意图理解、总结和代码/配置分析。没有能力字段的已配置模型会被视为可用的
+`general` 文本模型。
+
+`nako/config/model-map.yaml` 只是无能力字段时的偏好排序，不是固定支持列表。
+常见可用模型已经写入其中，包括
+`moonshot/kimi-k2.6`、`moonshot/kimi-k2.5`、`volcengine/kimi-k2-5-260127`、
+`volcengine-plan/ark-code-latest`、`volcengine/deepseek-v3-2-251201` 等。
+图片理解是可选的 `vision` 能力，只影响 vision skill，不影响安装和文字聊天。
+语音/唱歌/自拍主要依赖对应外部 key 和本地工具，不靠主模型能力判断。
+完整说明见 [安装详解：模型能力要求](docs/nako/install.md#模型能力要求)。
+
 Windows PowerShell 建议直接走 GitHub raw，避免 `cdn.jsdelivr.net @main` 缓存到旧脚本：
 
 ```powershell
@@ -144,7 +161,7 @@ your-agent/
 ├── agent/               # 人设 md 文件 + custom.md 模板
 ├── skills/              # 本 agent 用到的 skill
 ├── config/
-│   └── model-map.yaml   # 按能力的模型候选表
+│   └── model-map.yaml   # 无能力字段时的模型偏好表
 └── scripts/             # 安装器内部 helper
 
 docs/

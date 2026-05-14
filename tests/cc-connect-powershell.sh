@@ -46,6 +46,11 @@ grep -Fq 'return [int]$exitCode' "$ROOT/install.ps1"
 grep -Fq 'scripts/cc-connect-setup.ps1 -AgentId' "$ROOT/install.ps1"
 grep -Fq 'cc-connect 绑定已写入配置，但后续启动/收尾失败' "$ROOT/install.ps1"
 ! grep -Fq 'cc-connect 配置未完成（可后续手动跑 scripts/cc-connect-setup.sh）' "$ROOT/install.ps1"
+grep -Fq '未识别到模型能力声明，也未命中偏好表' "$ROOT/install.ps1"
+grep -Fq 'Select-ModelIdsByDeclaredCapability' "$ROOT/install.ps1"
+grep -Fq '"inputModalities", "input_modalities"' "$ROOT/install.ps1"
+grep -Fq 'moonshot/kimi-k2.6' "$ROOT/nako/config/model-map.yaml"
+grep -Fq 'volcengine-plan/ark-code-latest' "$ROOT/nako/config/model-map.yaml"
 grep -Fq 'exit 0' "$ROOT/scripts/cc-connect-setup.ps1"
 
 tmp="$(mktemp -d)"
@@ -124,6 +129,30 @@ chmod +x "$tmp/bin/cc-connect"
 chmod +x "$tmp/bin/open" "$tmp/bin/openclaw" "$tmp/bin/xdg-open"
 cp "$tmp/bin/cc-connect" "$tmp/bin/cc-connect.fake"
 printf '{"gateway":{"auth":{"token":"tok_test"}}}\n' > "$tmp/.openclaw/openclaw.json"
+
+tmp_model="$tmp/model-user"
+mkdir -p "$tmp_model/.openclaw"
+cat > "$tmp_model/.openclaw/openclaw.json" <<'JSON'
+{
+  "gateway": {"auth": {"token": "tok_test"}},
+  "agents": {
+    "defaults": {
+      "model": {"primary": ""},
+      "models": {
+        "custom/role-agent": {"capabilities": ["roleplay", "text"]},
+        "moonshot/kimi-k2.6": {}
+      }
+    },
+    "list": []
+  },
+  "skills": {"entries": {}}
+}
+JSON
+USERPROFILE="$tmp_model" HOME="$tmp_model" \
+  pwsh -NoProfile -File "$ROOT/install.ps1" \
+  -AgentId agent-model -NonInteractive -SkipSkills -ResetSecrets \
+  >"$tmp_model/install.out" 2>&1
+grep -Fq "主模型选定：custom/role-agent" "$tmp_model/install.out"
 
 tmp_fail="$(mktemp -d)"
 mkdir -p "$tmp_fail/.openclaw/workspace/agent-test" "$tmp_fail/.openclaw"

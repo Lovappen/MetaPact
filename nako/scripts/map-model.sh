@@ -1,6 +1,7 @@
 #!/bin/bash
-# map-model.sh — pick the best model for a capability by consulting model-map.yaml
-#                against the user's actual openclaw config.
+# map-model.sh — pick the best model for a capability from the user's actual
+#                openclaw config. Declared model capabilities win; model-map.yaml
+#                is a preference hint, not a support gate.
 #
 # Usage: map-model.sh <capability>
 #   echoes picked "provider/modelId" to stdout
@@ -30,7 +31,9 @@ PICKED=$(python3 - "$MAP" "$CAP" <<PY
 import sys, json, re, os
 mapf, cap = sys.argv[1], sys.argv[2]
 avail = json.loads(os.environ["AVAILABLE"])
-avail_ids = {m["id"] for m in avail["models"]}
+models = [m for m in avail.get("models", []) if isinstance(m, dict) and m.get("id")]
+ordered_ids = [m["id"] for m in models]
+avail_ids = set(ordered_ids)
 
 try:
     import yaml
@@ -92,7 +95,46 @@ if cap not in caps:
     sys.exit(1)
 
 preferred = caps[cap].get("preferred", [])
-matches = [p for p in preferred if p in avail_ids]
+
+def normalize_token(value):
+    return re.sub(r"[^a-z0-9]+", "-", str(value).lower()).strip("-")
+
+cap_aliases = {
+    "roleplay": {"roleplay", "role-play", "character", "persona"},
+    "general": {
+        "general",
+        "text",
+        "chat",
+        "conversation",
+        "reasoning",
+        "code",
+        "tool",
+        "tools",
+        "tool-use",
+        "function-calling",
+    },
+    "vision": {"vision", "image", "images", "visual", "multimodal", "multi-modal", "multimodal-input"},
+}
+
+def model_caps(model):
+    raw = model.get("capabilities") or []
+    if isinstance(raw, str):
+        raw = [raw]
+    return {normalize_token(item) for item in raw if item}
+
+def declared_match(model, capability):
+    tokens = model_caps(model)
+    if capability == "general" and not tokens:
+        return True
+    aliases = cap_aliases.get(capability, {normalize_token(capability)})
+    return bool(tokens & aliases)
+
+declared_matches = [m["id"] for m in models if declared_match(m, cap)]
+preferred_matches = [p for p in preferred if p in avail_ids]
+matches = declared_matches or preferred_matches
+
+if not matches and cap == "general" and ordered_ids:
+    matches = ordered_ids[:1]
 
 if not matches:
     print(f"NONE", file=sys.stderr)

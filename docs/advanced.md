@@ -166,7 +166,20 @@ bash <agent-name>/install.sh --agent-id agent-yourname
 
 改完后重启 gateway。
 
-安装器选模型时看 `<agent-name>/config/model-map.yaml`。如果你想让安装器以后优先选择自己的模型，把它加到对应能力的 `preferred` 列表前面：
+安装器会优先看 `openclaw.json -> agents.defaults.models` 里模型条目声明的能力字段
+（例如 `capabilities`、`tags`、`features`、`modalities`）。如果模型没有能力字段，
+才会参考 `<agent-name>/config/model-map.yaml`。想让安装器以后优先选择自己的模型，
+可以给模型声明能力：
+
+```json
+"models": {
+  "your_provider/your_roleplay_model": {
+    "capabilities": ["roleplay", "text"]
+  }
+}
+```
+
+也可以把它加到对应能力的 `preferred` 列表前面作为偏好排序：
 
 ```yaml
 capabilities:

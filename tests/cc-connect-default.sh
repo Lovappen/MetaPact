@@ -142,6 +142,16 @@ grep -Fq 'register_or_update_qclaw_cron' "$ROOT/install.sh"
 grep -Fq 'register_or_update_hermes_cron' "$ROOT/install.sh"
 grep -Fq 'Hermes 精确 cron 需要 croniter' "$ROOT/install.sh"
 grep -Fq 'QCLAW_PERSONA_CHANGED=1 bash "$CC_SETUP"' "$ROOT/install.sh"
+grep -Fq '未识别到模型能力声明，也未命中偏好表' "$ROOT/install.sh"
+grep -Fq 'Declared model capabilities win; model-map.yaml' "$ROOT/nako/scripts/map-model.sh"
+grep -Fq '"inputModalities", "input_modalities"' "$ROOT/nako/scripts/detect-models.sh"
+grep -Fq 'moonshot/kimi-k2.6' "$ROOT/nako/config/model-map.yaml"
+grep -Fq 'volcengine-plan/ark-code-latest' "$ROOT/nako/config/model-map.yaml"
+grep -Fq '## 模型能力要求' "$ROOT/docs/nako/install.md"
+grep -Fq '| `roleplay` |' "$ROOT/docs/nako/install.md"
+grep -Fq '| `general` |' "$ROOT/docs/nako/install.md"
+grep -Fq '| `vision` |' "$ROOT/docs/nako/install.md"
+grep -Fq '安装详解：模型能力要求' "$ROOT/README.md"
 grep -Fq 'for tool_name in ("image_generate", "video_generate", "tts"):' "$ROOT/install.sh"
 grep -Fq 'safe_install_pack_file "$PACK_ROOT/skills/skill-log.sh" "$OPENCLAW_SKILLS_DIR/skill-log.sh"' "$ROOT/install.sh"
 grep -Fq 'safe_install_pack_file "$s" "$dst/scripts/$(basename "$s")"' "$ROOT/install.sh"
@@ -162,6 +172,73 @@ grep -Fq 'https://cdn.jsdelivr.net/gh/Lovappen/MetaPact@{AGENTS_REF}/install.sh'
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
+python3 - "$tmp" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+(root / "openclaw-models.json").write_text(
+    json.dumps({
+        "agents": {
+            "defaults": {
+                "models": {
+                    "moonshot/kimi-k2.6": {},
+                    "volcengine-plan/ark-code-latest": {},
+                    "volcengine/deepseek-v3-2-251201": {},
+                }
+            }
+        }
+    }),
+    encoding="utf-8",
+)
+(root / "openclaw-capability-models.json").write_text(
+    json.dumps({
+        "agents": {
+            "defaults": {
+                "models": {
+                    "custom/role-agent": {"capabilities": ["roleplay", "text"]},
+                    "moonshot/kimi-k2.6": {},
+                }
+            }
+        }
+    }),
+    encoding="utf-8",
+)
+(root / "openclaw-general-models.json").write_text(
+    json.dumps({
+        "agents": {
+            "defaults": {
+                "models": {
+                    "custom/new-text": {},
+                    "another/new-text": {},
+                }
+            }
+        }
+    }),
+    encoding="utf-8",
+)
+(root / "openclaw-vision-models.json").write_text(
+    json.dumps({
+        "agents": {
+            "defaults": {
+                "models": {
+                    "custom/vision-agent": {"modalities": {"input": ["text", "image"]}},
+                }
+            }
+        }
+    }),
+    encoding="utf-8",
+)
+PY
+picked="$(OPENCLAW_CONFIG="$tmp/openclaw-models.json" NON_INTERACTIVE=1 bash "$ROOT/nako/scripts/map-model.sh" roleplay)"
+test "$picked" = "moonshot/kimi-k2.6"
+picked="$(OPENCLAW_CONFIG="$tmp/openclaw-capability-models.json" NON_INTERACTIVE=1 bash "$ROOT/nako/scripts/map-model.sh" roleplay)"
+test "$picked" = "custom/role-agent"
+picked="$(OPENCLAW_CONFIG="$tmp/openclaw-general-models.json" NON_INTERACTIVE=1 bash "$ROOT/nako/scripts/map-model.sh" general)"
+test "$picked" = "custom/new-text"
+picked="$(OPENCLAW_CONFIG="$tmp/openclaw-vision-models.json" NON_INTERACTIVE=1 bash "$ROOT/nako/scripts/map-model.sh" vision)"
+test "$picked" = "custom/vision-agent"
 envfile="$tmp/bash_env"
 cat > "$envfile" <<'EOF'
 cc-connect() { return 127; }

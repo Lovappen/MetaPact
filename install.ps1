@@ -454,13 +454,93 @@ if ((Test-Path $AgentWorkspace) -or (Test-Path $AgentDataDir)) {
 # ─── Model selection ────────────────────────────────────────────────────────
 Step "3. 模型匹配"
 
-function Get-AvailableModels {
+function Normalize-ModelCapabilityToken($Value) {
+  if ($null -eq $Value) { return "" }
+  return ([regex]::Replace(([string]$Value).ToLowerInvariant(), '[^a-z0-9]+', '-')).Trim('-')
+}
+
+function ConvertTo-ModelCapabilityList($Value) {
+  if ($null -eq $Value) { return @() }
+  if ($Value -is [string]) { return @($Value) }
+  if ($Value -is [System.Collections.IDictionary]) {
+    $items = @()
+    foreach ($key in $Value.Keys) {
+      $enabled = $Value[$key]
+      if ($enabled -is [bool]) {
+        if ($enabled) { $items += [string]$key }
+        continue
+      }
+      if ($enabled -is [string] -or $enabled -is [System.Collections.IEnumerable]) {
+        $items += ConvertTo-ModelCapabilityList $enabled
+      } elseif ($enabled -and $enabled.PSObject -and $enabled.PSObject.Properties.Count -gt 0) {
+        $items += ConvertTo-ModelCapabilityList $enabled
+      } elseif ($enabled) {
+        $items += [string]$key
+      }
+    }
+    return $items
+  }
+  if ($Value -is [System.Collections.IEnumerable]) {
+    $items = @()
+    foreach ($item in $Value) {
+      $items += ConvertTo-ModelCapabilityList $item
+    }
+    return $items
+  }
+  if ($Value.PSObject -and $Value.PSObject.Properties.Count -gt 0) {
+    $items = @()
+    foreach ($prop in $Value.PSObject.Properties) {
+      if ($prop.Value -is [bool]) {
+        if ($prop.Value) { $items += [string]$prop.Name }
+        continue
+      }
+      if ($prop.Value -is [string] -or $prop.Value -is [System.Collections.IEnumerable]) {
+        $items += ConvertTo-ModelCapabilityList $prop.Value
+      } elseif ($prop.Value -and $prop.Value.PSObject -and $prop.Value.PSObject.Properties.Count -gt 0) {
+        $items += ConvertTo-ModelCapabilityList $prop.Value
+      } elseif ($prop.Value) {
+        $items += [string]$prop.Name
+      }
+    }
+    return $items
+  }
+  return @()
+}
+
+function Get-AvailableModelEntries {
   $cfg = Get-Content $OpenclawConfig -Raw | ConvertFrom-Json
   $models = $cfg.agents.defaults.models
   if (-not $models) { return @() }
-  $names = @()
-  foreach ($prop in $models.PSObject.Properties.Name) { $names += $prop }
-  return $names
+  $entries = @()
+  foreach ($prop in $models.PSObject.Properties) {
+    $item = $prop.Value
+    $rawCaps = @()
+    foreach ($field in @("capabilities", "capability", "tags", "features", "modalities", "inputModalities", "input_modalities")) {
+      if ($null -eq $item) { continue }
+      $fieldProp = $item.PSObject.Properties[$field]
+      if ($null -ne $fieldProp) {
+        $rawCaps += ConvertTo-ModelCapabilityList $fieldProp.Value
+      }
+    }
+    $seen = @{}
+    $caps = @()
+    foreach ($rawCap in $rawCaps) {
+      $token = Normalize-ModelCapabilityToken $rawCap
+      if ($token -and -not $seen.ContainsKey($token)) {
+        $seen[$token] = $true
+        $caps += $token
+      }
+    }
+    $entries += [pscustomobject]@{
+      Id = [string]$prop.Name
+      Capabilities = @($caps)
+    }
+  }
+  return $entries
+}
+
+function Get-AvailableModels {
+  return @((Get-AvailableModelEntries) | ForEach-Object { $_.Id })
 }
 
 function Get-ModelMap {
@@ -474,6 +554,38 @@ function Get-ModelMap {
     if ($line -match '^\s{4}\w' -and $line -notmatch 'preferred') { $inPref = $false }
   }
   return $caps
+}
+
+function Test-ModelEntryCapability($Entry, [string]$Capability) {
+  $tokens = @($Entry.Capabilities)
+  if ($Capability -eq "general" -and $tokens.Count -eq 0) { return $true }
+  $aliases = switch ($Capability) {
+    "roleplay" { @("roleplay", "role-play", "character", "persona") }
+    "general" { @("general", "text", "chat", "conversation", "reasoning", "code", "tool", "tools", "tool-use", "function-calling") }
+    "vision" { @("vision", "image", "images", "visual", "multimodal", "multi-modal", "multimodal-input") }
+    default { @(Normalize-ModelCapabilityToken $Capability) }
+  }
+  foreach ($token in $tokens) {
+    if ($aliases -contains $token) { return $true }
+  }
+  return $false
+}
+
+function Select-ModelIdsByDeclaredCapability($Entries, [string]$Capability) {
+  $ids = @()
+  foreach ($entry in @($Entries)) {
+    if (Test-ModelEntryCapability $entry $Capability) {
+      $ids += $entry.Id
+    }
+  }
+  return $ids
+}
+
+function Select-InstallModelChoice([string[]]$Ids, [string]$Prompt) {
+  $options = @($Ids | Where-Object { $_ })
+  if ($options.Count -eq 0) { return "" }
+  if ($options.Count -eq 1 -or $NonInteractive) { return $options[0] }
+  return AskChoice $Prompt $options
 }
 
 $Primary = ""
@@ -500,27 +612,35 @@ if ($SkipModels) {
   if (-not $Primary) { $Primary = "qclaw/modelroute" }
   Info "QClaw 主模型继承: $Primary"
 } else {
-  $avail = Get-AvailableModels
+  $modelEntries = Get-AvailableModelEntries
+  $avail = @($modelEntries | ForEach-Object { $_.Id })
   Write-Host "已配置的 provider/model："
   foreach ($m in $avail) { Write-Host "  $m" }
   Write-Host ""
   $caps = Get-ModelMap
-  $matches = @()
-  if ($caps.ContainsKey("roleplay")) {
+  $matches = @(Select-ModelIdsByDeclaredCapability $modelEntries "roleplay")
+  if (($matches.Count -eq 0) -and $caps.ContainsKey("roleplay")) {
     $matches = $caps["roleplay"] | Where-Object { $avail -contains $_ }
   }
-  if (-not $matches -or $matches.Count -eq 0) {
+  if ($matches.Count -eq 0) {
     Warn "roleplay 能力无匹配模型，退化到 general"
+    $matches = @(Select-ModelIdsByDeclaredCapability $modelEntries "general")
     if ($caps.ContainsKey("general")) {
-      $matches = $caps["general"] | Where-Object { $avail -contains $_ }
+      $mapMatches = @($caps["general"] | Where-Object { $avail -contains $_ })
+      if ($mapMatches.Count -gt 0) { $matches = $mapMatches }
     }
   }
-  if (-not $matches -or $matches.Count -eq 0) {
-    ErrL "未在 openclaw.json 中找到任何可用模型。请先添加模型后重跑。"
-    exit 1
+  if ($matches.Count -eq 0) {
+    if ($avail -and $avail.Count -gt 0) {
+      $Primary = $avail[0]
+      Warn "未识别到模型能力声明，也未命中偏好表，临时使用第一个已配置模型: $Primary"
+    } else {
+      ErrL "未在 openclaw.json 中找到任何可用模型。请先添加模型后重跑。"
+      exit 1
+    }
+  } else {
+    $Primary = Select-InstallModelChoice $matches "发现多个可用模型，选一个："
   }
-  if ($matches.Count -eq 1) { $Primary = $matches[0] }
-  else { $Primary = AskChoice "发现多个可用模型，选一个：" $matches }
   Info "主模型选定：$Primary"
 }
 

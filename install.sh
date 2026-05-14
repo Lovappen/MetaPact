@@ -1207,8 +1207,26 @@ else
     RC2=$?
     set -e
     if [ "$RC2" != "0" ]; then
-      err "general 也无匹配。请在 openclaw.json 添加模型后重跑。"
-      exit 1
+      DETECTED_MODELS_JSON="$(OPENCLAW_CONFIG="$OPENCLAW_CONFIG" "$SCRIPT_DIR/detect-models.sh" --json || true)"
+      PRIMARY="$(DETECTED_MODELS_JSON="$DETECTED_MODELS_JSON" python3 - <<'PY'
+import json
+import os
+import sys
+
+try:
+    data = json.loads(os.environ.get("DETECTED_MODELS_JSON") or "{}")
+except Exception:
+    data = {}
+models = data.get("models") or []
+first = models[0].get("id") if models and isinstance(models[0], dict) else ""
+print(first or "")
+PY
+)"
+      if [ -z "$PRIMARY" ]; then
+        err "general 也无匹配，且 openclaw.json 中没有可用模型。请先添加模型后重跑。"
+        exit 1
+      fi
+      warn "未识别到模型能力声明，也未命中偏好表，临时使用第一个已配置模型: $PRIMARY"
     fi
   fi
   if [ -z "${PRIMARY:-}" ]; then

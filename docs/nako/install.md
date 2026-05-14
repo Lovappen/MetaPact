@@ -10,13 +10,49 @@ bash install.sh
 
 1. **前置检查** — 验证 `python3 jq curl`。默认 OpenClaw 模式要求 `~/.openclaw/openclaw.json` 存在；`--runtime hermes` 只要求 `hermes` 命令可用，并使用 `~/.hermes`；`--runtime qclaw` 会直接使用 `~/.qclaw/openclaw.json`，不要求 `~/.openclaw`。软依赖 (`whisper ffmpeg ffprobe xxd uuidgen doki`) 缺失只警告不退出。
 2. **Agent 冲突** — 若 `agent-nako` workspace 已存在，问你升级、重命名、还是中止。
-3. **模型映射** — OpenClaw 会读 `~/.openclaw/openclaw.json` 的 `agents.defaults.models`，按 `config/model-map.yaml` 的 `roleplay` 偏好挑一个；Hermes 会沿用现有 `~/.hermes/config.yaml` 或 `HERMES_MODEL=provider/model`，其中 `sensenova/SenseChat-Character-Agt` 会被写成 Hermes `custom_providers` 的 OpenAI-compatible endpoint；没有可沿用模型时默认 `zai/glm-4.5-flash`；QClaw 继承 QClaw 模型路由。
+3. **模型匹配** — OpenClaw 会读 `~/.openclaw/openclaw.json` 的 `agents.defaults.models`，优先按模型条目声明的能力字段挑 `roleplay` 文本模型；没有能力字段时再参考 `config/model-map.yaml` 的偏好顺序；Hermes 会沿用现有 `~/.hermes/config.yaml` 或 `HERMES_MODEL=provider/model`，其中 `sensenova/SenseChat-Character-Agt` 会被写成 Hermes `custom_providers` 的 OpenAI-compatible endpoint；没有可沿用模型时默认 `zai/glm-4.5-flash`；QClaw 继承 QClaw 模型路由。
 4. **收集凭据** — 交互问：飞书 App ID/Secret、MiniMax、Volcengine、FAL、参考图。留空即跳过该能力。
 5. **安装 skills** — OpenClaw/QClaw 拷贝到对应 runtime 的 `skills/`；Hermes 拷贝到 `~/.hermes/skills/nako/`。共享 `.env` 只填入新 key，已有值保留。
 6. **安装 agent 人设** — OpenClaw 使用 `~/.openclaw/workspace/<id>/`；Hermes 使用 `~/.hermes/workspace/<id>/`；QClaw 使用 `~/.qclaw/workspace-<id>/`。`custom.md` 首次创建空壳，之后永远不动。
 7. **合并 runtime 配置** — OpenClaw/QClaw 会备份并合并 `openclaw.json`；Hermes 不依赖 `~/.openclaw`，会重写 `~/.hermes/config.yaml` 中的顶层 `model` / `custom_providers` / `skills` Nako managed block。OpenAI-compatible 模型会按 Hermes schema 写入 `custom_providers` 列表，避免旧 OpenClaw skills 路径或错误 provider 格式在重装后继续生效，并读取 `~/.hermes/skills/nako/.env` / `~/.hermes/.env`。
 8. **runtime 接入** — 默认使用 OpenClaw；`--runtime hermes` 会让 cc-connect 调 `hermes acp`，并注入 `NAKO_*` 环境变量；`--runtime qclaw` 会把 agent 写入 `~/.qclaw/workspace-<id>` 和 QClaw 的 `openclaw.json`，并让 cc-connect 调 QClaw 自带的 OpenClaw ACP。QClaw 的飞书/微信消息固定进入 `agent:<id>:session-cc-connect`，在 QClaw 里显示为 `cc-connect 飞书/微信` 会话。
 9. **冒烟测试** — 检查每个 skill 的脚本、依赖、env 是否齐。
+
+## 模型能力要求
+
+安装器选择模型时看的是 `openclaw.json -> agents.defaults.models` 里的已配置模型，
+不会自动下载或创建模型。它会优先读取模型条目里的能力字段：
+`capabilities`、`capability`、`tags`、`features`、`modalities`、
+`inputModalities`、`input_modalities`。
+
+Nako 本体需要一个能稳定中文对话、角色扮演、指令跟随的文本模型，对应
+`roleplay` 能力。如果模型条目声明了 `roleplay` / `character` / `persona`
+一类能力，即使 `model-map.yaml` 没收录，也会被识别。
+
+如果没有命中 `roleplay`，安装器会退到 `general`。`general` 只要求模型能
+完成日常中文对话、工具调用意图理解、总结和代码/配置分析。没有能力字段的
+已配置模型会被视为可用的 `general` 文本模型，避免新模型因为偏好表未收录而
+安装失败。
+
+`vision` 是可选能力，只影响 vision skill。主模型不具备图片理解时，Nako
+仍可安装和聊天，但 vision skill 只能把图片路径交给 agent，无法直接理解图片内容。
+
+语音、唱歌、自拍等 skill 不靠主模型能力判断，主要看外部依赖和 key：
+`voice` 需要 MiniMax 或 Volcengine key，`hearing` 需要 whisper/ffmpeg，
+`selfie` 需要 FAL 或 KIE key。
+
+`model-map.yaml` 只是没有能力字段时的偏好排序，不是固定支持列表。当前已写入
+偏好表的常见模型包括：
+
+| 能力 | 适用模型示例 |
+|---|---|
+| `roleplay` | `sensenova/SenseChat-Character-Agt`, `moonshot/kimi-k2.6`, `moonshot/kimi-k2.5`, `moonshot/kimi-k2-turbo`, `moonshot/kimi-k2-thinking`, `volcengine/kimi-k2-5-260127` |
+| `general` | `moonshot/kimi-k2.6`, `volcengine-plan/ark-code-latest`, `volcengine/deepseek-v3-2-251201`, `volcengine/doubao-seed-1-8-251228`, `volcengine/glm-4-7-251222` |
+| `vision` | `anthropic/claude-sonnet-4`, `anthropic/claude-opus-4`, `openai/gpt-4o`, `google/gemini-2-pro`, `zai/glm-4v` |
+
+如果 `openclaw.json` 里有模型但没有任何能力字段、也没有命中偏好表，安装器会在
+退到 `general` 后使用第一个已配置模型，并提示可以把该 `provider/model` 加入
+`nako/config/model-map.yaml` 的合适能力列表来优化默认选择顺序。
 
 ## Flags
 

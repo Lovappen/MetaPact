@@ -28,17 +28,49 @@ primary = defaults.get("model", {}).get("primary", "")
 # Also try to mine /Users/<u>/.openclaw/agents/<id>/agent/models.json for real provider/model inventory
 # The above are just the enabled ones. The presence of auth-profiles.json indicates configured credentials.
 
+def to_string_list(value):
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        out = []
+        for item in value:
+            out.extend(to_string_list(item))
+        return out
+    if isinstance(value, dict):
+        out = []
+        for key, enabled in value.items():
+            if isinstance(enabled, bool):
+                if enabled and isinstance(key, str):
+                    out.append(key)
+                continue
+            if isinstance(enabled, (str, list, dict)):
+                out.extend(to_string_list(enabled))
+            elif enabled and isinstance(key, str):
+                out.append(key)
+        return out
+    return []
+
 entries = []
-for key in sorted(models_map.keys()):
-    alias = models_map[key].get("alias", "")
-    entries.append((key, alias))
+for key, raw_item in models_map.items():
+    item = raw_item if isinstance(raw_item, dict) else {}
+    alias = item.get("alias", "")
+    capabilities = []
+    for field in ("capabilities", "capability", "tags", "features", "modalities", "inputModalities", "input_modalities"):
+        capabilities.extend(to_string_list(item.get(field)))
+    entries.append((key, alias, sorted({value.lower() for value in capabilities if value})))
 
 if fmt == "--json":
-    out = {"primary": primary, "models": [{"id": k, "alias": a} for k,a in entries]}
+    out = {
+        "primary": primary,
+        "models": [
+            {"id": k, "alias": a, "capabilities": caps}
+            for k, a, caps in entries
+        ],
+    }
     print(json.dumps(out, ensure_ascii=False))
 else:
     # tab-separated: id\talias
-    for k, a in entries:
+    for k, a, _caps in entries:
         mark = " *" if k == primary else ""
         print(f"{k}\t{a}{mark}")
 PY
