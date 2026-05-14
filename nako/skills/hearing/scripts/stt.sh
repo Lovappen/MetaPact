@@ -85,7 +85,15 @@ else
   [ ! -f "$GATEWAY_LOG" ] && { log_err "Gateway log missing"; exit 1; }
   LN=$(grep -n -- "$ARG" "$GATEWAY_LOG" | tail -1 | cut -d: -f1)
   [ -z "$LN" ] && { log_err "file_key not in gateway log: $ARG"; exit 2; }
-  AUDIO_PATH=$(tail -n +"$LN" "$GATEWAY_LOG" | grep -oE 'saved to [^ ]+' | head -1 | sed 's/^saved to //')
+  AUDIO_PATH=$(tail -n +"$LN" "$GATEWAY_LOG" | awk '
+    index($0, "saved to ") {
+      path = substr($0, index($0, "saved to ") + length("saved to "))
+      sub(/\r$/, "", path)
+      sub(/"$/, "", path)
+      print path
+      exit
+    }
+  ')
   [ -z "$AUDIO_PATH" ] && { log_err "No download line after key (maybe still downloading)"; exit 2; }
 fi
 [ ! -f "$AUDIO_PATH" ] && { log_err "Audio missing on disk: $AUDIO_PATH"; exit 3; }

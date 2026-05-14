@@ -96,4 +96,20 @@ for rel in "selfie/scripts/selfie.sh" "selfie/scripts/video.sh"; do
   test "$receive" = $'chat_id\toc_chat_123'
 done
 
+json_log="$tmp/skill.jsonl"
+export SKILL_LOG_FILE="$json_log"
+source "$ROOT/nako/skills/skill-log.sh"
+skill_log_fail voice tts_generate $'error=line1\nline2' 'path=C:\Program Files\Nako\audio.mp3'
+node - "$json_log" <<'NODE'
+const fs = require("fs");
+const line = fs.readFileSync(process.argv[2], "utf8").trim();
+const record = JSON.parse(line);
+if (record.error !== "line1\nline2") {
+  throw new Error("newline value was not preserved as JSON string");
+}
+if (record.path !== "C:\\Program Files\\Nako\\audio.mp3") {
+  throw new Error("backslash path was not preserved as JSON string");
+}
+NODE
+
 echo "skill-log path checks passed"

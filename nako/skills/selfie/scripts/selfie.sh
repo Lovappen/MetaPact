@@ -88,6 +88,36 @@ if [ -z "${NAKO_MEDIA_HOME:-}" ] && [ -n "${HERMES_HOME:-}" ] && [ "${NAKO_AGENT
   NAKO_MEDIA_HOME="$HERMES_HOME/media"
 fi
 
+new_uuid() {
+  if command -v uuidgen >/dev/null 2>&1; then
+    uuidgen | tr '[:upper:]' '[:lower:]'
+  elif [ -r /proc/sys/kernel/random/uuid ]; then
+    cat /proc/sys/kernel/random/uuid
+  else
+    python3 - <<'PY'
+import uuid
+print(uuid.uuid4())
+PY
+  fi
+}
+
+safe_extension() {
+  local ext="${1:-png}"
+  ext="${ext#.}"
+  case "$ext" in
+    png|jpg|jpeg|webp) printf '%s\n' "$ext" ;;
+    *) printf '%s\n' "png" ;;
+  esac
+}
+
+selfie_temp_file() {
+  local ext outdir
+  ext="$(safe_extension "${1:-png}")"
+  outdir="${NAKO_MEDIA_HOME:-${OPENCLAW_HOME:-$HOME/.openclaw}/media}/outbound"
+  mkdir -p "$outdir"
+  printf '%s/%s.%s\n' "$outdir" "$(new_uuid)" "$ext"
+}
+
 _detect_reference_image() {
   echo "${SELFIE_REFERENCE_IMAGE:-}"
 }
@@ -366,7 +396,7 @@ _ccconnect_send_image_file() {
 _emit_or_send_acp_image() {
   local temp_file
 
-  temp_file="/tmp/selfie_$(date +%s).${OUTPUT_FORMAT:-png}"
+  temp_file="$(selfie_temp_file "${OUTPUT_FORMAT:-png}")"
   if curl -s -o "$temp_file" "$IMAGE_URL" && [ -s "$temp_file" ]; then
     skill_log_ok selfie acp_emit "path=$temp_file" "provider=$PROVIDER"
     if _ccconnect_send_image_file "$temp_file"; then
@@ -647,7 +677,7 @@ _send_to_feishu() {
   log_info "Detected Feishu channel, uploading image for inline display..."
   
   # Download image to temp file
-  TEMP_FILE="/tmp/selfie_$(date +%s).${OUTPUT_FORMAT}"
+  TEMP_FILE="$(selfie_temp_file "${OUTPUT_FORMAT:-png}")"
   curl -s -o "$TEMP_FILE" "$IMAGE_URL"
   
   if [ ! -s "$TEMP_FILE" ]; then

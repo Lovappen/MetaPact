@@ -34,9 +34,13 @@ skill_log() {
   for kv in "$@"; do
     local key="${kv%%=*}"
     local val="${kv#*=}"
+    [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
     # Escape quotes in value
     val="${val//\\/\\\\}"
     val="${val//\"/\\\"}"
+    val="${val//$'\n'/\\n}"
+    val="${val//$'\r'/\\r}"
+    val="${val//$'\t'/\\t}"
     extras="${extras},\"${key}\":\"${val}\""
   done
 

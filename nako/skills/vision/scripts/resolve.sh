@@ -42,7 +42,15 @@ fi
 LN=$(grep -n -- "$ARG" "$GATEWAY_LOG" | tail -1 | cut -d: -f1)
 [ -z "$LN" ] && { echo "Key not found in gateway log: $ARG" >&2; exit 2; }
 
-PATH_FOUND=$(tail -n +"$LN" "$GATEWAY_LOG" | grep -oE 'saved to [^ ]+' | head -1 | sed 's/^saved to //')
+PATH_FOUND=$(tail -n +"$LN" "$GATEWAY_LOG" | awk '
+  index($0, "saved to ") {
+    path = substr($0, index($0, "saved to ") + length("saved to "))
+    sub(/\r$/, "", path)
+    sub(/"$/, "", path)
+    print path
+    exit
+  }
+')
 [ -z "$PATH_FOUND" ] && { echo "No 'saved to' line after key in log (not yet downloaded?)" >&2; exit 2; }
 [ ! -f "$PATH_FOUND" ] && { echo "File gone from disk: $PATH_FOUND" >&2; exit 3; }
 

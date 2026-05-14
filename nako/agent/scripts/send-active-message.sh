@@ -7,6 +7,8 @@ WORKSPACE="${OPENCLAW_AGENT_WORKSPACE:-$(cd "$(dirname "$0")/.." && pwd)}"
 LOG_DIR="$WORKSPACE/memory"
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/heartbeat-state.json.log"
+SEND_LOG="$(mktemp "${TMPDIR:-/tmp}/nako-proactive-send.XXXXXX")"
+trap 'rm -f "$SEND_LOG"' EXIT
 
 if [ "$#" -gt 0 ]; then
   MSG="$*"
@@ -83,7 +85,7 @@ send_args=(send -m "$MSG")
 [ -n "$PROJECT" ] && send_args+=(-p "$PROJECT")
 [ -n "$SESSION" ] && send_args+=(--session "$SESSION")
 
-if cc-connect "${send_args[@]}" >/tmp/nako-proactive-send.log 2>&1; then
+if cc-connect "${send_args[@]}" >"$SEND_LOG" 2>&1; then
   echo "$(date -Iseconds) proactive-send-ok project=${PROJECT:-none} session=${SESSION_LABEL}" >> "$LOG_FILE"
   exit 0
 fi
@@ -91,11 +93,11 @@ fi
 if [ -n "$SESSION" ]; then
   retry_args=(send -m "$MSG")
   [ -n "$PROJECT" ] && retry_args+=(-p "$PROJECT")
-  if cc-connect "${retry_args[@]}" >/tmp/nako-proactive-send.log 2>&1; then
+  if cc-connect "${retry_args[@]}" >"$SEND_LOG" 2>&1; then
     echo "$(date -Iseconds) proactive-send-ok project=${PROJECT:-none} session=auto" >> "$LOG_FILE"
     exit 0
   fi
 fi
 
-echo "$(date -Iseconds) proactive-send-failed $(tr '\n' ' ' </tmp/nako-proactive-send.log | cut -c1-220)" >> "$LOG_FILE"
+echo "$(date -Iseconds) proactive-send-failed $(tr '\n' ' ' <"$SEND_LOG" | cut -c1-220)" >> "$LOG_FILE"
 exit 1
