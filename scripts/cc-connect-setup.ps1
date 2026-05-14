@@ -545,6 +545,7 @@ function Ensure-QClawCcSession {
   $paths = Get-QClawAgentPaths $layout
   New-Item -ItemType Directory -Path $paths.SessionsDir -Force | Out-Null
 
+  $sessionLabel = "cc-connect 飞书/微信"
   $sessionsPath = Join-Path $paths.SessionsDir "sessions.json"
   $sessions = Read-CcJsonMap $sessionsPath
   $key = "agent:${AgentId}:session-cc-connect"
@@ -594,14 +595,14 @@ function Ensure-QClawCcSession {
 
   $entry["sessionId"] = $sessionId
   $entry["updatedAt"] = $updatedAt
-  $entry["label"] = "cc-connect"
+  $entry["label"] = $sessionLabel
   $entry["systemSent"] = ConvertTo-CcJsonBoolean $(if (Test-CcMapKey $entry "systemSent") { $entry["systemSent"] } else { $false })
   $entry["abortedLastRun"] = ConvertTo-CcJsonBoolean $(if (Test-CcMapKey $entry "abortedLastRun") { $entry["abortedLastRun"] } else { $false })
   $entry["chatType"] = $(if (Get-CcMapString $entry "chatType") { Get-CcMapString $entry "chatType" } else { "direct" })
   $entry["deliveryContext"] = [ordered]@{ channel = "webchat" }
   $entry["lastChannel"] = "webchat"
   $entry["origin"] = [ordered]@{
-    label = "cc-connect"
+    label = $sessionLabel
     provider = "webchat"
     surface = "webchat"
     chatType = "direct"
@@ -845,6 +846,18 @@ function Save-CcRuntimeCheckOutput($RuntimeProcess) {
   } catch {}
 }
 
+function Get-CcRuntimePreflightTimeoutMs {
+  $timeout = 2000
+  if ($Runtime -eq "qclaw") { $timeout = 8000 }
+  if ($env:CC_CONNECT_RUNTIME_CHECK_TIMEOUT_MS) {
+    $parsed = 0
+    if ([int]::TryParse($env:CC_CONNECT_RUNTIME_CHECK_TIMEOUT_MS, [ref]$parsed) -and $parsed -gt 0) {
+      $timeout = $parsed
+    }
+  }
+  return $timeout
+}
+
 function Test-CcAgentRuntimeLaunch {
   $agent = New-AgentSection $Runtime
   $label = switch ($Runtime) {
@@ -866,10 +879,11 @@ function Test-CcAgentRuntimeLaunch {
     throw
   }
 
-  if (-not $proc.WaitForExit(2000)) {
+  $timeoutMs = Get-CcRuntimePreflightTimeoutMs
+  if (-not $proc.WaitForExit($timeoutMs)) {
     Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
     Save-CcRuntimeCheckOutput $runtimeProcess
-    Info "$label runtime preflight launched successfully"
+    Info "$label runtime preflight stayed alive for ${timeoutMs}ms"
     return
   }
   Save-CcRuntimeCheckOutput $runtimeProcess

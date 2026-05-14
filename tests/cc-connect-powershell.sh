@@ -23,6 +23,7 @@ grep -Fq 'function Resolve-OpenClawCommand' "$ROOT/scripts/cc-connect-setup.ps1"
 grep -Fq 'function Disable-CcBlockingProjects' "$ROOT/scripts/cc-connect-setup.ps1"
 grep -Fq 'function Add-CcProcessArguments' "$ROOT/scripts/cc-connect-setup.ps1"
 grep -Fq 'function Test-CcAgentRuntimeLaunch' "$ROOT/scripts/cc-connect-setup.ps1"
+grep -Fq 'function Get-CcRuntimePreflightTimeoutMs' "$ROOT/scripts/cc-connect-setup.ps1"
 grep -Fq 'function Ensure-QClawAgentRegistration' "$ROOT/scripts/cc-connect-setup.ps1"
 grep -Fq 'function Ensure-QClawCcSession' "$ROOT/scripts/cc-connect-setup.ps1"
 grep -Fq 'function Wait-CcConnectApiSocket' "$ROOT/scripts/cc-connect-setup.ps1"
@@ -212,9 +213,28 @@ session_file = root / ".qclaw-state" / "agents" / "agent-test" / "sessions" / "s
 sessions = json.loads(session_file.read_text(encoding="utf-8"))
 entry = sessions.get("agent:agent-test:session-cc-connect")
 assert entry, sessions
-assert entry.get("label") == "cc-connect"
+assert entry.get("label") == "cc-connect 飞书/微信"
 assert entry.get("origin", {}).get("surface") == "webchat"
+assert entry.get("origin", {}).get("label") == "cc-connect 飞书/微信"
 PY
+
+cat > "$tmp_qclaw/bin/node" <<'EOF'
+#!/usr/bin/env bash
+sleep 3
+echo "delayed qclaw acp failure" >&2
+exit 24
+EOF
+chmod +x "$tmp_qclaw/bin/node"
+set +e
+EXPECTED_QCLAW_MJS="$qclaw_mjs" NAKO_HOME="$tmp_qclaw" PATH="$tmp/bin:$PATH" \
+  pwsh -NoProfile -File "$ROOT/scripts/cc-connect-setup.ps1" \
+  -AgentId agent-test -Runtime qclaw -CcConnectSource skip -NonInteractive \
+  >"$tmp_qclaw/delayed-failure.out" 2>&1
+rc=$?
+set -e
+test "$rc" -ne 0
+grep -Fq "delayed qclaw acp failure" "$tmp_qclaw/delayed-failure.out"
+grep -Fq "QClaw runtime failed during setup preflight" "$tmp_qclaw/delayed-failure.out"
 
 cat >> "$tmp/.cc-connect/config.toml" <<EOF
 
