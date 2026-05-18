@@ -4,6 +4,18 @@
 
 **适配设备：**[元力2][device-yuanli-2] / [黑洞SE][device-blackhole-se]，点击设备名可跳转到天猫旗舰店。
 
+## 不会弄龙虾？
+
+<table>
+  <tr>
+    <td>
+      <h3>下载心跳元力，一步开始</h3>
+      <p>如果你不会配置龙虾，可以直接下载 <strong>心跳元力</strong>，用更省心的方式体验 MetaPact。</p>
+      <p><a href="https://dokidoki.lovappen.cn"><strong>前往下载心跳元力 →</strong></a></p>
+    </td>
+  </tr>
+</table>
+
 ## 适配设备
 
 MetaPact 当前适配以下设备，点击设备名可跳转到天猫旗舰店查看规格与购买：
