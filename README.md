@@ -20,13 +20,13 @@
 
 MetaPact 当前适配以下设备，点击设备名可跳转到天猫旗舰店查看规格与购买：
 
-| 图片 | 设备 | 说明 | 购买入口 |
-|---|---|---|---|
-| <img src="./docs/assets/devices/yuanli-2.png" alt="元力2" width="180"> | [元力2][device-yuanli-2] | 元力系列二代设备，适合作为 MetaPact 的主力接入硬件。 | [天猫旗舰店][device-yuanli-2] |
+| 图片                                                                         | 设备                          | 说明                                                     | 购买入口                          |
+| ---------------------------------------------------------------------------- | ----------------------------- | -------------------------------------------------------- | --------------------------------- |
+| <img src="./docs/assets/devices/yuanli-2.png" alt="元力2" width="180">       | [元力2][device-yuanli-2]      | 元力系列二代设备，适合作为 MetaPact 的主力接入硬件。     | [天猫旗舰店][device-yuanli-2]     |
 | <img src="./docs/assets/devices/black-hole-se.png" alt="黑洞SE" width="180"> | [黑洞SE][device-blackhole-se] | 黑洞系列 SE 设备，适合偏好紧凑机身和入门配置的接入场景。 | [天猫旗舰店][device-blackhole-se] |
 
-[device-yuanli-2]: https://detail.tmall.com/item.htm?id=1037817609223&mi_id=0000GTxq8HMe9_PPAPH1tY1x1oMKqLKCdeKp6namIWJ9IRQ&spm=a21xtw.29178619.0.0&xxc=shop
-[device-blackhole-se]: https://detail.tmall.com/item.htm?id=1047577064356&mi_id=0000oFIIepmVf8WH_ZvYKGvTs2JM5LVDsepOoPar86Gg3A&spm=a21xtw.29178619.0.0&xxc=shop&skuId=6235813538860
+[device-yuanli-2]: https://item.jd.com/100089280249.html?pcdk=51_Px0HXIEa7Itr-byCt3uYYgprAvJtOm-ONna3TNSD2Y4f_y7WBxowsZ8UmgnH0.rQ4a.tlbT#switch-sku
+[device-blackhole-se]: https://item.jd.com/100266583225.html?pcdk=AGA-VaD-5hJ8H_oAPNpMsrkoLUSeUz6X-2NNYnD_kQgnTx5i9ZTSlNXYH8IrWG4w.rQ4a.tlbT#switch-sku
 
 ## 一键安装
 
@@ -74,8 +74,8 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File $p -Runtime qclaw -AgentId agent-n
 
 ## 现有 Agents
 
-| Agent | 角色 | 渠道 |
-|---|---|---|
+| Agent         | 角色              | 渠道                                                                                                                                                                                                 |
+| ------------- | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [nako](nako/) | 战斗女仆 野木奈子 | 飞书 / 微信 / Telegram / Slack /...（via [cc-connect](https://github.com/chenhg5/cc-connect)，微信视频优先用 [CodeEagle fork release](https://github.com/CodeEagle/cc-connect/releases/tag/v1.3.3)） |
 
 ## 文档
@@ -87,8 +87,8 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File $p -Runtime qclaw -AgentId agent-n
 
 感谢以下用户帮助完善 MetaPact：
 
-| 用户 | 贡献 |
-|---|---|
+| 用户 | 贡献                                                                                    |
+| ---- | --------------------------------------------------------------------------------------- |
 | 久部 | 帮助排查并完善 Windows 安装流程，尤其是 PowerShell、cc-connect 启动与微信绑定相关问题。 |
 
 ## 与 agent 无关的工具
@@ -184,6 +184,7 @@ docs/
 ```
 
 新 pack 必须：
+
 - 不把任何真实 key / secret 提交进仓库（`.env.*.example` 仅占位）
 - 升级路径不破坏用户 `custom.md` / `memory/` / `sessions/`
 - 有 `scripts/smoke-test.sh` 冒烟脚本
