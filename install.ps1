@@ -68,10 +68,11 @@ function Invoke-MetaPactInstallerAnalytics {
       website = "c07077fc-3cab-4745-9d93-5c8256302a20"
       hostname = "metapact.app"
       language = "en-US"
-      screen = "0x0"
+      screen = "1x1"
       title = "MetaPact CLI Installer"
-      url = "/install.ps1"
+      url = "https://metapact.app/install.ps1"
       referrer = ""
+      tag = "metapact-home"
       name = "install-script-run-ps1"
       data = @{
         script = "ps1"
