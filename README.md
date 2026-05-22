@@ -11,7 +11,7 @@
     <td>
       <h3>下载心跳元力，一步开始</h3>
       <p>如果你不会配置龙虾，可以直接下载 <strong>心跳元力</strong>，用更省心的方式体验 MetaPact。</p>
-      <p><a href="https://dokidoki.lovappen.cn"><strong>前往下载心跳元力 →</strong></a></p>
+      <p><a href="https://metapact.app/r/?target=heartbeat-app-download&source=github-readme"><strong>前往下载心跳元力 →</strong></a></p>
     </td>
   </tr>
 </table>
@@ -25,8 +25,8 @@ MetaPact 当前适配以下设备，点击设备名可跳转到京东旗舰店�
 | <img src="./docs/assets/devices/yuanli-2.png" alt="元力2" width="180">       | [元力2][device-yuanli-2]      | 元力系列二代设备，适合作为 MetaPact 的主力接入硬件。     | [京东旗舰店][device-yuanli-2]     |
 | <img src="./docs/assets/devices/black-hole-se.png" alt="黑洞SE" width="180"> | [黑洞SE][device-blackhole-se] | 黑洞系列 SE 设备，适合偏好紧凑机身和入门配置的接入场景。 | [京东旗舰店][device-blackhole-se] |
 
-[device-yuanli-2]: https://item.jd.com/100089280249.html?pcdk=51_Px0HXIEa7Itr-byCt3uYYgprAvJtOm-ONna3TNSD2Y4f_y7WBxowsZ8UmgnH0.rQ4a.tlbT#switch-sku
-[device-blackhole-se]: https://item.jd.com/100266583225.html?pcdk=AGA-VaD-5hJ8H_oAPNpMsrkoLUSeUz6X-2NNYnD_kQgnTx5i9ZTSlNXYH8IrWG4w.rQ4a.tlbT#switch-sku
+[device-yuanli-2]: https://metapact.app/r/?target=yuanli-2&source=github-readme
+[device-blackhole-se]: https://metapact.app/r/?target=blackhole-se&source=github-readme
 
 ## 一键安装
 
