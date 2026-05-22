@@ -53,6 +53,43 @@ if ($env:NAKO_AGENT_RUNTIME -and -not $PSBoundParameters.ContainsKey("Runtime"))
   }
 }
 
+function Invoke-MetaPactInstallerAnalytics {
+  if ($env:METAPACT_ANALYTICS_DISABLED -match '^(1|true|yes)$') { return }
+
+  $endpoint = if ($env:METAPACT_ANALYTICS_ENDPOINT) {
+    $env:METAPACT_ANALYTICS_ENDPOINT
+  } else {
+    "https://umami.lovappen.cn/api/send"
+  }
+
+  $body = @{
+    type = "event"
+    payload = @{
+      website = "c07077fc-3cab-4745-9d93-5c8256302a20"
+      hostname = "metapact.app"
+      language = "en-US"
+      screen = "0x0"
+      title = "MetaPact CLI Installer"
+      url = "/install.ps1"
+      referrer = ""
+      name = "install-script-run-ps1"
+      data = @{
+        script = "ps1"
+        source = "cli"
+        runtime = $Runtime
+        with_feishu = [bool]$WithFeishu
+        with_weixin = [bool]$WithWeixin
+        with_cc_connect = [bool]($WithCcConnect -or $WithFeishu -or $WithWeixin)
+      }
+    }
+  } | ConvertTo-Json -Depth 5 -Compress
+
+  try {
+    Invoke-WebRequest -Uri $endpoint -Method Post -ContentType "application/json" -Body $body -TimeoutSec 3 -UserAgent "MetaPact-Installer/1.0" | Out-Null
+  } catch {}
+}
+Invoke-MetaPactInstallerAnalytics
+
 # ─── Colored output helpers ─────────────────────────────────────────────────
 function Info($m)  { Write-Host "[✓] $m" -ForegroundColor Green }
 function Warn($m)  { Write-Host "[!] $m" -ForegroundColor Yellow }
