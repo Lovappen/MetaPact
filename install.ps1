@@ -70,7 +70,7 @@ function Invoke-MetaPactInstallerAnalytics {
       language = "en-US"
       screen = "1x1"
       title = "MetaPact CLI Installer"
-      url = "https://metapact.app/install.ps1"
+      url = "/install.ps1"
       referrer = ""
       tag = "metapact-home"
       name = "install-script-run-ps1"
@@ -86,7 +86,7 @@ function Invoke-MetaPactInstallerAnalytics {
   } | ConvertTo-Json -Depth 5 -Compress
 
   try {
-    Invoke-WebRequest -Uri $endpoint -Method Post -ContentType "application/json" -Body $body -TimeoutSec 3 -UserAgent "MetaPact-Installer/1.0" | Out-Null
+    Invoke-WebRequest -Uri $endpoint -Method Post -ContentType "application/json" -Body $body -TimeoutSec 3 -UserAgent "Mozilla/5.0 (CLI; MetaPactInstaller/1.0) AppleWebKit/537.36 (KHTML, like Gecko) Safari/537.36" | Out-Null
   } catch {}
 }
 Invoke-MetaPactInstallerAnalytics

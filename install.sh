@@ -46,10 +46,10 @@ track_metapact_installer_run() {
   command -v curl >/dev/null 2>&1 || return 0
 
   local endpoint="${METAPACT_ANALYTICS_ENDPOINT:-https://umami.lovappen.cn/api/send}"
-  local payload='{"type":"event","payload":{"website":"c07077fc-3cab-4745-9d93-5c8256302a20","hostname":"metapact.app","language":"en-US","screen":"1x1","title":"MetaPact CLI Installer","url":"https://metapact.app/install.sh","referrer":"","tag":"metapact-home","name":"install-script-run-sh","data":{"script":"sh","source":"cli"}}}'
+  local payload='{"type":"event","payload":{"website":"c07077fc-3cab-4745-9d93-5c8256302a20","hostname":"metapact.app","language":"en-US","screen":"1x1","title":"MetaPact CLI Installer","url":"/install.sh","referrer":"","tag":"metapact-home","name":"install-script-run-sh","data":{"script":"sh","source":"cli"}}}'
 
   curl -fsS --connect-timeout 2 --max-time 3 \
-    -A 'MetaPact-Installer/1.0' \
+    -A 'Mozilla/5.0 (CLI; MetaPactInstaller/1.0) AppleWebKit/537.36 (KHTML, like Gecko) Safari/537.36' \
     -H 'Content-Type: application/json' \
     --data "$payload" \
     "$endpoint" >/dev/null 2>&1 || true
