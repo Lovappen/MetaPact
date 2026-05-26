@@ -11,8 +11,11 @@ DAILY_DIR="$WORKSPACE/memory"
 usage() {
   cat >&2 <<'EOF'
 Usage:
-  memory-write.sh --summary <text> [--long <text>] [--affinity <0-100> | --affinity-delta <-100..100>]
-  echo "<text>" | memory-write.sh
+  memory-write.sh --category <kind> --summary <text> [--long <text>] [--affinity <0-100> | --affinity-delta <-100..100>]
+  echo "<text>" | memory-write.sh --category <kind>
+
+Categories:
+  explicit, preference, fact, decision, lesson, task-state, relationship
 
 Writes:
   - memory/YYYY-MM-DD.md as raw daily notes
@@ -23,6 +26,7 @@ EOF
 
 SUMMARY=""
 LONG_NOTE=""
+CATEGORY=""
 AFFINITY=""
 AFFINITY_DELTA=""
 
@@ -32,6 +36,11 @@ while [ "$#" -gt 0 ]; do
       shift
       [ "$#" -gt 0 ] || { usage; exit 2; }
       SUMMARY="$1"
+      ;;
+    --category|-c)
+      shift
+      [ "$#" -gt 0 ] || { usage; exit 2; }
+      CATEGORY="$1"
       ;;
     --long|-l)
       shift
@@ -69,6 +78,7 @@ if [ -z "$SUMMARY" ] && ! [ -t 0 ]; then
 fi
 SUMMARY="$(printf '%s' "${SUMMARY:-}" | sed 's/[[:space:]]*$//')"
 [ -n "$SUMMARY" ] || { echo "memory-write: --summary is required" >&2; exit 2; }
+[ -n "$CATEGORY" ] || { echo "memory-write: --category is required" >&2; exit 2; }
 
 if [ -n "$AFFINITY" ] && [ -n "$AFFINITY_DELTA" ]; then
   echo "memory-write: use either --affinity or --affinity-delta, not both" >&2
@@ -82,6 +92,7 @@ MEMORY_FILE="$MEMORY_FILE" \
 DAILY_DIR="$DAILY_DIR" \
 SUMMARY="$SUMMARY" \
 LONG_NOTE="$LONG_NOTE" \
+CATEGORY="$CATEGORY" \
 AFFINITY="$AFFINITY" \
 AFFINITY_DELTA="$AFFINITY_DELTA" \
 python3 <<'PY'
@@ -96,6 +107,7 @@ memory_file = Path(os.environ["MEMORY_FILE"])
 daily_dir = Path(os.environ["DAILY_DIR"])
 summary = os.environ.get("SUMMARY", "")
 long_note = os.environ.get("LONG_NOTE", "")
+category = os.environ.get("CATEGORY", "").strip()
 affinity_raw = os.environ.get("AFFINITY", "")
 affinity_delta_raw = os.environ.get("AFFINITY_DELTA", "")
 
@@ -108,6 +120,24 @@ def one_line(value: str) -> str:
 
 summary_line = one_line(summary)
 long_line = one_line(long_note)
+
+allowed_categories = {
+    "explicit",
+    "preference",
+    "fact",
+    "decision",
+    "lesson",
+    "task-state",
+    "relationship",
+}
+if category not in allowed_categories:
+    allowed = ", ".join(sorted(allowed_categories))
+    raise SystemExit(f"memory-write: --category must be one of: {allowed}")
+
+if len(summary_line) > 180:
+    raise SystemExit("memory-write: --summary must be 180 characters or less")
+if len(long_line) > 500:
+    raise SystemExit("memory-write: --long must be 500 characters or less")
 
 def clamp(value: int) -> int:
     return max(0, min(100, value))
@@ -168,9 +198,9 @@ if daily_file.exists():
 else:
     daily_text = f"# {date_key}\n"
 
-daily_parts = [daily_text.rstrip(), "", f"## {time_key}", f"- {summary_line}"]
+daily_parts = [daily_text.rstrip(), "", f"## {time_key}", f"- [{category}] {summary_line}"]
 if long_line:
-    daily_parts.append(f"- 长期候选：{long_line}")
+    daily_parts.append(f"- [{category}] 长期候选：{long_line}")
 if new_affinity is not None:
     stage_num, stage_name = stage_for(new_affinity)
     daily_parts.append(f"- 好感值：{new_affinity}/100（阶段{stage_num}，{stage_name}）")
@@ -203,7 +233,7 @@ if short_match:
             value = match.group(1).strip()
             if value and value != ".":
                 existing.append(value)
-    new_item = f"{time_key} - {summary_line}"
+    new_item = f"{time_key} [{category}] - {summary_line}"
     existing = [item for item in existing if not item.endswith(f" - {summary_line}") and item != summary_line]
     items = [new_item] + existing
     items = items[:5]
@@ -226,7 +256,7 @@ else:
 if long_line:
     long_pattern = re.compile(r"(## 长期记忆（关键事件）\n)(.*?)(\n## |\Z)", re.S)
     long_match = long_pattern.search(text)
-    long_item = f"- {date_key}：{long_line}"
+    long_item = f"- {date_key} [{category}]：{long_line}"
     if long_match:
         body = long_match.group(2).rstrip()
         body = (body + "\n" + long_item).strip() + "\n"

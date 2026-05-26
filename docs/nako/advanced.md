@@ -52,6 +52,7 @@ nako 默认称呼是「主人大人」，关系阶段从阶段 1 开始。轻度
 
 ```bash
 bash <workspace>/scripts/memory-write.sh \
+  --category preference \
   --summary "用户更喜欢轻松陪伴" \
   --long "用户更喜欢轻松陪伴，不喜欢频繁主动消息" \
   --affinity 35

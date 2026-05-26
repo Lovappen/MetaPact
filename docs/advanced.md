@@ -54,7 +54,7 @@ Agents/
 | `USER.md` | 初始用户画像和更新规则 | 可按 agent 场景改 |
 | `AGENTS.md` | 启动流程、记忆规则、平台行为 | 谨慎改 |
 | `custom.md` | 用户覆盖规则、偏好、SOP | 最推荐给用户改 |
-| `MEMORY.md` | 长期事实、关系状态、用户信息库 | 通过 `<workspace>/scripts/memory-write.sh` 持续维护 |
+| `MEMORY.md` | 长期事实、关系状态、用户信息库 | 通过 `<workspace>/scripts/memory-write.sh --category <kind>` 持续维护 |
 | `HEARTBEAT.md` | 主动联系规则 | 有主动行为的 agent 才需要 |
 | `TOOLS.md` | 本地工具、skill 入口、脚本约定 | 安装器生成，必要时补说明 |
 
@@ -65,7 +65,7 @@ Agents/
 | 目标 | 优先改哪里 |
 |---|---|
 | 改称呼、语气、回复长度、禁用表达 | `custom.md` |
-| 增加私人知识、长期偏好、项目背景 | `<workspace>/scripts/memory-write.sh --summary ... --long ...` |
+| 增加私人知识、长期偏好、项目背景 | `<workspace>/scripts/memory-write.sh --category preference --summary ... --long ...` |
 | 调主动问候频率、静默时段 | `HEARTBEAT.md` |
 | 调主动行为数值或副作用 | `<workspace>/scripts/*.sh` |
 | 改默认音色、语速、图片参考图、Whisper 模型 | `openclaw.json -> skills.entries.*.env`；agent 私有项用 `<workspace>/skills/.env` |
@@ -74,7 +74,7 @@ Agents/
 | 让安装器以后优先选某模型 | `<agent-name>/config/model-map.yaml` |
 | 做全新 agent | 复制或 fork 一个 pack，改 `agent/`、`config/`、`docs/<agent-name>/` |
 
-经验规则：用户个人偏好放 `custom.md`；长期事实用 `memory-write.sh` 写入 `MEMORY.md`；要给所有用户复用的底层行为才放进 agent pack。
+经验规则：用户个人偏好放 `custom.md`；长期事实用 `memory-write.sh --category <kind>` 写入 `MEMORY.md`；要给所有用户复用的底层行为才放进 agent pack。
 
 ## 写好 custom.md
 
@@ -353,7 +353,7 @@ tail -f ~/.openclaw/skills/<skill>/logs/skill.jsonl | jq .
 推荐三层维护：
 
 1. 日常偏好写 `custom.md`。
-2. 长期事实用 `<workspace>/scripts/memory-write.sh` 写入 `MEMORY.md`。
+2. 长期事实用 `<workspace>/scripts/memory-write.sh --category <kind>` 写入 `MEMORY.md`；只写明确有长期价值的信息，不写寒暄、临时输出或完整对话。
 3. 要发布给别人用的底层改动，放到你的 fork 或 agent pack 里。
 
 不要把 API key、真实 token、私密聊天记录提交进仓库。
