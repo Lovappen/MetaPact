@@ -5,8 +5,8 @@
 元力 AI 女友，专属赛博伴侣养成计划：把可定义人设、长期记忆、语音/视觉能力和多平台聊天接入，打包成可一键部署的 Agent Pack。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![OpenClaw](https://img.shields.io/badge/runtime-OpenClaw-111827)](https://openclaw.ai)
-[![QClaw](https://img.shields.io/badge/runtime-QClaw-7c3aed)](https://github.com/tryjoy/qclaw)
+[![OpenClaw](https://img.shields.io/badge/runtime-OpenClaw-111827)](https://github.com/openclaw/openclaw)
+[![QClaw](https://img.shields.io/badge/runtime-QClaw-7c3aed)](https://qclaw.qq.com/)
 [![HermesAgent](https://img.shields.io/badge/runtime-HermesAgent-f59e0b)](https://github.com/NousResearch/hermes-agent)
 [![MetaPact](https://img.shields.io/badge/site-metapact.app-ff4d8d)](https://www.metapact.app/)
 
