@@ -2,7 +2,7 @@
 
 可一键部署到 [openclaw](https://openclaw.ai) 的 agent 集合。每个子目录是一个独立的 agent pack，含人设 + skill + 安装器；通用文档在 `docs/`，各 agent 特色文档在 `docs/<agent-name>/`。
 
-**适配设备：**[元力2][device-yuanli-2] / [黑洞SE][device-blackhole-se]，点击设备名可跳转到京东旗舰店。
+**适配设备：**[心跳元力2 Pro][device-yuanli-2] / [黑洞SE][device-blackhole-se]，点击设备名可跳转到京东旗舰店。
 
 ## 不会弄龙虾？
 
@@ -20,10 +20,10 @@
 
 MetaPact 当前适配以下设备，点击设备名可跳转到京东旗舰店查看规格与购买：
 
-| 图片                                                                         | 设备                          | 说明                                                     | 购买入口                          |
-| ---------------------------------------------------------------------------- | ----------------------------- | -------------------------------------------------------- | --------------------------------- |
-| <img src="./docs/assets/devices/yuanli-2.png" alt="元力2" width="180">       | [元力2][device-yuanli-2]      | 元力系列二代设备，适合作为 MetaPact 的主力接入硬件。     | [京东旗舰店][device-yuanli-2]     |
-| <img src="./docs/assets/devices/black-hole-se.png" alt="黑洞SE" width="180"> | [黑洞SE][device-blackhole-se] | 黑洞系列 SE 设备，适合偏好紧凑机身和入门配置的接入场景。 | [京东旗舰店][device-blackhole-se] |
+| 图片                                                                           | 设备                             | 说明                                                     | 购买入口                          |
+| ------------------------------------------------------------------------------ | -------------------------------- | -------------------------------------------------------- | --------------------------------- |
+| <img src="./docs/assets/devices/yuanli-2.png" alt="心跳元力2 Pro" width="180"> | [心跳元力2 Pro][device-yuanli-2] | 元力系列二代设备，适合作为 MetaPact 的主力接入硬件。     | [京东旗舰店][device-yuanli-2]     |
+| <img src="./docs/assets/devices/black-hole-se.png" alt="黑洞SE" width="180">   | [黑洞SE][device-blackhole-se]    | 黑洞系列 SE 设备，适合偏好紧凑机身和入门配置的接入场景。 | [京东旗舰店][device-blackhole-se] |
 
 [device-yuanli-2]: https://metapact.app/r/?target=yuanli-2&source=github-readme
 [device-blackhole-se]: https://metapact.app/r/?target=blackhole-se&source=github-readme
