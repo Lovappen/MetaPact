@@ -92,27 +92,62 @@ Nako 本体优先需要 `roleplay` 能力，也就是稳定中文对话、角色
 
 MetaPact 当前适配以下设备。点击购买入口可在京东或淘宝查看详情：
 
-| 图片 | 设备 | 说明 | 购买入口 |
-| --- | --- | --- | --- |
-| <img src="https://wdcdn.qpic.cn/MTY4ODg1NjE4ODgwMzEyOQ_573838_rxz4qU59DGG3bTFp_1794885057?w=800&amp;h=800" alt="元力2 Pro" width="180"> | 元力2 Pro | 元力顶配，强劲动力，接入 MetaPact，和 AI 角色双向情绪联动。 | [京东购买][device-yuanli-2-pro] |
-| <img src="https://wdcdn.qpic.cn/MTY4ODg1NjE4ODgwMzEyOQ_820752_03kIyLcprDMDq3Ba_1794884996?w=800&amp;h=800" alt="元力2 Mini" width="180"> | 元力2 Mini | 元力系列二代便携款，机身小巧隐蔽，适合随身使用。 | [京东购买][device-yuanli-2-mini] |
-| <img src="https://wdcdn.qpic.cn/MTY4ODg1NjE4ODgwMzEyOQ_94994_O-tB0SjJ4KbpXdr4_1794884976?w=800&amp;h=800" alt="元力2 Air" width="180"> | 元力2 Air | 元力系列二代轻享款，柔和低噪，适合偏好温和体验的用户。 | [京东购买][device-yuanli-2-air] |
-| <img src="https://wdcdn.qpic.cn/MTY4ODg1NjE4ODgwMzEyOQ_62255_CM1orIbxpiQ2vN31_1794885465?w=766&amp;h=984" alt="黑洞2 Pro" width="180"> | 黑洞2 Pro | 黑洞系列新一代旗舰，大行程自动伸缩，适配 MetaPact 联动玩法。 | [京东购买][device-blackhole-2-pro] |
-| <img src="https://wdcdn.qpic.cn/MTY4ODg1NjE4ODgwMzEyOQ_824834_FHak1Ygdnv6SpCaK_1794884963?w=800&amp;h=800" alt="黑洞 Plus" width="180"> | 黑洞 Plus | 黑洞系列进阶款，带手柄结构，长行程，掌控感更强。 | [京东购买][device-blackhole-plus] |
-| <img src="https://wdcdn.qpic.cn/MTY4ODg1NjE4ODgwMzEyOQ_201632_7rmfqPmIZMeohII1_1794885560?w=1440&amp;h=1440" alt="黑洞 Se" width="180"> | 黑洞 Se | 黑洞系列入门款，机身紧凑，适合入门配置的接入场景。 | [京东购买][device-blackhole-se] |
-| <img src="https://wdcdn.qpic.cn/MTY4ODg1NjE4ODgwMzEyOQ_53364_lRQodXEvfenWNx_n_1794885668?w=1440&amp;h=1440" alt="黑洞Pro" width="180"> | 黑洞Pro | 黑洞系列经典款，动力稳定，兼容 MetaPact，成熟流畅的 AI 交互。 | [京东购买][device-blackhole-pro] |
-| <img src="https://wdcdn.qpic.cn/MTY4ODg1NjE4ODgwMzEyOQ_124350_ROvBChDDuGtPNBFT_1794884926?w=800&amp;h=800" alt="千面2 Pro" width="180"> | 千面2 Pro | 千面系列二代旗舰，吮吸律动多变，玩法更丰富。 | [京东购买][device-qianmian-2-pro] |
-| <img src="https://wdcdn.qpic.cn/MTY4ODg1NjE4ODgwMzEyOQ_307240_LXUfRod4imIN-YIr_1794885582?w=1206&amp;h=1195" alt="千面1" width="180"> | 千面1 | 千面开山经典，内胆自由搭配，支持 MetaPact，自定义你的 AI 体验。 | [淘宝购买][device-qianmian-1] |
-
-[device-yuanli-2-pro]: https://metapact.app/r/?target=yuanli-2-pro&source=github-readme
-[device-yuanli-2-mini]: https://metapact.app/r/?target=yuanli-2-mini&source=github-readme
-[device-yuanli-2-air]: https://metapact.app/r/?target=yuanli-2-air&source=github-readme
-[device-blackhole-2-pro]: https://metapact.app/r/?target=blackhole-2-pro&source=github-readme
-[device-blackhole-plus]: https://metapact.app/r/?target=blackhole-plus&source=github-readme
-[device-blackhole-se]: https://metapact.app/r/?target=blackhole-se&source=github-readme
-[device-blackhole-pro]: https://metapact.app/r/?target=blackhole-pro&source=github-readme
-[device-qianmian-2-pro]: https://metapact.app/r/?target=qianmian-2-pro&source=github-readme
-[device-qianmian-1]: https://metapact.app/r/?target=qianmian-1&source=github-readme
+<table>
+<tr>
+<td><img src="docs/assets/devices/yuanli-2-pro.jpg" alt="元力2 Pro" width="180"></td>
+<td><a href="https://metapact.app/r/?target=yuanli-2-pro&amp;source=github-readme">元力2 Pro</a></td>
+<td>元力顶配，强劲动力，接入 MetaPact，和 AI 角色双向情绪联动。</td>
+<td><a href="https://metapact.app/r/?target=yuanli-2-pro&amp;source=github-readme">京东购买</a></td>
+</tr>
+<tr>
+<td><img src="docs/assets/devices/yuanli-2-mini.png" alt="元力2 Mini" width="180"></td>
+<td><a href="https://metapact.app/r/?target=yuanli-2-mini&amp;source=github-readme">元力2 Mini</a></td>
+<td>元力系列二代便携款，机身小巧隐蔽，适合随身使用。</td>
+<td><a href="https://metapact.app/r/?target=yuanli-2-mini&amp;source=github-readme">京东购买</a></td>
+</tr>
+<tr>
+<td><img src="docs/assets/devices/yuanli-2-air.png" alt="元力2 Air" width="180"></td>
+<td><a href="https://metapact.app/r/?target=yuanli-2-air&amp;source=github-readme">元力2 Air</a></td>
+<td>元力系列二代轻享款，柔和低噪，适合偏好温和体验的用户。</td>
+<td><a href="https://metapact.app/r/?target=yuanli-2-air&amp;source=github-readme">京东购买</a></td>
+</tr>
+<tr>
+<td><img src="docs/assets/devices/black-hole-2-pro.png" alt="黑洞2 Pro" width="180"></td>
+<td><a href="https://metapact.app/r/?target=blackhole-2-pro&amp;source=github-readme">黑洞2 Pro</a></td>
+<td>黑洞系列新一代旗舰，大行程自动伸缩，适配 MetaPact 联动玩法。</td>
+<td><a href="https://metapact.app/r/?target=blackhole-2-pro&amp;source=github-readme">京东购买</a></td>
+</tr>
+<tr>
+<td><img src="docs/assets/devices/black-hole-plus.jpg" alt="黑洞 Plus" width="180"></td>
+<td><a href="https://metapact.app/r/?target=blackhole-plus&amp;source=github-readme">黑洞 Plus</a></td>
+<td>黑洞系列进阶款，带手柄结构，长行程，掌控感更强。</td>
+<td><a href="https://metapact.app/r/?target=blackhole-plus&amp;source=github-readme">京东购买</a></td>
+</tr>
+<tr>
+<td><img src="docs/assets/devices/black-hole-se-device.png" alt="黑洞 Se" width="180"></td>
+<td><a href="https://metapact.app/r/?target=blackhole-se&amp;source=github-readme">黑洞 Se</a></td>
+<td>黑洞系列入门款，机身紧凑，适合入门配置的接入场景。</td>
+<td><a href="https://metapact.app/r/?target=blackhole-se&amp;source=github-readme">京东购买</a></td>
+</tr>
+<tr>
+<td><img src="docs/assets/devices/black-hole-pro.png" alt="黑洞Pro" width="180"></td>
+<td><a href="https://metapact.app/r/?target=blackhole-pro&amp;source=github-readme">黑洞Pro</a></td>
+<td>黑洞系列经典款，动力稳定，兼容 MetaPact，成熟流畅的 AI 交互。</td>
+<td><a href="https://metapact.app/r/?target=blackhole-pro&amp;source=github-readme">京东购买</a></td>
+</tr>
+<tr>
+<td><img src="docs/assets/devices/qianmian-2-pro.png" alt="千面2 Pro" width="180"></td>
+<td><a href="https://metapact.app/r/?target=qianmian-2-pro&amp;source=github-readme">千面2 Pro</a></td>
+<td>千面系列二代旗舰，吮吸律动多变，玩法更丰富。</td>
+<td><a href="https://metapact.app/r/?target=qianmian-2-pro&amp;source=github-readme">京东购买</a></td>
+</tr>
+<tr>
+<td><img src="docs/assets/devices/qianmian-1.png" alt="千面1" width="180"></td>
+<td><a href="https://metapact.app/r/?target=qianmian-1&amp;source=github-readme">千面1</a></td>
+<td>千面开山经典，内胆自由搭配，支持 MetaPact，自定义你的 AI 体验。</td>
+<td><a href="https://metapact.app/r/?target=qianmian-1&amp;source=github-readme">淘宝购买</a></td>
+</tr>
+</table>
 
 ## 文档
 
